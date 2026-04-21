@@ -1,0 +1,28 @@
+{
+  "id": "emp_mo5i8nybwb5u",
+  "employee": {
+    "id": "emp_mo5i8nybwb5u",
+    "name": "polly hason",
+    "role": "Ceo",
+    "division_id": "ceo_85cp",
+    "division_name": "ceo",
+    "department": "-",
+    "primary_duty": "Ceo",
+    "email": "",
+    "createdAt": "2026-04-19T08:29:14.435Z",
+    "interviewStatus": "not_started"
+  },
+  "answers": [
+    {
+      "key": "warmup",
+      "value": "9am begin - 3am",
+      "at": "2026-04-19T08:30:04.178Z"
+    },
+    {
+      "key": "morning_first",
+      "value": "Check email check team check line",
+      "at": "2026-04-19T08:31:04.214Z"
+    }
+  ],
+  "startedAt": "2026-04-19T08:29:15.075Z"
+}

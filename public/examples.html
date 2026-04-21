@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>ตัวอย่างการตอบ | AI Interviewer</title>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="logo">🤖 AI Interviewer</div>
+    <nav>
+      <a href="/">หน้าแรก</a>
+      <a href="/examples">ตัวอย่าง</a>
+      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;">ออก</a>
+    </nav>
+  </div>
+
+  <p class="breadcrumb"><a href="/">← กลับหน้าแรก</a></p>
+  <h1>📘 ตัวอย่างการตอบอินเทอร์วิว</h1>
+  <p class="sub">อ่านก่อนเริ่ม — เพื่อให้คำตอบของคุณชัดเจน</p>
+
+  <div class="card">
+    <h2>🎯 หลักการตอบ 4 ข้อ</h2>
+    <ul style="line-height:1.8;">
+      <li><strong>เล่าตามจริง</strong> — ไม่ต้องตอบให้ดูดี ระบบนี้เอาไปปรับปรุงกระบวนการ ไม่ใช่ประเมินคน</li>
+      <li><strong>บอกเป็นรูปธรรม</strong> — มี <em>จำนวน</em> (กี่ครั้ง/วัน), <em>เวลา</em> (กี่นาที/ชม.), <em>เครื่องมือ</em> (ชื่อระบบ)</li>
+      <li><strong>ตอบสั้นแต่ครบ</strong> — 2–4 ประโยคต่อข้อพอ ไม่ต้องเขียนเป็นเรียงความ</li>
+      <li><strong>ถ้าไม่มี ให้บอกว่า "ไม่มี"</strong> — ดีกว่าข้ามหรือแต่งขึ้นมา</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>📝 ตัวอย่างคำถาม 15 ข้อ (ทีละข้อ)</h2>
+
+    <div class="ex-section">
+      <h2>ช่วงเริ่มงาน (Intro)</h2>
+    </div>
+
+    <div class="ex-q">Q1. วันทำงานปกติของคุณเริ่มกี่โมง และเลิกกี่โมง?</div>
+    <div class="ex-bad"><span class="ex-label">❌</span> "8 โมงครับ"</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "เริ่ม 08:30 เลิก 17:30 ครับ — จันทร์-ศุกร์ วันเสาร์สัปดาห์เว้นสัปดาห์"</div>
+    <div class="ex-tip"><span class="ex-label">💡</span> ระบุทั้งเวลาเริ่ม-เลิก และวันทำงาน (ถ้ามี OT/กะ/เสาร์ บอกด้วย)</div>
+
+    <div class="ex-section">
+      <h2>ช่วงเช้า (Morning)</h2>
+    </div>
+
+    <div class="ex-q">Q2. 30 นาทีแรกของวัน คุณมักจะทำอะไรก่อน?</div>
+    <div class="ex-bad"><span class="ex-label">❌</span> "ทำงาน"</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "เช็คอีเมล (~5 นาที) → เปิดระบบ ERP ดูออเดอร์ค้าง (~10 นาที) → ตอบ LINE ลูกค้าที่เข้ามาช่วงเช้า (~15 นาที) → ชงกาแฟเตรียมเข้าประชุม"</div>
+    <div class="ex-tip"><span class="ex-label">💡</span> เล่าตามลำดับจริง + บอกเวลาคร่าว ๆ ต่อ activity</div>
+
+    <div class="ex-q">Q3. ช่วงสาย (09:30–12:00) งานหลักของคุณคืออะไร?</div>
+    <div class="ex-bad"><span class="ex-label">❌</span> "ทำงานประจำ"</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "โทรหาลูกค้าเก่า 8-10 ราย/วัน (เฉลี่ย 5 นาที/สาย), ทำใบเสนอราคาวันละ 3-5 ใบ, อัปเดต Google Sheet ยอดขาย — ใช้เวลารวมประมาณ 2.5 ชม."</div>
+    <div class="ex-tip"><span class="ex-label">💡</span> บอก <strong>ปริมาณ</strong> (ลูกค้า 8-10 ราย), <strong>ความถี่</strong> (ต่อวัน), <strong>เวลา</strong> (2.5 ชม.) — AI จะใช้ทำ KPI อัตโนมัติ</div>
+
+    <div class="ex-q">Q4. เครื่องมือ/ระบบ/โปรแกรมที่ใช้ประจำในช่วงเช้า?</div>
+    <div class="ex-bad"><span class="ex-label">❌</span> "หลายอัน"</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "LINE OA (คุยลูกค้า), Gmail (อีเมลทางการ), Google Sheets (ยอดขาย), ERP (SAP Business One), POS หน้าร้าน"</div>
+    <div class="ex-tip"><span class="ex-label">💡</span> ระบุชื่อระบบจริง ไม่ใช่ประเภท (พูด "SAP" ไม่ใช่แค่ "ERP") — ช่วยให้ AI แนะนำ automation ที่เจาะจงได้</div>
+
+    <div class="ex-q">Q5. ช่วงเช้าต้องประสานงานกับใครบ้าง?</div>
+    <div class="ex-bad"><span class="ex-label">❌</span> "ทีม"</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "หัวหน้า Sales (คุณจอห์น), บัญชีลูกหนี้ (คุณฝ้าย), คลังสินค้า (พี่เต้), ลูกค้า B2B เจ้าใหญ่ 3-4 ราย"</div>
+    <div class="ex-tip"><span class="ex-label">💡</span> บอก <strong>ตำแหน่ง/แผนก</strong> สำคัญกว่าชื่อ — แต่ใส่ชื่อเล่นได้จะยิ่งดี</div>
+
+    <div class="ex-section">
+      <h2>ช่วงเที่ยง (Noon)</h2>
+    </div>
+
+    <div class="ex-q">Q6. พักเที่ยงกี่โมง และนานเท่าไหร่?</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "พัก 12:00-13:00 ส่วนใหญ่กินข้าวกับทีม อังคาร-พฤหัส มี lunch meeting กับหัวหน้าเดือนละ 2 ครั้ง"</div>
+
+    <div class="ex-section">
+      <h2>ช่วงบ่าย (Afternoon)</h2>
+    </div>
+
+    <div class="ex-q">Q7. ช่วงบ่าย (13:00–16:00) ทำอะไรบ้าง มีประชุมประจำมั้ย?</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "ออกเยี่ยมลูกค้าจันทร์-พุธ (3 ราย/วัน), ประชุมทีม Sales ทุกพฤหัส 14:00-15:00, ตอบ LINE ลูกค้าต่อเนื่อง, อัปเดต pipeline ใน CRM"</div>
+    <div class="ex-tip"><span class="ex-label">💡</span> แยกงานประจำ (ทุกวัน) กับงานตามวัน (จันทร์-พุธ) ให้ชัด</div>
+
+    <div class="ex-q">Q8. มีรายงาน/เอกสารที่ต้องทำทุกวันมั้ย?</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "สรุปยอดขายรายวัน ส่งเข้า LINE กลุ่มหัวหน้าทุกเย็น (template Excel, ใช้ copy-paste จาก POS กับ ERP รวมมือ ~30 นาที)"</div>
+    <div class="ex-tip"><span class="ex-label">💡</span> บอกว่า <strong>ทำมือ</strong> หรือ <strong>ระบบทำ</strong> — ถ้าทำมือเยอะ = จุดให้ AI ช่วย</div>
+
+    <div class="ex-q">Q9. มี deadline รายวันอะไรบ้าง?</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "ส่งยอดขายก่อน 17:00 ทุกวัน, ปิดออเดอร์ลูกค้าก่อน 16:30 ให้ทันรอบรถส่ง"</div>
+
+    <div class="ex-section">
+      <h2>ช่วงเย็น (Evening)</h2>
+    </div>
+
+    <div class="ex-q">Q10. ก่อนเลิกงาน ช่วงเย็นทำอะไรบ้าง?</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "เช็คสต็อก 10 รายการท็อป, เตรียมใบเสนอราคาลูกค้าวันพรุ่งนี้, สรุปงานเข้า email หัวหน้า (bullet 3-5 ข้อ)"</div>
+
+    <div class="ex-section">
+      <h2>งานรายสัปดาห์/เดือน</h2>
+    </div>
+
+    <div class="ex-q">Q11. มีงานที่ทำเฉพาะบางวันของสัปดาห์/เดือน/ไตรมาสมั้ย?</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "ประชุมทีมทุกจันทร์ 09:00, ปิดยอดสิ้นเดือน (วันสุดท้ายของเดือน เสร็จไม่เกินวันที่ 3), Forecast รายไตรมาส (ตรวจร่วมกับ BD)"</div>
+
+    <div class="ex-section">
+      <h2>ปัญหา/คอขวด (Problems)</h2>
+    </div>
+
+    <div class="ex-q">Q12. งานชิ้นไหนรู้สึกเสียเวลาที่สุด / ทำซ้ำบ่อยเกินไป?</div>
+    <div class="ex-bad"><span class="ex-label">❌</span> "ทุกอย่างยาก"</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "ทำสรุปยอดขายรายวัน — ต้อง copy ข้อมูลจาก POS 5 สาขา + ERP + Google Sheet มารวมมือ ใช้เวลา 30-40 นาที/วัน ทำเดือนละ ~15 ชม."</div>
+    <div class="ex-tip"><span class="ex-label">💡</span> ตอบข้อนี้ให้ดี = AI จะสร้างข้อเสนอ "AI แทนได้" ตรงจุด ระบุ <strong>ที่ข้อมูลมาจากไหน</strong> + <strong>เวลา</strong></div>
+
+    <div class="ex-q">Q13. รออะไรจากคนอื่น/ระบบอื่นแล้วทำงานต่อไม่ได้บ้างมั้ย?</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "รอบัญชีออกใบกำกับภาษี (เฉลี่ย 2-4 ชม.) ทำให้ส่งของให้ลูกค้าล่าช้า, บางวันรอ IT แก้ปัญหา VPN หลุด"</div>
+    <div class="ex-tip"><span class="ex-label">💡</span> บอกว่า <strong>รอฝ่ายไหน</strong> + <strong>รอเรื่องอะไร</strong> + <strong>กระทบอะไร</strong> — AI จะจัดกลุ่มคอขวดระดับบริษัท</div>
+
+    <div class="ex-section">
+      <h2>KPI / AI Wishlist</h2>
+    </div>
+
+    <div class="ex-q">Q14. ถ้าจะวัดว่าคุณทำงานได้ดีในแต่ละวัน ควรวัดจากอะไร?</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "ยอดขายต่อเดือน (ปัจจุบัน ~1.2M), จำนวนลูกค้าใหม่/เดือน (เป้า 5 ราย), ความเร็วตอบลูกค้าใน LINE (เป้าภายใน 15 นาที)"</div>
+    <div class="ex-tip"><span class="ex-label">💡</span> ตัวเลขช่วงปัจจุบันก็ใส่ได้ — AI เอาไปตั้ง baseline ของ KPI</div>
+
+    <div class="ex-q">Q15. ถ้ามี AI มาช่วย อยากให้ AI ทำอะไรแทนคุณมากที่สุด?</div>
+    <div class="ex-good"><span class="ex-label">✅</span> "สรุปยอดขายรายวันอัตโนมัติ (ข้อมูลอยู่ใน POS + ERP), และช่วยตอบคำถามเบื้องต้นลูกค้าใน LINE (ประมาณ 30% ของคำถามเป็นคำถามซ้ำ ๆ)"</div>
+    <div class="ex-tip"><span class="ex-label">💡</span> ระบุว่า <strong>ทำอะไร</strong> + <strong>เพราะอะไร</strong> (เช่น "30% ของคำถามซ้ำ") — เป็น signal สำคัญให้ AI จัดลำดับ use case</div>
+  </div>
+
+  <div class="card">
+    <h2>📊 ตัวอย่างผลลัพธ์ที่คุณจะได้ (6 ไฟล์ต่อคน)</h2>
+    <table>
+      <thead><tr><th>ไฟล์</th><th>เนื้อหา</th><th>เอาไปใช้ทำอะไร</th></tr></thead>
+      <tbody>
+        <tr><td><strong>workflow.md</strong></td><td>เล่าเป็นเอกสาร เช้า/เที่ยง/บ่าย/เย็น</td><td>แชร์ให้หัวหน้า, ส่งต่อคนใหม่</td></tr>
+        <tr><td><strong>workflow.csv</strong></td><td>ตาราง Excel: เวลา / งาน / เครื่องมือ / คน</td><td>เปิดใน Excel, รวมกันทั้งทีมได้</td></tr>
+        <tr><td><strong>workflow-diagram.md</strong></td><td>Flowchart (Mermaid)</td><td>Paste ใน <a href="https://mermaid.live" target="_blank">mermaid.live</a> ได้แผนภาพ</td></tr>
+        <tr><td><strong>job-description.md</strong></td><td>JD ที่เขียนจากงานจริง</td><td>ใช้ใน HR, recruit ตำแหน่งเดียวกัน</td></tr>
+        <tr><td><strong>kpi.md</strong></td><td>KPI 4-5 ตัว พร้อมสูตร+เป้า</td><td>ตั้ง OKR/KPI ประจำไตรมาส</td></tr>
+        <tr><td><strong>optimization.md</strong></td><td>ข้อเสนอตัดงานซ้ำ/ใช้ AI แทน</td><td>ประชุมกับหัวหน้า ตัดสินใจ automate</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>✅ Checklist ก่อนกดเริ่มอินเทอร์วิว</h2>
+    <ul style="line-height:1.8;">
+      <li>อยู่ในที่เงียบ ใช้เวลา 10–15 นาที</li>
+      <li>นึก <strong>วันทำงานปกติ</strong> (ไม่ใช่วันพิเศษ เช่น วันเงินเดือนออก)</li>
+      <li>เตรียมรายชื่อเครื่องมือที่ใช้ประจำ (เช่น LINE, Gmail, SAP)</li>
+      <li>นึกตัวเลขคร่าว ๆ เช่น ลูกค้ากี่ราย/วัน, รายงานใช้เวลาทำกี่นาที</li>
+      <li>ถ้าเจอคำถามที่ตอบไม่ได้ กดปุ่ม "ข้าม" — ไม่ต้องแต่งขึ้นมา</li>
+    </ul>
+  </div>
+
+  <div style="display:flex; gap:8px; margin:20px 0;">
+    <a href="/"><button>เริ่มเลย → เลือกฝ่าย</button></a>
+    <a href="/dashboard"><button class="ghost">ไป Dashboard</button></a>
+  </div>
+</div>
+</body>
+</html>

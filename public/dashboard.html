@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Dashboard | AI Interviewer</title>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+<div class="container wide">
+  <div class="topbar">
+    <div class="logo">🤖 AI Interviewer</div>
+    <nav>
+      <a href="/">หน้าแรก</a>
+      <a href="/examples">📘 ตัวอย่าง</a>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/admin">🔐 Admin</a>
+      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;">ออก</a>
+    </nav>
+  </div>
+
+  <h1>Dashboard ภาพรวมบริษัท</h1>
+  <p class="sub">พนักงานทุกคน จัดตามฝ่าย · ใช้วิเคราะห์ภาพรวมและหาจุดปรับปรุง</p>
+
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h2 style="margin:0;">สรุป</h2>
+        <p class="sub" id="summary" style="margin:4px 0 0;">...</p>
+      </div>
+      <div>
+        <button id="analyze-btn">🔍 วิเคราะห์ภาพรวมบริษัท</button>
+        <a id="report-link" href="/api/outputs/_company/optimization-report.md" target="_blank" style="margin-left:8px; display:none;">
+          <button class="ghost">📄 เปิดรายงาน (.md)</button>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div id="divisions"></div>
+
+  <div class="card">
+    <h2>รายงาน Optimization ล่าสุด</h2>
+    <div id="report-preview" class="empty">ยังไม่มีรายงาน — กดปุ่ม "วิเคราะห์ภาพรวมบริษัท" ข้างบน</div>
+  </div>
+</div>
+
+<script>
+function esc(s){return String(s||'').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+function pill(s){
+  if (s==='completed') return '<span class="pill green">เสร็จแล้ว</span>';
+  if (s==='in_progress') return '<span class="pill blue">กำลังทำ</span>';
+  return '<span class="pill gray">ยังไม่เริ่ม</span>';
+}
+
+async function load() {
+  const [divs, emps] = await Promise.all([
+    fetch('/api/divisions').then(r => r.json()),
+    fetch('/api/employees').then(r => r.json()),
+  ]);
+
+  const done = emps.filter(e => e.interviewStatus==='completed').length;
+  document.getElementById('summary').textContent =
+    `${divs.length} ฝ่าย · ${emps.length} พนักงาน · อินเทอร์วิวเสร็จ ${done} คน (${emps.length ? Math.round(done/emps.length*100) : 0}%)`;
+
+  const byDiv = {};
+  for (const e of emps) {
+    const k = e.division_id || '_other';
+    (byDiv[k] = byDiv[k] || []).push(e);
+  }
+
+  const container = document.getElementById('divisions');
+  container.innerHTML = divs.map(d => {
+    const list = byDiv[d.id] || [];
+    if (!list.length) {
+      return `<div class="card" style="border-top:4px solid ${esc(d.color)};">
+        <h2>${esc(d.icon||'🏢')} ${esc(d.name)} <span class="pill gray" style="font-size:12px;">0 คน</span></h2>
+        <p class="empty">ยังไม่มีพนักงาน · <a href="/division?id=${esc(d.id)}">เพิ่มพนักงาน →</a></p>
+      </div>`;
+    }
+    const doneCount = list.filter(e => e.interviewStatus==='completed').length;
+    return `<div class="card" style="border-top:4px solid ${esc(d.color)};">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <h2 style="margin:0;">${esc(d.icon||'🏢')} ${esc(d.name)}
+          <span class="pill blue" style="font-size:12px;">${list.length} คน</span>
+          ${doneCount ? `<span class="pill green" style="font-size:12px;">✓ ${doneCount}</span>` : ''}
+        </h2>
+        <a href="/division?id=${esc(d.id)}" style="font-size:14px;">จัดการฝ่ายนี้ →</a>
+      </div>
+      <table style="margin-top:12px;">
+        <thead><tr><th>ชื่อ</th><th>ตำแหน่ง</th><th>แผนกย่อย</th><th>หน้าที่หลัก</th><th>สถานะ</th><th></th></tr></thead>
+        <tbody>${list.map(e => `<tr>
+          <td><strong>${esc(e.name)}</strong></td>
+          <td>${esc(e.role)}</td>
+          <td>${esc(e.department || '-')}</td>
+          <td style="max-width:220px; font-size:13px; color:#475569;">${esc(e.primary_duty || '-')}</td>
+          <td>${pill(e.interviewStatus)}</td>
+          <td>
+            ${e.interviewStatus==='completed'
+              ? `<a href="/review?id=${e.id}">ดูผล</a>`
+              : `<a href="/interview?id=${e.id}">อินเทอร์วิว</a>`}
+          </td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+
+  // preload report
+  try {
+    const r = await fetch('/api/outputs/_company/optimization-report.md');
+    if (r.ok) {
+      const txt = await r.text();
+      document.getElementById('report-preview').innerHTML =
+        `<pre style="white-space:pre-wrap; font-family:inherit; font-size:14px; max-height:600px; overflow:auto;">${esc(txt)}</pre>`;
+      document.getElementById('report-link').style.display = 'inline-block';
+    }
+  } catch {}
+}
+
+document.getElementById('analyze-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('analyze-btn');
+  btn.disabled = true; btn.textContent = 'กำลังวิเคราะห์...';
+  const r = await fetch('/api/company/analyze', { method: 'POST' });
+  const data = await r.json();
+  if (data.ok) {
+    alert(`วิเคราะห์เสร็จ — ใช้ข้อมูลจาก ${data.count} คน`);
+    await load();
+  } else { alert('เกิดข้อผิดพลาด'); }
+  btn.disabled = false; btn.textContent = '🔍 วิเคราะห์ภาพรวมบริษัท';
+});
+
+load();
+</script>
+</body>
+</html>

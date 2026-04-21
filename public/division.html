@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>ฝ่าย | AI Interviewer</title>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="logo">🤖 AI Interviewer</div>
+    <nav>
+      <a href="/">หน้าแรก</a>
+      <a href="/examples">📘 ตัวอย่าง</a>
+      <a href="/dashboard" id="nav-dashboard" style="display:none;">Dashboard</a>
+      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;">ออก</a>
+    </nav>
+  </div>
+  <script>
+    fetch('/api/me').then(r=>r.json()).then(me=>{
+      if (me.role === 'admin') document.getElementById('nav-dashboard').style.display = 'inline';
+    }).catch(()=>{});
+  </script>
+
+  <p class="breadcrumb"><a href="/">← กลับทุกฝ่าย</a></p>
+  <h1 id="title">...</h1>
+  <p class="sub" id="sub"></p>
+
+  <div class="card">
+    <h2>พนักงานในฝ่ายนี้</h2>
+    <div id="emp-list"><p class="empty">กำลังโหลด...</p></div>
+  </div>
+
+  <div class="card">
+    <h2>➕ เพิ่มพนักงานในฝ่ายนี้</h2>
+    <form id="emp-form">
+      <div class="row">
+        <div>
+          <label>ชื่อ-นามสกุล *</label>
+          <input name="name" required placeholder="เช่น สมชาย ใจดี / John Smith"/>
+        </div>
+        <div>
+          <label>อีเมล (ไม่บังคับ)</label>
+          <input name="email" type="email" placeholder="name@jiancha.co"/>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>ตำแหน่ง *</label>
+          <input name="role" required placeholder="เช่น Senior Accountant / หัวหน้าบัญชีลูกหนี้"/>
+        </div>
+        <div>
+          <label>แผนกย่อย (ถ้ามี)</label>
+          <input name="department" placeholder="เช่น บัญชีลูกหนี้, บัญชีเจ้าหนี้"/>
+        </div>
+      </div>
+      <div>
+        <label>หน้าที่หลัก</label>
+        <textarea name="primary_duty" placeholder="เช่น ดูแลการเก็บเงินลูกค้า, ออกใบกำกับภาษี, กระทบยอดธนาคารรายเดือน"></textarea>
+      </div>
+      <div style="margin-top:12px;">
+        <button type="submit">เพิ่ม + เริ่มอินเทอร์วิวเลย →</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+const qs = new URLSearchParams(location.search);
+const divId = qs.get('id');
+if (!divId) location.href = '/';
+
+function esc(s){return String(s||'').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+function pill(s){
+  if (s==='completed') return '<span class="pill green">เสร็จแล้ว</span>';
+  if (s==='in_progress') return '<span class="pill blue">กำลังทำ</span>';
+  return '<span class="pill gray">ยังไม่เริ่ม</span>';
+}
+
+async function load() {
+  const [divs, emps, me] = await Promise.all([
+    fetch('/api/divisions').then(r => r.json()),
+    fetch('/api/employees?division_id=' + encodeURIComponent(divId)).then(r => r.json()),
+    fetch('/api/me').then(r => r.json()),
+  ]);
+  // Division users can only access their own division
+  if (me.role === 'division' && me.division_id !== divId) {
+    alert('คุณไม่มีสิทธิ์เข้าดูฝ่ายนี้');
+    location.href = '/';
+    return;
+  }
+  const div = divs.find(d => d.id === divId);
+  if (!div) { alert('ไม่พบฝ่าย'); location.href = '/'; return; }
+
+  document.getElementById('title').textContent = `${div.icon || '🏢'} ${div.name}`;
+  document.getElementById('sub').textContent = `${div.name_en || ''} · พนักงาน ${emps.length} คน · อินเทอร์วิวแล้ว ${emps.filter(e=>e.interviewStatus==='completed').length} คน`;
+
+  const listEl = document.getElementById('emp-list');
+  if (!emps.length) { listEl.innerHTML = '<p class="empty">ยังไม่มีพนักงานในฝ่ายนี้ เพิ่มด้านล่าง</p>'; return; }
+  listEl.innerHTML = '<table><thead><tr><th>ชื่อ</th><th>ตำแหน่ง</th><th>แผนกย่อย</th><th>หน้าที่หลัก</th><th>สถานะ</th><th></th></tr></thead><tbody>' +
+    emps.map(e => `<tr>
+      <td><strong>${esc(e.name)}</strong></td>
+      <td>${esc(e.role)}</td>
+      <td>${esc(e.department || '-')}</td>
+      <td style="max-width:220px; font-size:13px; color:#475569;">${esc(e.primary_duty || '-')}</td>
+      <td>${pill(e.interviewStatus)}</td>
+      <td>
+        ${e.interviewStatus==='completed'
+          ? `<a href="/review?id=${e.id}">ดูผล</a>`
+          : `<a href="/interview?id=${e.id}">ทำอินเทอร์วิว</a>`}
+      </td>
+    </tr>`).join('') + '</tbody></table>';
+}
+
+document.getElementById('emp-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  body.division_id = divId;
+  const r = await fetch('/api/employees', {
+    method: 'POST',
+    headers: {'content-type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) { const err = await r.json().catch(()=>({})); alert(err.error || 'เกิดข้อผิดพลาด'); return; }
+  const emp = await r.json();
+  location.href = '/interview?id=' + emp.id;
+});
+
+load();
+</script>
+</body>
+</html>

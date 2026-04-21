@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>อินเทอร์วิว | AI Interviewer</title>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="logo">🤖 AI Interviewer</div>
+    <nav>
+      <a href="/">หน้าแรก</a>
+      <a href="/examples" target="_blank">📘 ตัวอย่าง</a>
+      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;">ออก</a>
+    </nav>
+  </div>
+
+  <div id="header" class="card">
+    <h1 id="emp-name">...</h1>
+    <p class="sub" id="emp-info"></p>
+    <div class="progress"><div id="prog-bar" style="width:0%"></div></div>
+    <p class="hint" id="prog-text">0 / ? คำถาม</p>
+  </div>
+
+  <div class="card">
+    <div class="chat" id="chat"></div>
+    <form id="answer-form">
+      <textarea id="answer" placeholder="พิมพ์คำตอบที่นี่..." required></textarea>
+      <div style="margin-top:12px; display:flex; gap:8px; justify-content:space-between; align-items:center;">
+        <p class="hint">กด Enter เพื่อส่ง / Shift+Enter เพื่อขึ้นบรรทัดใหม่</p>
+        <div>
+          <button type="button" class="ghost" id="skip-btn">ข้าม →</button>
+          <button type="submit">ส่งคำตอบ</button>
+        </div>
+      </div>
+    </form>
+    <div id="done-box" style="display:none; text-align:center; padding:24px;">
+      <h2>🎉 อินเทอร์วิวเสร็จสิ้น</h2>
+      <p class="sub">กดปุ่มด้านล่างเพื่อสร้างเอกสาร 6 ชุด (Workflow / Table / Diagram / JD / KPI / Optimization)</p>
+      <button id="finish-btn">สร้างเอกสาร →</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const qs = new URLSearchParams(location.search);
+const empId = qs.get('id');
+if (!empId) { location.href = '/'; }
+
+let currentKey = null;
+let totalQuestions = 15;
+let answered = 0;
+
+const chatEl = document.getElementById('chat');
+const answerEl = document.getElementById('answer');
+const form = document.getElementById('answer-form');
+const doneBox = document.getElementById('done-box');
+
+function esc(s){return String(s||'').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+function addMsg(role, text) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.innerHTML = `<div class="bubble">${esc(text)}</div>`;
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+function updateProgress() {
+  const pct = Math.min(100, Math.round((answered / totalQuestions) * 100));
+  document.getElementById('prog-bar').style.width = pct + '%';
+  document.getElementById('prog-text').textContent = `${answered} / ${totalQuestions} คำถาม (${pct}%)`;
+}
+
+async function start() {
+  const r = await fetch(`/api/interview/${empId}/start`, { method: 'POST' });
+  const data = await r.json();
+  const e = data.interview.employee;
+  document.getElementById('emp-name').textContent = e.name;
+  document.getElementById('emp-info').textContent = `${e.role} · ${e.department}`;
+  answered = data.interview.answers.length;
+
+  // replay prior answers
+  for (const a of data.interview.answers) {
+    addMsg('user', a.value);
+  }
+  showQuestion(data.question);
+  updateProgress();
+}
+
+function showQuestion(q) {
+  if (q.done) {
+    form.style.display = 'none';
+    doneBox.style.display = 'block';
+    addMsg('ai', 'ขอบคุณครับ! อินเทอร์วิวเสร็จแล้ว กดปุ่มด้านล่างเพื่อสร้างเอกสาร');
+    return;
+  }
+  currentKey = q.key;
+  addMsg('ai', q.text);
+  answerEl.focus();
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const value = answerEl.value.trim();
+  if (!value) return;
+  await sendAnswer(value, false);
+});
+
+document.getElementById('skip-btn').addEventListener('click', async () => {
+  await sendAnswer('(ข้าม / skip)', true);
+});
+
+async function sendAnswer(value, skipProbe) {
+  addMsg('user', value);
+  answerEl.value = '';
+  const r = await fetch(`/api/interview/${empId}/message`, {
+    method: 'POST',
+    headers: {'content-type':'application/json'},
+    body: JSON.stringify({ key: currentKey, value, skipProbe }),
+  });
+  const data = await r.json();
+  if (data.probe) {
+    addMsg('ai', data.probe);
+    return;
+  }
+  if (data.question) {
+    answered++;
+    updateProgress();
+    showQuestion(data.question);
+  }
+}
+
+// Enter = submit, Shift+Enter = newline
+answerEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    form.requestSubmit();
+  }
+});
+
+document.getElementById('finish-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('finish-btn');
+  btn.disabled = true; btn.textContent = 'กำลังสร้าง...';
+  const r = await fetch(`/api/interview/${empId}/finish`, { method: 'POST' });
+  if (r.ok) location.href = `/review?id=${empId}`;
+  else { alert('เกิดข้อผิดพลาด'); btn.disabled = false; btn.textContent = 'สร้างเอกสาร →'; }
+});
+
+start();
+</script>
+</body>
+</html>

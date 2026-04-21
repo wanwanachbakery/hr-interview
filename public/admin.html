@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Admin | AI Interviewer</title>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="logo">🤖 AI Interviewer <span class="pill blue" style="font-size:11px;">ADMIN</span></div>
+    <nav>
+      <a href="/">หน้าแรก</a>
+      <a href="/examples">📘 ตัวอย่าง</a>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/admin">🔐 Admin</a>
+      <a href="#" onclick="logout();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <h1>🔐 Admin — จัดการรหัสผ่าน</h1>
+  <p class="sub">หน้านี้เปิดดูได้เฉพาะรหัส admin · แจกรหัสให้พนักงานเฉพาะของฝ่ายเค้าเท่านั้น</p>
+
+  <div class="card">
+    <h2>Master password (เข้าดูทุกอย่าง)</h2>
+    <div id="master" style="font-family:monospace; font-size:20px; background:#fef3c7; padding:12px 16px; border-radius:8px; display:inline-block;">...</div>
+    <p class="hint">ใช้รหัสนี้จะเข้าดูได้ทุกฝ่าย + Dashboard + รายงานรวมบริษัท</p>
+  </div>
+
+  <div class="card">
+    <h2>รหัสของแต่ละฝ่าย</h2>
+    <p class="sub">พนักงานใช้รหัสของฝ่ายตัวเองเท่านั้น — จะเห็นแต่ข้อมูลของฝ่ายเค้า</p>
+    <table>
+      <thead><tr><th>ฝ่าย</th><th>รหัสผ่าน</th><th>Copy</th></tr></thead>
+      <tbody id="div-pw"></tbody>
+    </table>
+  </div>
+
+  <div class="card" style="background:#fef2f2; border-color:#fecaca;">
+    <h2>⚠️ วิธีเปลี่ยนรหัส</h2>
+    <p class="sub">แก้ไฟล์ <code>data/auth.json</code> แล้ว restart server — หน้านี้ไม่รองรับการแก้รหัสผ่านจริงเพื่อป้องกันความผิดพลาด</p>
+  </div>
+</div>
+
+<script>
+function esc(s){return String(s||'').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+
+async function load() {
+  const [auth, divs] = await Promise.all([
+    fetch('/api/admin/passwords').then(r => r.json()),
+    fetch('/api/divisions').then(r => r.json()),
+  ]);
+  document.getElementById('master').textContent = auth.master;
+  const divMap = Object.fromEntries(divs.map(d => [d.id, d]));
+
+  const tbody = document.getElementById('div-pw');
+  tbody.innerHTML = Object.entries(auth.divisions || {}).map(([id, pw]) => {
+    const d = divMap[id] || { icon: '🏢', name: id };
+    return `<tr>
+      <td>${esc(d.icon || '🏢')} <strong>${esc(d.name)}</strong> <span style="color:#94a3b8; font-size:12px;">${esc(id)}</span></td>
+      <td style="font-family:monospace; font-size:15px;">${esc(pw)}</td>
+      <td><button class="ghost" onclick="navigator.clipboard.writeText('${esc(pw)}').then(()=>this.textContent='✓ คัดลอกแล้ว')">คัดลอก</button></td>
+    </tr>`;
+  }).join('');
+}
+
+async function logout() {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/login';
+}
+
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>ฝ่าย / แผนก | AI Interviewer</title>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+<div class="container wide">
+  <div class="topbar">
+    <div class="logo">🤖 AI Interviewer</div>
+    <nav id="mainnav">
+      <a href="/">หน้าแรก</a>
+      <a href="/examples">📘 ตัวอย่าง</a>
+      <a href="/dashboard" id="nav-dashboard" style="display:none;">Dashboard</a>
+      <a href="/admin" id="nav-admin" style="display:none;">🔐 Admin</a>
+      <span id="role-badge" class="pill gray" style="margin-left:8px;"></span>
+      <a href="#" onclick="logout();return false;" id="nav-logout" style="display:none;">ออกจากระบบ</a>
+    </nav>
+  </div>
+  <script>
+    async function loadMe() {
+      try {
+        const me = await fetch('/api/me').then(r => r.json());
+        const badge = document.getElementById('role-badge');
+        document.getElementById('nav-logout').style.display = 'inline';
+        if (me.role === 'admin') {
+          badge.className = 'pill blue'; badge.textContent = 'ADMIN';
+          document.getElementById('nav-dashboard').style.display = 'inline';
+          document.getElementById('nav-admin').style.display = 'inline';
+        } else {
+          badge.className = 'pill green';
+          badge.textContent = 'ฝ่าย: ' + (me.division_name || me.division_id);
+        }
+      } catch {}
+    }
+    async function logout() {
+      await fetch('/api/logout', { method: 'POST' });
+      location.href = '/login';
+    }
+    loadMe();
+  </script>
+
+  <h1>เลือกฝ่ายที่ต้องการอินเทอร์วิว</h1>
+  <p class="sub">คลิกที่ฝ่ายเพื่อเข้าไปดู/เพิ่มพนักงานในฝ่ายนั้น — แต่ละฝ่ายมีแผนกย่อยและตำแหน่งต่าง ๆ ได้</p>
+
+  <div class="card" style="background:#fffbeb; border-color:#fde68a;">
+    <h2 style="margin-top:0;">📘 ยังไม่เคยใช้? ดูตัวอย่างก่อน</h2>
+    <p class="sub" style="margin-bottom:12px;">ตัวอย่างการตอบคำถามทั้ง 15 ข้อ + checklist ที่ควรเตรียม — ช่วยให้พนักงานตอบได้ชัดเจน ไม่กรอกข้อมูลผิด</p>
+    <a href="/examples"><button>ดูตัวอย่าง →</button></a>
+  </div>
+
+  <div class="card">
+    <div id="div-grid" class="grid"><p class="empty">กำลังโหลด...</p></div>
+  </div>
+
+  <div class="card">
+    <h2>➕ เพิ่มฝ่ายใหม่</h2>
+    <p class="sub">ถ้าฝ่ายในองค์กรของคุณไม่ตรงกับตัวอย่างด้านบน เพิ่มเองได้</p>
+    <form id="add-div-form">
+      <div class="row">
+        <div>
+          <label>ชื่อฝ่าย (ไทย) *</label>
+          <input name="name" required placeholder="เช่น ฝ่ายผลิต, ฝ่ายบริการลูกค้า"/>
+        </div>
+        <div>
+          <label>ชื่อฝ่าย (อังกฤษ)</label>
+          <input name="name_en" placeholder="เช่น Production, Customer Service"/>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Icon (emoji)</label>
+          <input name="icon" placeholder="🏭" maxlength="4"/>
+        </div>
+        <div>
+          <label>สี (hex)</label>
+          <input name="color" placeholder="#3b82f6" value="#3b82f6"/>
+        </div>
+      </div>
+      <div style="margin-top:12px;"><button type="submit">เพิ่มฝ่าย</button></div>
+    </form>
+  </div>
+</div>
+
+<script>
+function esc(s){return String(s||'').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+
+async function loadDivisions() {
+  const divs = await fetch('/api/divisions').then(r => r.json());
+  const grid = document.getElementById('div-grid');
+  if (!divs.length) {
+    grid.innerHTML = '<p class="empty">ยังไม่มีฝ่าย เพิ่มด้านล่างได้</p>';
+    return;
+  }
+  grid.innerHTML = divs.map(d => `
+    <a class="div-card" href="/division?id=${encodeURIComponent(d.id)}" style="border-top-color:${esc(d.color)}">
+      <div class="icon">${esc(d.icon || '🏢')}</div>
+      <div class="name">${esc(d.name)}</div>
+      <div class="meta">${esc(d.name_en || '')}</div>
+      <div class="meta" style="margin-top:4px;">
+        👥 ${d.employeeCount} คน
+        ${d.completedCount ? `· <span style="color:#166534;">✓ ${d.completedCount} คน</span>` : ''}
+      </div>
+    </a>
+  `).join('');
+}
+
+document.getElementById('add-div-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  const r = await fetch('/api/divisions', {
+    method: 'POST',
+    headers: {'content-type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) { alert('เกิดข้อผิดพลาด'); return; }
+  e.target.reset();
+  await loadDivisions();
+});
+
+loadDivisions();
+</script>
+</body>
+</html>
