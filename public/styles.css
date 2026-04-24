@@ -34,8 +34,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); font-size: 14px; }
 th { background: #f8fafc; font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-.topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
-.topbar .logo { font-weight: 700; font-size: 18px; }
+.topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); gap: 12px; }
+.topbar .logo { font-weight: 700; font-size: 18px; display: inline-flex; align-items: center; gap: 10px; }
+.topbar .logo-img { height: 28px; width: auto; display: block; }
+.topbar .logo-sub { font-size: 12px; color: var(--muted); font-weight: 500; letter-spacing: 0.3px; text-transform: uppercase; }
+.login-logo-img { width: 220px; height: auto; display: block; margin: 0 auto 8px; }
 .topbar nav a { margin-left: 16px; text-decoration: none; font-size: 14px; color: var(--muted); }
 .topbar nav a:hover { color: var(--ink); }
 

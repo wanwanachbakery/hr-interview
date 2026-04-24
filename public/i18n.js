@@ -22,7 +22,7 @@
       nav_admin: '🔐 Admin',
       nav_logout: 'ออกจากระบบ',
       nav_logout_short: 'ออก',
-      brand: '🤖 AI Interviewer',
+      brand: 'AI Interviewer',
 
       // login
       login_heading: '🔐 เข้าสู่ระบบ',
@@ -126,7 +126,7 @@
       nav_admin: '🔐 Admin',
       nav_logout: 'Log out',
       nav_logout_short: 'Logout',
-      brand: '🤖 AI Interviewer',
+      brand: 'AI Interviewer',
 
       login_heading: '🔐 Sign in',
       login_sub: 'Use your division password, or the admin password to see everything.',
@@ -222,7 +222,7 @@
       nav_admin: '🔐 管理',
       nav_logout: '退出登录',
       nav_logout_short: '退出',
-      brand: '🤖 AI 访谈',
+      brand: 'AI 访谈',
 
       login_heading: '🔐 登录',
       login_sub: '使用您部门的密码，或管理员密码查看全部内容。',

@@ -61,7 +61,7 @@ function parseCookie(req, name) {
 }
 function loadAuth() { try { return JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')); } catch { return { master:'', divisions:{} }; } }
 
-const PUBLIC_PATHS = new Set(['/login', '/api/login', '/api/logout', '/api/lang', '/styles.css', '/favicon.ico', '/i18n.js']);
+const PUBLIC_PATHS = new Set(['/login', '/api/login', '/api/logout', '/api/lang', '/styles.css', '/favicon.ico', '/i18n.js', '/logo.png']);
 function authMiddleware(req, res, next) {
   if (PUBLIC_PATHS.has(req.path)) return next();
   const token = parseCookie(req, 'auth');
