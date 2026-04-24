@@ -61,9 +61,14 @@ function parseCookie(req, name) {
 }
 function loadAuth() { try { return JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')); } catch { return { master:'', divisions:{} }; } }
 
-const PUBLIC_PATHS = new Set(['/login', '/api/login', '/api/logout', '/api/lang', '/styles.css', '/favicon.ico', '/i18n.js', '/logo.png']);
+const PUBLIC_PATHS = new Set(['/login', '/api/login', '/api/logout', '/api/lang', '/api/schedules', '/interview', '/styles.css', '/favicon.ico', '/i18n.js', '/logo.png']);
+// Interview-taking endpoints are open to anyone with the employee id —
+// /api/interview/<id>/start | /message | /finish (read-only /api/interview/<id> stays protected).
+function isPublicInterviewApi(p) {
+  return /^\/api\/interview\/[^/]+\/(start|message|finish)$/.test(p);
+}
 function authMiddleware(req, res, next) {
-  if (PUBLIC_PATHS.has(req.path)) return next();
+  if (PUBLIC_PATHS.has(req.path) || isPublicInterviewApi(req.path)) return next();
   const token = parseCookie(req, 'auth');
   const session = verifyToken(token);
   if (!session) {
@@ -243,10 +248,10 @@ app.post('/api/lang', (req, res) => {
 });
 
 // Start interview. Optional body: { lang, schedule }. First call freezes these on the interview.
+// Public endpoint: anyone with the employee id can answer (emp ids are long/random).
 app.post('/api/interview/:id/start', (req, res) => {
   const emp = loadEmployees().find(e => e.id === req.params.id);
   if (!emp) return res.status(404).json({ error: 'not found' });
-  if (!canAccessEmployee(req.session, emp)) return res.status(403).json({ error: 'forbidden' });
 
   const bodyLang = String((req.body && req.body.lang) || '').toLowerCase();
   const bodySchedule = String((req.body && req.body.schedule) || '');
@@ -282,7 +287,6 @@ app.post('/api/interview/:id/start', (req, res) => {
 app.post('/api/interview/:id/message', (req, res) => {
   const iv = loadInterview(req.params.id);
   if (!iv) return res.status(404).json({ error: 'interview not started' });
-  if (!canAccessEmployee(req.session, iv.employee)) return res.status(403).json({ error: 'forbidden' });
 
   const { key, value, skipProbe } = req.body || {};
   if (!key || typeof value !== 'string') {
@@ -310,7 +314,6 @@ app.post('/api/interview/:id/message', (req, res) => {
 app.post('/api/interview/:id/finish', (req, res) => {
   const iv = loadInterview(req.params.id);
   if (!iv) return res.status(404).json({ error: 'not found' });
-  if (!canAccessEmployee(req.session, iv.employee)) return res.status(403).json({ error: 'forbidden' });
   iv.finishedAt = new Date().toISOString();
   saveInterview(iv);
 
