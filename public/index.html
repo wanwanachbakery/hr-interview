@@ -5,18 +5,19 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>ฝ่าย / แผนก | AI Interviewer</title>
   <link rel="stylesheet" href="/styles.css"/>
+  <script src="/i18n.js"></script>
 </head>
 <body>
 <div class="container wide">
   <div class="topbar">
-    <div class="logo">🤖 AI Interviewer</div>
+    <div class="logo" data-i18n="brand">🤖 AI Interviewer</div>
     <nav id="mainnav">
-      <a href="/">หน้าแรก</a>
-      <a href="/examples">📘 ตัวอย่าง</a>
-      <a href="/dashboard" id="nav-dashboard" style="display:none;">Dashboard</a>
-      <a href="/admin" id="nav-admin" style="display:none;">🔐 Admin</a>
+      <a href="/" data-i18n="nav_home">หน้าแรก</a>
+      <a href="/examples" data-i18n="nav_examples">📘 ตัวอย่าง</a>
+      <a href="/dashboard" id="nav-dashboard" style="display:none;" data-i18n="nav_dashboard">Dashboard</a>
+      <a href="/admin" id="nav-admin" style="display:none;" data-i18n="nav_admin">🔐 Admin</a>
       <span id="role-badge" class="pill gray" style="margin-left:8px;"></span>
-      <a href="#" onclick="logout();return false;" id="nav-logout" style="display:none;">ออกจากระบบ</a>
+      <a href="#" onclick="logout();return false;" id="nav-logout" style="display:none;" data-i18n="nav_logout">ออกจากระบบ</a>
     </nav>
   </div>
   <script>
@@ -42,44 +43,44 @@
     loadMe();
   </script>
 
-  <h1>เลือกฝ่ายที่ต้องการอินเทอร์วิว</h1>
-  <p class="sub">คลิกที่ฝ่ายเพื่อเข้าไปดู/เพิ่มพนักงานในฝ่ายนั้น — แต่ละฝ่ายมีแผนกย่อยและตำแหน่งต่าง ๆ ได้</p>
+  <h1 data-i18n="index_h1">เลือกฝ่ายที่ต้องการอินเทอร์วิว</h1>
+  <p class="sub" data-i18n="index_sub">คลิกที่ฝ่ายเพื่อเข้าไปดู/เพิ่มพนักงานในฝ่ายนั้น — แต่ละฝ่ายมีแผนกย่อยและตำแหน่งต่าง ๆ ได้</p>
 
   <div class="card" style="background:#fffbeb; border-color:#fde68a;">
-    <h2 style="margin-top:0;">📘 ยังไม่เคยใช้? ดูตัวอย่างก่อน</h2>
-    <p class="sub" style="margin-bottom:12px;">ตัวอย่างการตอบคำถามทั้ง 15 ข้อ + checklist ที่ควรเตรียม — ช่วยให้พนักงานตอบได้ชัดเจน ไม่กรอกข้อมูลผิด</p>
-    <a href="/examples"><button>ดูตัวอย่าง →</button></a>
+    <h2 style="margin-top:0;" data-i18n="index_examples_title">📘 ยังไม่เคยใช้? ดูตัวอย่างก่อน</h2>
+    <p class="sub" style="margin-bottom:12px;" data-i18n="index_examples_sub">ตัวอย่างการตอบคำถาม + checklist ที่ควรเตรียม — ช่วยให้พนักงานตอบได้ชัดเจน ไม่กรอกข้อมูลผิด</p>
+    <a href="/examples"><button data-i18n="index_examples_btn">ดูตัวอย่าง →</button></a>
   </div>
 
   <div class="card">
-    <div id="div-grid" class="grid"><p class="empty">กำลังโหลด...</p></div>
+    <div id="div-grid" class="grid"><p class="empty" data-i18n="loading">กำลังโหลด...</p></div>
   </div>
 
   <div class="card">
-    <h2>➕ เพิ่มฝ่ายใหม่</h2>
-    <p class="sub">ถ้าฝ่ายในองค์กรของคุณไม่ตรงกับตัวอย่างด้านบน เพิ่มเองได้</p>
+    <h2 data-i18n="index_add_div_h2">➕ เพิ่มฝ่ายใหม่</h2>
+    <p class="sub" data-i18n="index_add_div_sub">ถ้าฝ่ายในองค์กรของคุณไม่ตรงกับตัวอย่างด้านบน เพิ่มเองได้</p>
     <form id="add-div-form">
       <div class="row">
         <div>
-          <label>ชื่อฝ่าย (ไทย) *</label>
+          <label data-i18n="label_div_name_th">ชื่อฝ่าย (ไทย) *</label>
           <input name="name" required placeholder="เช่น ฝ่ายผลิต, ฝ่ายบริการลูกค้า"/>
         </div>
         <div>
-          <label>ชื่อฝ่าย (อังกฤษ)</label>
+          <label data-i18n="label_div_name_en">ชื่อฝ่าย (อังกฤษ)</label>
           <input name="name_en" placeholder="เช่น Production, Customer Service"/>
         </div>
       </div>
       <div class="row">
         <div>
-          <label>Icon (emoji)</label>
+          <label data-i18n="label_div_icon">Icon (emoji)</label>
           <input name="icon" placeholder="🏭" maxlength="4"/>
         </div>
         <div>
-          <label>สี (hex)</label>
+          <label data-i18n="label_div_color">สี (hex)</label>
           <input name="color" placeholder="#3b82f6" value="#3b82f6"/>
         </div>
       </div>
-      <div style="margin-top:12px;"><button type="submit">เพิ่มฝ่าย</button></div>
+      <div style="margin-top:12px;"><button type="submit" data-i18n="btn_add_div">เพิ่มฝ่าย</button></div>
     </form>
   </div>
 </div>

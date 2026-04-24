@@ -5,17 +5,18 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Admin | AI Interviewer</title>
   <link rel="stylesheet" href="/styles.css"/>
+  <script src="/i18n.js"></script>
 </head>
 <body>
 <div class="container">
   <div class="topbar">
-    <div class="logo">🤖 AI Interviewer <span class="pill blue" style="font-size:11px;">ADMIN</span></div>
+    <div class="logo"><span data-i18n="brand">🤖 AI Interviewer</span> <span class="pill blue" style="font-size:11px;">ADMIN</span></div>
     <nav>
-      <a href="/">หน้าแรก</a>
-      <a href="/examples">📘 ตัวอย่าง</a>
-      <a href="/dashboard">Dashboard</a>
-      <a href="/admin">🔐 Admin</a>
-      <a href="#" onclick="logout();return false;">ออกจากระบบ</a>
+      <a href="/" data-i18n="nav_home">หน้าแรก</a>
+      <a href="/examples" data-i18n="nav_examples">📘 ตัวอย่าง</a>
+      <a href="/dashboard" data-i18n="nav_dashboard">Dashboard</a>
+      <a href="/admin" data-i18n="nav_admin">🔐 Admin</a>
+      <a href="#" onclick="logout();return false;" data-i18n="nav_logout">ออกจากระบบ</a>
     </nav>
   </div>
 

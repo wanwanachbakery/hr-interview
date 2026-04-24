@@ -5,45 +5,46 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>ผลลัพธ์ | AI Interviewer</title>
   <link rel="stylesheet" href="/styles.css"/>
+  <script src="/i18n.js"></script>
 </head>
 <body>
 <div class="container">
   <div class="topbar">
-    <div class="logo">🤖 AI Interviewer</div>
+    <div class="logo" data-i18n="brand">🤖 AI Interviewer</div>
     <nav>
-      <a href="/">หน้าแรก</a>
-      <a href="/examples">📘 ตัวอย่าง</a>
-      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;">ออก</a>
+      <a href="/" data-i18n="nav_home">หน้าแรก</a>
+      <a href="/examples" data-i18n="nav_examples">📘 ตัวอย่าง</a>
+      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;" data-i18n="nav_logout_short">ออก</a>
     </nav>
   </div>
 
-  <h1 id="title">ผลอินเทอร์วิว</h1>
+  <h1 id="title">...</h1>
   <p class="sub" id="sub"></p>
 
   <div class="card">
-    <h2>เอกสารที่สร้างจากอินเทอร์วิว</h2>
-    <p class="sub">ดาวน์โหลดหรือเปิดดูได้เลย (ไฟล์เก็บใน <code>outputs/&lt;id&gt;/</code>)</p>
+    <h2 data-i18n="rv_files_h2">เอกสารที่สร้างจากอินเทอร์วิว</h2>
+    <p class="sub" data-i18n="rv_files_sub">ดาวน์โหลดหรือเปิดดูได้เลย (ไฟล์เก็บใน outputs/&lt;id&gt;/)</p>
     <table>
-      <thead><tr><th>ไฟล์</th><th>คำอธิบาย</th><th></th></tr></thead>
+      <thead><tr><th data-i18n="rv_col_file">ไฟล์</th><th data-i18n="rv_col_desc">คำอธิบาย</th><th></th></tr></thead>
       <tbody>
-        <tr><td>workflow.md</td><td>เอกสาร Workflow รายวัน/สัปดาห์ (Markdown)</td><td><a id="f1" target="_blank">เปิด</a></td></tr>
-        <tr><td>workflow.csv</td><td>ตาราง CSV สำหรับเปิดใน Excel</td><td><a id="f2" target="_blank">เปิด</a></td></tr>
-        <tr><td>workflow-diagram.md</td><td>Flowchart (Mermaid — paste ใน <a href="https://mermaid.live" target="_blank">mermaid.live</a>)</td><td><a id="f3" target="_blank">เปิด</a></td></tr>
-        <tr><td>job-description.md</td><td>Job Description สร้างจากงานจริง</td><td><a id="f4" target="_blank">เปิด</a></td></tr>
-        <tr><td>kpi.md</td><td>KPI ที่เสนอจาก workflow</td><td><a id="f5" target="_blank">เปิด</a></td></tr>
-        <tr><td>optimization.md</td><td>ข้อเสนอปรับปรุง — งานซ้ำ/AI แทนได้</td><td><a id="f6" target="_blank">เปิด</a></td></tr>
+        <tr><td>workflow.md</td><td>Workflow (Markdown)</td><td><a id="f1" target="_blank" data-i18n="rv_open">เปิด</a></td></tr>
+        <tr><td>workflow.csv</td><td>CSV (Excel)</td><td><a id="f2" target="_blank" data-i18n="rv_open">เปิด</a></td></tr>
+        <tr><td>workflow-diagram.md</td><td>Flowchart (Mermaid — paste at <a href="https://mermaid.live" target="_blank">mermaid.live</a>)</td><td><a id="f3" target="_blank" data-i18n="rv_open">เปิด</a></td></tr>
+        <tr><td>job-description.md</td><td>Job Description</td><td><a id="f4" target="_blank" data-i18n="rv_open">เปิด</a></td></tr>
+        <tr><td>kpi.md</td><td>KPI</td><td><a id="f5" target="_blank" data-i18n="rv_open">เปิด</a></td></tr>
+        <tr><td>optimization.md</td><td>Optimization</td><td><a id="f6" target="_blank" data-i18n="rv_open">เปิด</a></td></tr>
       </tbody>
     </table>
   </div>
 
   <div class="card">
-    <h2>สรุปคำตอบทั้งหมด</h2>
+    <h2 data-i18n="rv_answers_h2">สรุปคำตอบทั้งหมด</h2>
     <div id="answers"></div>
   </div>
 
   <div style="display:flex; gap:8px; margin-top:16px;">
-    <a href="/"><button class="ghost">← กลับหน้าแรก</button></a>
-    <a href="/dashboard"><button>ไป Dashboard →</button></a>
+    <a href="/"><button class="ghost" data-i18n="rv_back">← กลับหน้าแรก</button></a>
+    <a href="/dashboard"><button data-i18n="rv_to_dashboard">ไป Dashboard →</button></a>
   </div>
 </div>
 
@@ -52,6 +53,7 @@ const qs = new URLSearchParams(location.search);
 const id = qs.get('id');
 if (!id) location.href = '/';
 
+const T = (k, v) => (window.I18N ? window.I18N.t(k, v) : k);
 function esc(s){return String(s||'').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
 
 ['workflow.md','workflow.csv','workflow-diagram.md','job-description.md','kpi.md','optimization.md']
@@ -59,8 +61,8 @@ function esc(s){return String(s||'').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"
 
 fetch(`/api/interview/${id}`).then(r=>r.json()).then(iv => {
   const e = iv.employee;
-  document.getElementById('title').textContent = `ผลอินเทอร์วิว — ${e.name}`;
-  document.getElementById('sub').textContent = `${e.role} · ${e.department} · ทำเมื่อ ${new Date(iv.finishedAt || iv.startedAt).toLocaleString('th-TH')}`;
+  document.getElementById('title').textContent = T('rv_heading_tpl', { name: e.name });
+  document.getElementById('sub').textContent = `${e.role} · ${e.department || ''} · ${new Date(iv.finishedAt || iv.startedAt).toLocaleString()}`;
 
   const rows = iv.answers.map(a => `
     <div style="padding:10px 0; border-bottom:1px solid #e2e8f0;">
@@ -68,7 +70,7 @@ fetch(`/api/interview/${id}`).then(r=>r.json()).then(iv => {
       <div style="margin-top:4px; white-space:pre-wrap;">${esc(a.value)}</div>
     </div>
   `).join('');
-  document.getElementById('answers').innerHTML = rows || '<p class="empty">ไม่มีคำตอบ</p>';
+  document.getElementById('answers').innerHTML = rows || `<p class="empty">${T('empty_no_data')}</p>`;
 });
 </script>
 </body>

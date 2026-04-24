@@ -88,5 +88,18 @@
     "createdAt": "2026-04-20T11:21:23.542Z",
     "interviewStatus": "completed",
     "completedAt": "2026-04-20T12:19:35.702Z"
+  },
+  {
+    "id": "emp_mocgrmc2jmj9",
+    "name": "Tnw",
+    "role": "IT Manager",
+    "division_id": "it",
+    "division_name": "IT",
+    "department": "",
+    "primary_duty": "บริหารจัดการงานฝ่ายไอทีทั้งหมด",
+    "email": "itjianchacenter@gmail.com",
+    "createdAt": "2026-04-24T05:22:22.802Z",
+    "interviewStatus": "completed",
+    "completedAt": "2026-04-24T06:16:41.196Z"
   }
 ]

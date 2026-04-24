@@ -5,33 +5,33 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Dashboard | AI Interviewer</title>
   <link rel="stylesheet" href="/styles.css"/>
+  <script src="/i18n.js"></script>
 </head>
 <body>
 <div class="container wide">
   <div class="topbar">
-    <div class="logo">🤖 AI Interviewer</div>
+    <div class="logo" data-i18n="brand">🤖 AI Interviewer</div>
     <nav>
-      <a href="/">หน้าแรก</a>
-      <a href="/examples">📘 ตัวอย่าง</a>
-      <a href="/dashboard">Dashboard</a>
-      <a href="/admin">🔐 Admin</a>
-      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;">ออก</a>
+      <a href="/" data-i18n="nav_home">หน้าแรก</a>
+      <a href="/examples" data-i18n="nav_examples">📘 ตัวอย่าง</a>
+      <a href="/dashboard" data-i18n="nav_dashboard">Dashboard</a>
+      <a href="/admin" data-i18n="nav_admin">🔐 Admin</a>
+      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;" data-i18n="nav_logout_short">ออก</a>
     </nav>
   </div>
 
-  <h1>Dashboard ภาพรวมบริษัท</h1>
-  <p class="sub">พนักงานทุกคน จัดตามฝ่าย · ใช้วิเคราะห์ภาพรวมและหาจุดปรับปรุง</p>
+  <h1 data-i18n="dash_h1">Dashboard ภาพรวมบริษัท</h1>
+  <p class="sub" data-i18n="dash_sub">พนักงานทุกคน จัดตามฝ่าย · ใช้วิเคราะห์ภาพรวมและหาจุดปรับปรุง</p>
 
   <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
       <div>
-        <h2 style="margin:0;">สรุป</h2>
-        <p class="sub" id="summary" style="margin:4px 0 0;">...</p>
+        <p class="sub" id="summary" style="margin:0;">...</p>
       </div>
       <div>
-        <button id="analyze-btn">🔍 วิเคราะห์ภาพรวมบริษัท</button>
+        <button id="analyze-btn" data-i18n="dash_analyze">🔍 วิเคราะห์ภาพรวมบริษัท</button>
         <a id="report-link" href="/api/outputs/_company/optimization-report.md" target="_blank" style="margin-left:8px; display:none;">
-          <button class="ghost">📄 เปิดรายงาน (.md)</button>
+          <button class="ghost" data-i18n="dash_open_report">📄 เปิดรายงาน (.md)</button>
         </a>
       </div>
     </div>
@@ -40,17 +40,18 @@
   <div id="divisions"></div>
 
   <div class="card">
-    <h2>รายงาน Optimization ล่าสุด</h2>
-    <div id="report-preview" class="empty">ยังไม่มีรายงาน — กดปุ่ม "วิเคราะห์ภาพรวมบริษัท" ข้างบน</div>
+    <h2 data-i18n="dash_report_h2">รายงาน Optimization ล่าสุด</h2>
+    <div id="report-preview" class="empty" data-i18n="dash_no_report">ยังไม่มีรายงาน — กดปุ่ม "วิเคราะห์ภาพรวมบริษัท" ข้างบน</div>
   </div>
 </div>
 
 <script>
+const T = (k, v) => (window.I18N ? window.I18N.t(k, v) : k);
 function esc(s){return String(s||'').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
 function pill(s){
-  if (s==='completed') return '<span class="pill green">เสร็จแล้ว</span>';
-  if (s==='in_progress') return '<span class="pill blue">กำลังทำ</span>';
-  return '<span class="pill gray">ยังไม่เริ่ม</span>';
+  if (s==='completed') return `<span class="pill green">${T('status_done')}</span>`;
+  if (s==='in_progress') return `<span class="pill blue">${T('status_in_progress')}</span>`;
+  return `<span class="pill gray">${T('status_not_started')}</span>`;
 }
 
 async function load() {
@@ -61,7 +62,7 @@ async function load() {
 
   const done = emps.filter(e => e.interviewStatus==='completed').length;
   document.getElementById('summary').textContent =
-    `${divs.length} ฝ่าย · ${emps.length} พนักงาน · อินเทอร์วิวเสร็จ ${done} คน (${emps.length ? Math.round(done/emps.length*100) : 0}%)`;
+    `${divs.length} ${T('dash_summary_divs')} · ${emps.length} ${T('dash_summary_emps')} · ${T('dash_summary_done')} ${done} (${emps.length ? Math.round(done/emps.length*100) : 0}%)`;
 
   const byDiv = {};
   for (const e of emps) {
@@ -119,14 +120,14 @@ async function load() {
 
 document.getElementById('analyze-btn').addEventListener('click', async () => {
   const btn = document.getElementById('analyze-btn');
-  btn.disabled = true; btn.textContent = 'กำลังวิเคราะห์...';
+  btn.disabled = true; btn.textContent = T('dash_analyzing');
   const r = await fetch('/api/company/analyze', { method: 'POST' });
   const data = await r.json();
   if (data.ok) {
-    alert(`วิเคราะห์เสร็จ — ใช้ข้อมูลจาก ${data.count} คน`);
+    alert(`✓ ${data.count} — ${T('status_done')}`);
     await load();
-  } else { alert('เกิดข้อผิดพลาด'); }
-  btn.disabled = false; btn.textContent = '🔍 วิเคราะห์ภาพรวมบริษัท';
+  } else { alert(T('iv_error')); }
+  btn.disabled = false; btn.textContent = T('dash_analyze');
 });
 
 load();

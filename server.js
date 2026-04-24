@@ -61,7 +61,7 @@ function parseCookie(req, name) {
 }
 function loadAuth() { try { return JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')); } catch { return { master:'', divisions:{} }; } }
 
-const PUBLIC_PATHS = new Set(['/login', '/api/login', '/api/logout', '/styles.css', '/favicon.ico']);
+const PUBLIC_PATHS = new Set(['/login', '/api/login', '/api/logout', '/api/lang', '/styles.css', '/favicon.ico', '/i18n.js']);
 function authMiddleware(req, res, next) {
   if (PUBLIC_PATHS.has(req.path)) return next();
   const token = parseCookie(req, 'auth');
@@ -228,11 +228,29 @@ function canAccessEmployee(session, emp) {
   return emp.division_id === session.div_id;
 }
 
-// Start interview
+// List available schedules (for UI) — lang-aware labels
+app.get('/api/schedules', (req, res) => {
+  const lang = String(req.query.lang || parseCookie(req, 'lang') || 'th');
+  res.json(ai.listSchedules(lang));
+});
+
+// Set language preference (cookie-based, 180 days)
+app.post('/api/lang', (req, res) => {
+  const lang = String((req.body && req.body.lang) || '').toLowerCase();
+  if (!['th', 'en', 'cn'].includes(lang)) return res.status(400).json({ error: 'invalid lang' });
+  res.setHeader('Set-Cookie', `lang=${lang}; Path=/; SameSite=Lax; Max-Age=${180*24*3600}`);
+  res.json({ ok: true, lang });
+});
+
+// Start interview. Optional body: { lang, schedule }. First call freezes these on the interview.
 app.post('/api/interview/:id/start', (req, res) => {
   const emp = loadEmployees().find(e => e.id === req.params.id);
   if (!emp) return res.status(404).json({ error: 'not found' });
   if (!canAccessEmployee(req.session, emp)) return res.status(403).json({ error: 'forbidden' });
+
+  const bodyLang = String((req.body && req.body.lang) || '').toLowerCase();
+  const bodySchedule = String((req.body && req.body.schedule) || '');
+  const cookieLang = parseCookie(req, 'lang');
 
   let iv = loadInterview(emp.id);
   if (!iv) {
@@ -240,9 +258,21 @@ app.post('/api/interview/:id/start', (req, res) => {
       id: emp.id,
       employee: emp,
       answers: [],
+      lang: ['th','en','cn'].includes(bodyLang) ? bodyLang
+          : (['th','en','cn'].includes(cookieLang) ? cookieLang : 'th'),
+      schedule: ai.SCHEDULES[bodySchedule] ? bodySchedule : '09-18',
       startedAt: new Date().toISOString(),
     };
     saveInterview(iv);
+  } else {
+    // Allow caller to update lang/schedule ONLY if nothing has been answered yet.
+    let dirty = false;
+    if (!iv.answers.length) {
+      if (['th','en','cn'].includes(bodyLang) && bodyLang !== iv.lang) { iv.lang = bodyLang; dirty = true; }
+      if (ai.SCHEDULES[bodySchedule] && bodySchedule !== iv.schedule) { iv.schedule = bodySchedule; dirty = true; }
+    }
+    // Legacy interviews (no lang/schedule) keep their original behaviour via mock-ai's legacy branch.
+    if (dirty) saveInterview(iv);
   }
   const q = ai.getNextQuestion(iv);
   res.json({ interview: iv, question: q });
@@ -259,7 +289,7 @@ app.post('/api/interview/:id/message', (req, res) => {
     return res.status(400).json({ error: 'require {key, value}' });
   }
 
-  const probe = skipProbe ? null : ai.shouldProbe(value);
+  const probe = skipProbe ? null : ai.shouldProbe(value, iv.lang || 'th');
   if (probe) {
     // Probe BEFORE accepting -> ask user to elaborate
     return res.json({ probe });
@@ -302,26 +332,50 @@ app.post('/api/interview/:id/finish', (req, res) => {
   res.json({ ok: true, files });
 });
 
+// Interview history for calendar — compact records of started/finished dates.
+// scope: omitted/"mine" = current division (for admin on a page), "all" = whole company (admin only),
+//        a specific division_id = filter to that division (admin only).
+// Division users always see only their own division regardless of scope.
+app.get('/api/interviews/history', (req, res) => {
+  const session = req.session;
+  const requested = String(req.query.scope || '').trim();
+  const emps = loadEmployees();
+
+  let filtered = emps;
+  if (session.role === 'division') {
+    filtered = filtered.filter(e => e.division_id === session.div_id);
+  } else if (session.role === 'admin' && requested && requested !== 'all') {
+    filtered = filtered.filter(e => e.division_id === requested);
+  }
+
+  const divs = loadDivisions();
+  const divMap = Object.fromEntries(divs.map(d => [d.id, d]));
+
+  const records = filtered.map(e => {
+    const iv = loadInterview(e.id);
+    const d = divMap[e.division_id] || {};
+    return {
+      id: e.id,
+      name: e.name,
+      role: e.role,
+      division_id: e.division_id,
+      division_name: e.division_name || d.name || '',
+      division_icon: d.icon || '🏢',
+      division_color: d.color || '#3b82f6',
+      startedAt: iv?.startedAt || null,
+      finishedAt: iv?.finishedAt || null,
+      status: e.interviewStatus,
+    };
+  });
+  res.json(records);
+});
+
 // Get interview JSON
 app.get('/api/interview/:id', (req, res) => {
   const iv = loadInterview(req.params.id);
   if (!iv) return res.status(404).json({ error: 'not found' });
   if (!canAccessEmployee(req.session, iv.employee)) return res.status(403).json({ error: 'forbidden' });
   res.json(iv);
-});
-
-// Download a generated file — per-employee, division-scoped
-app.get('/api/outputs/:id/:file', (req, res) => {
-  const { id, file } = req.params;
-  if (file.includes('..') || file.includes('/') || file.includes('\\')) {
-    return res.status(400).send('bad filename');
-  }
-  const emp = loadEmployees().find(e => e.id === id);
-  if (!canAccessEmployee(req.session, emp)) return res.status(403).send('forbidden');
-  const safeId = id.replace(/[^a-zA-Z0-9_]/g, '');
-  const p = path.join(OUTPUT_DIR, safeId, file);
-  if (!fs.existsSync(p)) return res.status(404).send('not found');
-  res.sendFile(p);
 });
 
 // Company analysis — admin only
@@ -337,12 +391,28 @@ app.post('/api/company/analyze', requireAdmin, (req, res) => {
   res.json({ ok: true, count: interviews.length, file: 'optimization-report.md' });
 });
 
+// Download company-wide report — admin only.
+// Registered BEFORE the generic :id/:file route so "_company" doesn't get matched as an employee id.
 app.get('/api/outputs/_company/:file', requireAdmin, (req, res) => {
   const file = req.params.file;
   if (file.includes('..') || file.includes('/') || file.includes('\\')) {
     return res.status(400).send('bad filename');
   }
   const p = path.join(OUTPUT_DIR, '_company', file);
+  if (!fs.existsSync(p)) return res.status(404).send('not found');
+  res.sendFile(p);
+});
+
+// Download a generated file — per-employee, division-scoped
+app.get('/api/outputs/:id/:file', (req, res) => {
+  const { id, file } = req.params;
+  if (file.includes('..') || file.includes('/') || file.includes('\\')) {
+    return res.status(400).send('bad filename');
+  }
+  const emp = loadEmployees().find(e => e.id === id);
+  if (!canAccessEmployee(req.session, emp)) return res.status(403).send('forbidden');
+  const safeId = id.replace(/[^a-zA-Z0-9_]/g, '');
+  const p = path.join(OUTPUT_DIR, safeId, file);
   if (!fs.existsSync(p)) return res.status(404).send('not found');
   res.sendFile(p);
 });

@@ -5,16 +5,17 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>ฝ่าย | AI Interviewer</title>
   <link rel="stylesheet" href="/styles.css"/>
+  <script src="/i18n.js"></script>
 </head>
 <body>
 <div class="container">
   <div class="topbar">
-    <div class="logo">🤖 AI Interviewer</div>
+    <div class="logo" data-i18n="brand">🤖 AI Interviewer</div>
     <nav>
-      <a href="/">หน้าแรก</a>
-      <a href="/examples">📘 ตัวอย่าง</a>
-      <a href="/dashboard" id="nav-dashboard" style="display:none;">Dashboard</a>
-      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;">ออก</a>
+      <a href="/" data-i18n="nav_home">หน้าแรก</a>
+      <a href="/examples" data-i18n="nav_examples">📘 ตัวอย่าง</a>
+      <a href="/dashboard" id="nav-dashboard" style="display:none;" data-i18n="nav_dashboard">Dashboard</a>
+      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;" data-i18n="nav_logout_short">ออก</a>
     </nav>
   </div>
   <script>
@@ -23,44 +24,69 @@
     }).catch(()=>{});
   </script>
 
-  <p class="breadcrumb"><a href="/">← กลับทุกฝ่าย</a></p>
+  <p class="breadcrumb"><a href="/" data-i18n="div_back">← กลับทุกฝ่าย</a></p>
   <h1 id="title">...</h1>
   <p class="sub" id="sub"></p>
 
   <div class="card">
-    <h2>พนักงานในฝ่ายนี้</h2>
-    <div id="emp-list"><p class="empty">กำลังโหลด...</p></div>
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h2 style="margin:0;" data-i18n="cal_title">ปฏิทินการสัมภาษณ์</h2>
+        <p class="sub" style="margin:4px 0 0;" data-i18n="cal_sub">วันที่มีดอท = มีพนักงานสัมภาษณ์เสร็จในวันนั้น · คลิกเพื่อดูชื่อ</p>
+      </div>
+      <div class="cal-controls">
+        <div id="scope-toggle" class="cal-scope-group" style="display:none;">
+          <button type="button" id="scope-mine" class="active" data-i18n="cal_scope_mine">เฉพาะฝ่ายนี้</button>
+          <button type="button" id="scope-all" data-i18n="cal_scope_all">ทุกฝ่าย</button>
+        </div>
+        <button class="ghost" id="cal-prev">‹</button>
+        <span id="cal-label" class="cal-label"></span>
+        <button class="ghost" id="cal-next">›</button>
+        <button class="ghost" id="cal-today" data-i18n="cal_today">วันนี้</button>
+      </div>
+    </div>
+    <div id="calendar" class="calendar-grid"></div>
+    <div class="cal-legend">
+      <span class="lg"><span class="dot done"></span><span data-i18n="cal_legend_done">เสร็จ</span></span>
+      <span class="lg"><span class="dot started"></span><span data-i18n="cal_legend_started">เริ่มแล้ว (ยังไม่เสร็จ)</span></span>
+    </div>
+    <div id="cal-selected-day"></div>
   </div>
 
   <div class="card">
-    <h2>➕ เพิ่มพนักงานในฝ่ายนี้</h2>
+    <h2 data-i18n="div_emps_h2">พนักงานในฝ่ายนี้</h2>
+    <div id="emp-list"><p class="empty" data-i18n="loading">กำลังโหลด...</p></div>
+  </div>
+
+  <div class="card" id="add-emp-card" style="display:none;">
+    <h2 data-i18n="div_add_emp_h2">➕ เพิ่มพนักงานในฝ่ายนี้</h2>
     <form id="emp-form">
       <div class="row">
         <div>
-          <label>ชื่อ-นามสกุล *</label>
+          <label data-i18n="label_emp_name">ชื่อ-นามสกุล *</label>
           <input name="name" required placeholder="เช่น สมชาย ใจดี / John Smith"/>
         </div>
         <div>
-          <label>อีเมล (ไม่บังคับ)</label>
+          <label data-i18n="label_emp_email">อีเมล (ไม่บังคับ)</label>
           <input name="email" type="email" placeholder="name@jiancha.co"/>
         </div>
       </div>
       <div class="row">
         <div>
-          <label>ตำแหน่ง *</label>
+          <label data-i18n="label_emp_role">ตำแหน่ง *</label>
           <input name="role" required placeholder="เช่น Senior Accountant / หัวหน้าบัญชีลูกหนี้"/>
         </div>
         <div>
-          <label>แผนกย่อย (ถ้ามี)</label>
+          <label data-i18n="label_emp_subdept">แผนกย่อย (ถ้ามี)</label>
           <input name="department" placeholder="เช่น บัญชีลูกหนี้, บัญชีเจ้าหนี้"/>
         </div>
       </div>
       <div>
-        <label>หน้าที่หลัก</label>
+        <label data-i18n="label_emp_duty">หน้าที่หลัก</label>
         <textarea name="primary_duty" placeholder="เช่น ดูแลการเก็บเงินลูกค้า, ออกใบกำกับภาษี, กระทบยอดธนาคารรายเดือน"></textarea>
       </div>
       <div style="margin-top:12px;">
-        <button type="submit">เพิ่ม + เริ่มอินเทอร์วิวเลย →</button>
+        <button type="submit" data-i18n="btn_add_emp_start">เพิ่ม + เริ่มอินเทอร์วิวเลย →</button>
       </div>
     </form>
   </div>
@@ -127,6 +153,183 @@ document.getElementById('emp-form').addEventListener('submit', async (e) => {
   location.href = '/interview?id=' + emp.id;
 });
 
+/* ---------- Calendar ---------- */
+const T = (k, v) => (window.I18N ? window.I18N.t(k, v) : k);
+const calEl = document.getElementById('calendar');
+const calLabel = document.getElementById('cal-label');
+const calSelected = document.getElementById('cal-selected-day');
+let calMonth = new Date(); calMonth.setDate(1);
+let calScope = divId;        // division id OR 'all'
+let calData = [];            // history records
+let calSelectedDate = null;  // yyyy-mm-dd string
+
+function ymd(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return '';
+  return dt.getFullYear() + '-' + String(dt.getMonth()+1).padStart(2,'0') + '-' + String(dt.getDate()).padStart(2,'0');
+}
+
+async function loadHistory() {
+  const r = await fetch('/api/interviews/history?scope=' + encodeURIComponent(calScope));
+  calData = await r.json();
+  renderCalendar();
+}
+
+function weekdayLabels(lang) {
+  // Use toLocaleDateString with a reference week (2026-01-05 = Monday)
+  const base = new Date(2026, 0, 5);
+  const locale = lang === 'cn' ? 'zh-CN' : (lang === 'en' ? 'en-US' : 'th-TH');
+  const out = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(base); d.setDate(base.getDate() + i);
+    out.push(d.toLocaleDateString(locale, { weekday: 'short' }));
+  }
+  return out;
+}
+
+function renderCalendar() {
+  const lang = (window.I18N && window.I18N.getLang()) || 'th';
+  const locale = lang === 'cn' ? 'zh-CN' : (lang === 'en' ? 'en-US' : 'th-TH');
+
+  calLabel.textContent = calMonth.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
+
+  // Group history by ymd
+  const byDate = {};
+  for (const r of calData) {
+    const key = r.finishedAt ? ymd(r.finishedAt) : (r.startedAt ? ymd(r.startedAt) : null);
+    if (!key) continue;
+    (byDate[key] = byDate[key] || []).push(r);
+  }
+
+  const year = calMonth.getFullYear();
+  const month = calMonth.getMonth();
+  const first = new Date(year, month, 1);
+  const firstWeekday = first.getDay();     // 0=Sun
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const daysInPrev = new Date(year, month, 0).getDate();
+  const todayY = ymd(new Date());
+
+  const cells = [];
+  // Weekday header
+  for (const label of weekdayLabels(lang)) cells.push(`<div class="cal-head">${esc(label)}</div>`);
+
+  // Leading days from previous month
+  for (let i = firstWeekday; i > 0; i--) {
+    const d = daysInPrev - i + 1;
+    cells.push(`<div class="cal-day other-month"><div class="date">${d}</div></div>`);
+  }
+  // Current month
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const entries = byDate[key] || [];
+    const doneCount = entries.filter(e => e.finishedAt && ymd(e.finishedAt) === key).length;
+    const startedCount = entries.filter(e => !e.finishedAt && e.startedAt && ymd(e.startedAt) === key).length;
+    const hasActivity = entries.length > 0;
+    const isToday = key === todayY;
+    const isSelected = key === calSelectedDate;
+    const dotHtml = [
+      ...Array(Math.min(doneCount, 8)).fill('<span class="dot"></span>'),
+      ...Array(Math.min(startedCount, 8)).fill('<span class="dot started"></span>'),
+    ].join('');
+    cells.push(`<div class="cal-day${hasActivity?' has-activity':''}${isToday?' today':''}${isSelected?' selected':''}" data-key="${key}">
+      <div class="date">${d}</div>
+      ${entries.length ? `<div class="count">${T('cal_count_unit', { n: entries.length })}</div>` : ''}
+      <div class="dots">${dotHtml}</div>
+    </div>`);
+  }
+  // Trailing to fill last row
+  const rendered = firstWeekday + daysInMonth;
+  const pad = (7 - (rendered % 7)) % 7;
+  for (let i = 1; i <= pad; i++) {
+    cells.push(`<div class="cal-day other-month"><div class="date">${i}</div></div>`);
+  }
+
+  calEl.innerHTML = cells.join('');
+
+  // Click handler
+  calEl.querySelectorAll('.cal-day[data-key]').forEach(el => {
+    el.addEventListener('click', () => selectDay(el.getAttribute('data-key'), byDate));
+  });
+
+  // Re-select if needed
+  if (calSelectedDate) selectDay(calSelectedDate, byDate);
+}
+
+function selectDay(key, byDateArg) {
+  calSelectedDate = key;
+  const byDate = byDateArg || (() => {
+    const m = {};
+    for (const r of calData) {
+      const k = r.finishedAt ? ymd(r.finishedAt) : (r.startedAt ? ymd(r.startedAt) : null);
+      if (!k) continue;
+      (m[k] = m[k] || []).push(r);
+    }
+    return m;
+  })();
+  document.querySelectorAll('.cal-day').forEach(el => el.classList.toggle('selected', el.getAttribute('data-key') === key));
+  const entries = byDate[key] || [];
+  const lang = (window.I18N && window.I18N.getLang()) || 'th';
+  const locale = lang === 'cn' ? 'zh-CN' : (lang === 'en' ? 'en-US' : 'th-TH');
+  const [y,m,d] = key.split('-').map(Number);
+  const dateLabel = new Date(y, m-1, d).toLocaleDateString(locale, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  if (!entries.length) {
+    calSelected.innerHTML = `<div class="cal-selected-panel"><h3>${esc(dateLabel)}</h3><p class="empty" style="padding:12px;">${esc(T('cal_no_day'))}</p></div>`;
+    return;
+  }
+  const rowsHtml = entries.map(e => {
+    const isDone = e.finishedAt && ymd(e.finishedAt) === key;
+    const link = isDone
+      ? `<a href="/review?id=${encodeURIComponent(e.id)}">${esc(T('cal_view_result'))}</a>`
+      : `<a href="/interview?id=${encodeURIComponent(e.id)}">${esc(T('status_in_progress'))}</a>`;
+    const badge = calScope === 'all' ? ` <span class="pill gray" style="font-size:11px;">${esc(e.division_icon)} ${esc(e.division_name)}</span>` : '';
+    return `<div class="cal-person-row">
+      <span class="dot" style="background:${isDone ? 'var(--brand)' : '#fbbf24'};"></span>
+      <strong>${esc(e.name)}</strong>
+      <span style="color:var(--muted); font-size:13px;">${esc(e.role)}</span>
+      ${badge}
+      <span style="margin-left:auto;">${link}</span>
+    </div>`;
+  }).join('');
+  calSelected.innerHTML = `<div class="cal-selected-panel"><h3>${esc(dateLabel)}</h3>${rowsHtml}</div>`;
+}
+
+document.getElementById('cal-prev').addEventListener('click', () => {
+  calMonth.setMonth(calMonth.getMonth() - 1);
+  renderCalendar();
+});
+document.getElementById('cal-next').addEventListener('click', () => {
+  calMonth.setMonth(calMonth.getMonth() + 1);
+  renderCalendar();
+});
+document.getElementById('cal-today').addEventListener('click', () => {
+  calMonth = new Date(); calMonth.setDate(1);
+  renderCalendar();
+});
+document.addEventListener('langchange', renderCalendar);
+
+// Admin-only scope toggle
+async function setupScope() {
+  const me = await fetch('/api/me').then(r => r.json());
+  if (me.role !== 'admin') return;
+  const toggle = document.getElementById('scope-toggle');
+  toggle.style.display = 'inline-flex';
+  const mineBtn = document.getElementById('scope-mine');
+  const allBtn  = document.getElementById('scope-all');
+  mineBtn.addEventListener('click', async () => {
+    if (calScope === divId) return;
+    calScope = divId; mineBtn.classList.add('active'); allBtn.classList.remove('active');
+    await loadHistory();
+  });
+  allBtn.addEventListener('click', async () => {
+    if (calScope === 'all') return;
+    calScope = 'all'; allBtn.classList.add('active'); mineBtn.classList.remove('active');
+    await loadHistory();
+  });
+}
+
+setupScope();
+loadHistory();
 load();
 </script>
 </body>
