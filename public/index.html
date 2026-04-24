@@ -57,6 +57,45 @@
     <div id="div-grid" class="grid"><p class="empty" data-i18n="loading">กำลังโหลด...</p></div>
   </div>
 
+  <!-- Modal: personal info before starting interview -->
+  <div id="intv-modal" class="modal-backdrop" style="display:none;">
+    <div class="modal">
+      <h2 id="intv-modal-title">ข้อมูลพนักงานก่อนเริ่มอินเทอร์วิว</h2>
+      <p class="sub">กรอกข้อมูลของคุณเพื่อเริ่มอินเทอร์วิว</p>
+      <form id="intv-start-form">
+        <div class="row">
+          <div>
+            <label data-i18n="label_emp_name">ชื่อ-นามสกุล *</label>
+            <input name="name" required placeholder="เช่น สมชาย ใจดี / John Smith"/>
+          </div>
+          <div>
+            <label data-i18n="label_emp_email">อีเมล (ไม่บังคับ)</label>
+            <input name="email" type="email" placeholder="name@jiancha.co"/>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label data-i18n="label_emp_role">ตำแหน่ง *</label>
+            <input name="role" required placeholder="เช่น Senior Accountant"/>
+          </div>
+          <div>
+            <label data-i18n="label_emp_subdept">แผนกย่อย (ถ้ามี)</label>
+            <input name="department" placeholder="เช่น บัญชีลูกหนี้"/>
+          </div>
+        </div>
+        <div>
+          <label data-i18n="label_emp_duty">หน้าที่หลัก</label>
+          <textarea name="primary_duty" placeholder="เช่น ออกใบกำกับภาษี, กระทบยอดธนาคารรายเดือน"></textarea>
+        </div>
+        <input type="hidden" name="division_id" id="intv-modal-divid"/>
+        <div style="margin-top:14px; display:flex; gap:8px; justify-content:flex-end;">
+          <button type="button" class="ghost" onclick="closeIntvModal()">ยกเลิก</button>
+          <button type="submit">เริ่มอินเทอร์วิว →</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="card">
     <h2 data-i18n="index_add_div_h2">➕ เพิ่มฝ่ายใหม่</h2>
     <p class="sub" data-i18n="index_add_div_sub">ถ้าฝ่ายในองค์กรของคุณไม่ตรงกับตัวอย่างด้านบน เพิ่มเองได้</p>
@@ -96,17 +135,21 @@ async function loadDivisions() {
     grid.innerHTML = '<p class="empty">ยังไม่มีฝ่าย เพิ่มด้านล่างได้</p>';
     return;
   }
-  grid.innerHTML = divs.map(d => `
-    <a class="div-card" href="/division?id=${encodeURIComponent(d.id)}" style="border-top-color:${esc(d.color)}">
-      <div class="icon">${esc(d.icon || '🏢')}</div>
-      <div class="name">${esc(d.name)}</div>
-      <div class="meta">${esc(d.name_en || '')}</div>
-      <div class="meta" style="margin-top:4px;">
-        👥 ${d.employeeCount} คน
-        ${d.completedCount ? `· <span style="color:#166534;">✓ ${d.completedCount} คน</span>` : ''}
-      </div>
-    </a>
-  `).join('');
+  grid.innerHTML = divs.map(d => {
+    const divHref = `/division?id=${encodeURIComponent(d.id)}`;
+    const startBtn = `<button class="row-btn primary" style="margin-top:10px; border:0; cursor:pointer;" onclick="event.stopPropagation(); openIntvModal('${esc(d.id)}','${esc(d.name)}')">▶ เริ่มอินเทอร์วิว</button>`;
+    return `
+      <div class="div-card" onclick="location.href='${divHref}'" style="border-top-color:${esc(d.color)}; cursor:pointer;">
+        <div class="icon">${esc(d.icon || '🏢')}</div>
+        <div class="name">${esc(d.name)}</div>
+        <div class="meta">${esc(d.name_en || '')}</div>
+        <div class="meta" style="margin-top:4px;">
+          👥 ${d.employeeCount} คน
+          ${d.completedCount ? `· <span style="color:#166534;">✓ ${d.completedCount} คน</span>` : ''}
+        </div>
+        ${startBtn}
+      </div>`;
+  }).join('');
 }
 
 document.getElementById('add-div-form').addEventListener('submit', async (e) => {
@@ -120,6 +163,33 @@ document.getElementById('add-div-form').addEventListener('submit', async (e) => 
   if (!r.ok) { alert('เกิดข้อผิดพลาด'); return; }
   e.target.reset();
   await loadDivisions();
+});
+
+/* ---------- Personal-info modal ---------- */
+function openIntvModal(divId, divName) {
+  document.getElementById('intv-modal-divid').value = divId;
+  document.getElementById('intv-modal-title').textContent = `ข้อมูลพนักงาน — ${divName}`;
+  document.getElementById('intv-modal').style.display = 'flex';
+  document.getElementById('intv-start-form').querySelector('input[name=name]').focus();
+}
+function closeIntvModal() {
+  document.getElementById('intv-modal').style.display = 'none';
+  document.getElementById('intv-start-form').reset();
+}
+document.getElementById('intv-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'intv-modal') closeIntvModal();
+});
+document.getElementById('intv-start-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  const r = await fetch('/api/employees', {
+    method: 'POST',
+    headers: {'content-type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) { const err = await r.json().catch(()=>({})); alert(err.error || 'เกิดข้อผิดพลาด'); return; }
+  const emp = await r.json();
+  location.href = '/interview?id=' + emp.id;
 });
 
 loadDivisions();

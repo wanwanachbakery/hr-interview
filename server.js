@@ -155,7 +155,14 @@ app.get('/api/divisions', (req, res) => {
   const withCount = divs.map(d => {
     const list = emps.filter(e => e.division_id === d.id);
     const done = list.filter(e => e.interviewStatus === 'completed').length;
-    return { ...d, employeeCount: list.length, completedCount: done };
+    const pending = list.find(e => e.interviewStatus !== 'completed');
+    return {
+      ...d,
+      employeeCount: list.length,
+      completedCount: done,
+      nextPendingId: pending ? pending.id : null,
+      nextPendingName: pending ? pending.name : null,
+    };
   });
   res.json(withCount);
 });

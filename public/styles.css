@@ -114,6 +114,19 @@ th { background: #f8fafc; font-weight: 600; color: var(--muted); font-size: 12px
 .lang-btn.active { background: var(--brand); color: #fff; border-color: var(--brand); }
 .lang-btn.active:hover { background: var(--brand-dark); }
 
+/* Modal */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(15,23,42,0.55); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center; z-index: 1000;
+  padding: 20px;
+}
+.modal {
+  background: #fff; border-radius: 14px; padding: 24px;
+  max-width: 520px; width: 100%; max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+.modal h2 { margin-top: 0; }
+
 /* Row-action buttons (Interview / Review) */
 .row-btn {
   display: inline-flex; align-items: center; gap: 4px;
