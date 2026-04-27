@@ -21,8 +21,8 @@ const pad = (n) => String(n).padStart(2, '0');
 // Each schedule: workStart..workEnd, lunchStart..lunchEnd (exclusive bound = workEnd).
 // Questions are 1-hour blocks, lunch block is skipped.
 const SCHEDULES = {
-  '09-18': { start: 9,  end: 18, lunch: 13 },  // 09:00-18:00, lunch 13-14
-  '10-19': { start: 10, end: 19, lunch: 14 },  // 10:00-19:00, lunch 14-15
+  '09-18': { start: 9,  end: 18, lunch: 12 },  // 09:00-18:00, lunch 12-13
+  '10-19': { start: 10, end: 19, lunch: 13 },  // 10:00-19:00, lunch 13-14
 };
 
 function listSchedules(lang = 'th') {
