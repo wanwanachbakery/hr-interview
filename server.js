@@ -385,6 +385,27 @@ app.get('/api/interview/:id', (req, res) => {
   res.json(iv);
 });
 
+// Delete interview answers + output files; keep the employee record (admin only).
+// Resets employee.interviewStatus to 'not_started' so they can be re-interviewed.
+app.delete('/api/interview/:id', requireAdmin, (req, res) => {
+  const id = req.params.id;
+  const ivFile = interviewPath(id);
+  const outDir = path.join(OUTPUT_DIR, id);
+  let removedInterview = false, removedOutputs = false;
+
+  if (fs.existsSync(ivFile)) { fs.unlinkSync(ivFile); removedInterview = true; }
+  if (fs.existsSync(outDir)) { fs.rmSync(outDir, { recursive: true, force: true }); removedOutputs = true; }
+
+  const list = loadEmployees();
+  const e = list.find(x => x.id === id);
+  if (!e) return res.status(404).json({ error: 'employee not found' });
+  e.interviewStatus = 'not_started';
+  delete e.completedAt;
+  saveEmployees(list);
+
+  res.json({ ok: true, removedInterview, removedOutputs });
+});
+
 // Company analysis — admin only
 app.post('/api/company/analyze', requireAdmin, (req, res) => {
   const list = loadEmployees();

@@ -85,6 +85,8 @@
       dash_open_report: '📄 เปิดรายงาน (.md)',
       dash_report_h2: 'รายงาน Optimization ล่าสุด',
       dash_no_report: 'ยังไม่มีรายงาน — กดปุ่ม "วิเคราะห์ภาพรวมบริษัท" ข้างบน',
+      dash_delete: 'ลบ',
+      dash_delete_confirm: 'ลบแบบสอบถามของ "{name}"?\nคำตอบและไฟล์ output ทั้งหมดจะถูกลบ แต่พนักงานยังอยู่และทำใหม่ได้',
 
       // division page
       div_back: '← กลับทุกฝ่าย',
@@ -184,6 +186,8 @@
       dash_open_report: '📄 Open report (.md)',
       dash_report_h2: 'Latest optimization report',
       dash_no_report: 'No report yet — click "Analyze company-wide" above',
+      dash_delete: 'Delete',
+      dash_delete_confirm: 'Delete questionnaire for "{name}"?\nAnswers and output files will be removed, but the employee record stays and can be re-interviewed.',
 
       div_back: '← Back to all divisions',
       div_emps_h2: 'Employees in this division',
@@ -280,6 +284,8 @@
       dash_open_report: '📄 打开报告 (.md)',
       dash_report_h2: '最新优化报告',
       dash_no_report: '尚无报告 — 请点击上方"公司整体分析"按钮',
+      dash_delete: '删除',
+      dash_delete_confirm: '删除"{name}"的问卷？\n答案和输出文件将被删除，但员工记录保留，可重新访谈。',
 
       div_back: '← 返回所有部门',
       div_emps_h2: '本部门员工',
