@@ -101,9 +101,7 @@ async function load() {
             ${e.interviewStatus==='completed'
               ? `<a class="row-btn ghost" href="/review?id=${e.id}">📄 ดูผล</a>`
               : `<a class="row-btn primary" href="/interview?id=${e.id}">▶ เริ่มอินเทอร์วิว</a>`}
-            ${e.interviewStatus !== 'not_started'
-              ? `<button class="row-btn ghost del-btn" data-del-id="${esc(e.id)}" data-del-name="${esc(e.name)}" style="margin-left:6px;">🗑 ${T('dash_delete')}</button>`
-              : ''}
+            <button class="row-btn ghost del-btn" data-del-id="${esc(e.id)}" data-del-name="${esc(e.name)}" style="margin-left:6px;">🗑 ${T('dash_delete')}</button>
           </td>
         </tr>`).join('')}</tbody>
       </table>
