@@ -31,7 +31,14 @@
     <h2 data-i18n="iv_start_title">ก่อนเริ่ม — เลือกเวลาทำงานของคุณ</h2>
     <p class="sub" data-i18n="iv_start_sub">เวลาที่คุณเลือกจะใช้กำหนดคำถามรายชั่วโมง (ข้ามพักเที่ยงอัตโนมัติ)</p>
     <form id="schedule-form" class="schedule-picker" autocomplete="off"></form>
-    <div style="text-align:right; margin-top:8px;">
+
+    <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border, #e5e7eb);">
+      <label for="iv-date" style="display:block; font-weight:600; margin-bottom:6px;">วันที่สัมภาษณ์</label>
+      <input type="date" id="iv-date" style="padding:8px 10px; border:1px solid var(--border, #d1d5db); border-radius:8px; font-size:14px; font-family:inherit;"/>
+      <p class="hint" style="margin-top:4px;">เลือกวันที่จะถูกบันทึกในปฏิทิน — ย้อนหลังได้ ไม่อนุญาตวันในอนาคต</p>
+    </div>
+
+    <div style="text-align:right; margin-top:16px;">
       <button type="button" id="schedule-submit" data-i18n="iv_start_btn">เริ่มอินเทอร์วิว →</button>
     </div>
   </div>
@@ -159,6 +166,11 @@ async function start() {
   _preloadSchedule = iv.schedule || '09-18';
   _preloadLang = iv.lang || ((window.I18N && window.I18N.getLang()) || 'th');
   await renderSchedulePicker();
+  // Initialise the date picker — default today, cap at today (no future).
+  const dateInput = document.getElementById('iv-date');
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  dateInput.value = (iv.interviewDate && /^\d{4}-\d{2}-\d{2}$/.test(iv.interviewDate)) ? iv.interviewDate : todayStr;
+  dateInput.max = todayStr;
   scheduleCard.style.display = 'block';
   chatCard.style.display = 'none';
 }
@@ -169,7 +181,11 @@ document.getElementById('schedule-submit').addEventListener('click', async () =>
   const chosen = document.querySelector('#schedule-form input[name=schedule]:checked');
   const schedule = chosen ? chosen.value : '09-18';
   const lang = (window.I18N && window.I18N.getLang()) || 'th';
-  const data = await fetchInterview({ schedule, lang });
+  const dateInput = document.getElementById('iv-date');
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  let interviewDate = dateInput.value || todayStr;
+  if (interviewDate > todayStr) interviewDate = todayStr; // never future
+  const data = await fetchInterview({ schedule, lang, interviewDate });
   await beginAfterStart(data);
 });
 

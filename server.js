@@ -249,7 +249,24 @@ app.post('/api/lang', (req, res) => {
   res.json({ ok: true, lang });
 });
 
-// Start interview. Optional body: { lang, schedule }. First call freezes these on the interview.
+// Convert a YYYY-MM-DD string to an ISO timestamp at the given Bangkok-local hour.
+// Returns null when the input is missing, malformed, or in the future (clients
+// can't backdate to tomorrow). Today is allowed but produces the same date stamp
+// the no-override path would have, so callers can pass it harmlessly.
+function backdateIso(input, hour) {
+  if (!input || !/^\d{4}-\d{2}-\d{2}$/.test(input)) return null;
+  const todayBkk = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+  if (input > todayBkk) return null;
+  const hh = String(hour).padStart(2, '0');
+  const t = new Date(`${input}T${hh}:00:00+07:00`);
+  if (isNaN(t.getTime())) return null;
+  return t.toISOString();
+}
+
+// Start interview. Optional body: { lang, schedule, interviewDate }. The first call
+// with a given body freezes these on the interview record. interviewDate (YYYY-MM-DD)
+// lets callers backdate the entry — startedAt is set to 09:00 Bangkok on that day so
+// the calendar groups it under the chosen date.
 app.post('/api/interview/:id/start', (req, res) => {
   const emp = loadEmployees().find(e => e.id === req.params.id);
   if (!emp) return res.status(404).json({ error: 'not found' });
@@ -257,6 +274,8 @@ app.post('/api/interview/:id/start', (req, res) => {
 
   const bodyLang = String((req.body && req.body.lang) || '').toLowerCase();
   const bodySchedule = String((req.body && req.body.schedule) || '');
+  const bodyDate = (req.body && req.body.interviewDate) || '';
+  const backdatedStart = backdateIso(bodyDate, 9);
   const cookieLang = parseCookie(req, 'lang');
 
   let iv = loadInterview(emp.id);
@@ -268,15 +287,21 @@ app.post('/api/interview/:id/start', (req, res) => {
       lang: ['th','en','cn'].includes(bodyLang) ? bodyLang
           : (['th','en','cn'].includes(cookieLang) ? cookieLang : 'th'),
       schedule: ai.SCHEDULES[bodySchedule] ? bodySchedule : '09-18',
-      startedAt: new Date().toISOString(),
+      startedAt: backdatedStart || new Date().toISOString(),
     };
+    if (backdatedStart) iv.interviewDate = bodyDate;
     saveInterview(iv);
   } else {
-    // Allow caller to update lang/schedule ONLY if nothing has been answered yet.
+    // Allow caller to update lang/schedule/date ONLY if nothing has been answered yet.
     let dirty = false;
     if (!iv.answers.length) {
       if (['th','en','cn'].includes(bodyLang) && bodyLang !== iv.lang) { iv.lang = bodyLang; dirty = true; }
       if (ai.SCHEDULES[bodySchedule] && bodySchedule !== iv.schedule) { iv.schedule = bodySchedule; dirty = true; }
+      if (backdatedStart && backdatedStart !== iv.startedAt) {
+        iv.startedAt = backdatedStart;
+        iv.interviewDate = bodyDate;
+        dirty = true;
+      }
     }
     // Legacy interviews (no lang/schedule) keep their original behaviour via mock-ai's legacy branch.
     if (dirty) saveInterview(iv);
@@ -318,7 +343,11 @@ app.post('/api/interview/:id/finish', (req, res) => {
   const iv = loadInterview(req.params.id);
   if (!iv) return res.status(404).json({ error: 'not found' });
   if (!canAccessEmployee(req.session, iv.employee)) return res.status(403).json({ error: 'forbidden' });
-  iv.finishedAt = new Date().toISOString();
+  // Backdated interviews finish on the same day they started, so the calendar
+  // groups start + finish under the user-chosen date instead of "today".
+  iv.finishedAt = iv.interviewDate
+    ? (backdateIso(iv.interviewDate, 10) || new Date().toISOString())
+    : new Date().toISOString();
   saveInterview(iv);
 
   const outDir = path.join(OUTPUT_DIR, iv.id);
