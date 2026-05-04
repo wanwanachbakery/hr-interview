@@ -206,7 +206,9 @@ function renderCalendar() {
   const year = calMonth.getFullYear();
   const month = calMonth.getMonth();
   const first = new Date(year, month, 1);
-  const firstWeekday = first.getDay();     // 0=Sun
+  // Header row starts on Monday (จ.), but getDay() returns Sun=0..Sat=6.
+  // Convert to Mon=0..Sun=6 so the leading-blank count lines up with the header.
+  const firstWeekday = (first.getDay() + 6) % 7;
   const daysInMonth = new Date(year, month+1, 0).getDate();
   const daysInPrev = new Date(year, month, 0).getDate();
   const todayY = ymd(new Date());
