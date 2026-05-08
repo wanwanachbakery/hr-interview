@@ -1,5 +1,5 @@
 /**
- * server.js - Employee Interview App
+ * server.js - HR-WWN
  * Node + Express, JSON files for storage.
  * Runs at http://localhost:3000
  */
@@ -484,5 +484,5 @@ app.get('/login', (req, res) => res.sendFile(path.join(ROOT, 'public', 'login.ht
 app.get('/admin', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin.html')));
 
 app.listen(PORT, () => {
-  console.log(`\n🚀 Employee Interview App running at http://localhost:${PORT}\n`);
+  console.log(`\n🚀 HR-WWN running at http://localhost:${PORT}\n`);
 });

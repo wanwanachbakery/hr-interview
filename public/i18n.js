@@ -31,7 +31,7 @@
       login_submit: 'เข้าสู่ระบบ →',
       login_hint: 'ถ้าไม่รู้รหัสของฝ่าย ติดต่อ admin หรือผู้จัดการแผนก',
       login_err: 'รหัสไม่ถูกต้อง',
-      login_app_sub: 'ระบบอินเทอร์วิวพนักงาน — JIANCHA',
+      login_app_sub: 'HR-WWN — JIANCHA',
 
       // index (divisions)
       index_h1: 'เลือกฝ่ายที่ต้องการอินเทอร์วิว',
@@ -136,7 +136,7 @@
       login_submit: 'Sign in →',
       login_hint: 'If you do not know your division password, contact admin or your manager.',
       login_err: 'Invalid password',
-      login_app_sub: 'Employee interview system — JIANCHA',
+      login_app_sub: 'HR-WWN — JIANCHA',
 
       index_h1: 'Pick a division to interview',
       index_sub: 'Click a division to view/add employees. Each division can have sub-departments and different roles.',
@@ -234,7 +234,7 @@
       login_submit: '登录 →',
       login_hint: '如不知道部门密码，请联系管理员或您的主管。',
       login_err: '密码错误',
-      login_app_sub: '员工访谈系统 — JIANCHA',
+      login_app_sub: 'HR-WWN — JIANCHA',
 
       index_h1: '选择要访谈的部门',
       index_sub: '点击部门可查看或添加员工。每个部门可包含子部门和不同的职位。',

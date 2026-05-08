@@ -1,6 +1,6 @@
-# เอกสารส่งต่อให้ทีม IT — Employee Interview App
+# เอกสารส่งต่อให้ทีม IT — HR-WWN
 
-> ระบบ AI อินเทอร์วิวพนักงาน JIANCHA — เก็บข้อมูล workflow ของพนักงานเพื่อสร้าง JD / KPI / ข้อเสนอปรับปรุง
+> HR-WWN — ระบบ HR ของ JIANCHA — เก็บข้อมูล workflow ของพนักงานเพื่อสร้าง JD / KPI / ข้อเสนอปรับปรุง
 > เอกสารนี้สำหรับทีม IT นำไปต่อยอด deploy / maintain / เชื่อม AI
 
 ---
@@ -22,7 +22,7 @@ Dependencies: แค่ `express` 1 ตัว
 ## 2. โครงสร้างไฟล์
 
 ```
-employee-interview-app/
+hr-wwn/
 ├── server.js                      # Express + API endpoints + auth middleware
 ├── package.json
 ├── .claude/launch.json            # สำหรับ Claude Preview (ไม่จำเป็นในการรันจริง)
@@ -115,7 +115,7 @@ employee-interview-app/
 ## 5. วิธีรัน local
 
 ```bash
-cd employee-interview-app
+cd hr-wwn
 npm install
 npm start
 # http://localhost:3000
@@ -203,4 +203,4 @@ async function generateJD(interview) {
 ## 8. ติดต่อ
 
 เจ้าของไฟล์นี้: คุณแหฮ่า / @happ
-Project path: `/Users/happ/ai project/employee-interview-app/`
+Project path: `/Users/happ/ai project/hr-wwn/`

@@ -1,7 +1,7 @@
 {
-  "name": "employee-interview-app",
+  "name": "hr-wwn",
   "version": "0.1.0",
-  "description": "AI interviewer for employees - collects daily workflow and generates workflow/JD/KPI/optimization reports",
+  "description": "HR-WWN — JIANCHA HR portal: collects employee workflow and generates JD/KPI/optimization reports",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
