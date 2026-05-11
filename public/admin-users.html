@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>จัดการผู้ใช้ | HR-WWN</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="icon" type="image/png" href="/logo.png"/>
+  <style>
+    .role-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .role-executive    { background:#fef3c7; color:#92400e; }
+    .role-manager      { background:#dbeafe; color:#1e40af; }
+    .role-division_head{ background:#e9d5ff; color:#6b21a8; }
+    .role-section_head { background:#bbf7d0; color:#166534; }
+    .role-officer      { background:#f1f5f9; color:#475569; }
+    .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:100; }
+    .modal-bg.show { display:flex; }
+    .modal { background:#fff; border-radius:12px; padding:24px; max-width:640px; width:90%; max-height:90vh; overflow-y:auto; }
+    .scope-list { max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:8px; background:#f8fafc; }
+    .scope-list label { display:flex; gap:6px; align-items:center; font-weight:400; margin:2px 0; cursor:pointer; }
+    .scope-list label input { width:auto; }
+  </style>
+</head>
+<body>
+<div class="container wide">
+  <div class="topbar">
+    <div class="logo">
+      <span>HR-WWN</span>
+      <span class="pill blue" style="font-size:11px;">ADMIN</span>
+    </div>
+    <nav>
+      <a href="/admin">🔐 Admin</a>
+      <a href="/admin/org">🏢 องค์กร</a>
+      <a href="/admin/users">👥 ผู้ใช้</a>
+      <a href="#" onclick="logout();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <h1>👥 จัดการผู้ใช้</h1>
+  <p class="sub">เพิ่ม/แก้/ลบผู้ใช้ · กำหนดสิทธิ์การมองเห็นตามฝ่าย/แผนก/ตำแหน่ง</p>
+
+  <div class="card" style="background:#fffbeb; border-color:#fcd34d; padding:12px 16px; margin-bottom:16px;">
+    <strong>⚠️ Position-anchored model:</strong> ทุก user ต้องผูก <strong>ฝ่าย + แผนก + ตำแหน่ง ครบ 3 ฟิลด์</strong> (รวม executive) — เมื่อบันทึก ระบบจะ auto-create employee record สำหรับ interview ของ user คนนั้น · <strong>เปลี่ยนตำแหน่ง = reset interview</strong> (ข้อมูลเก่าจะ archive ติดกับตำแหน่งเดิม)
+  </div>
+
+  <div style="margin: 16px 0;">
+    <button onclick="openCreate()">+ เพิ่มผู้ใช้ใหม่</button>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Username</th><th>ชื่อ</th><th>Role</th><th>ฝ่าย</th><th>แผนก</th><th>ตำแหน่ง</th><th>เวลาทำงาน</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="user-tbody"><tr><td colspan="8" class="empty">กำลังโหลด...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-bg" id="modal-bg">
+  <div class="modal">
+    <h2 id="modal-title">เพิ่มผู้ใช้ใหม่</h2>
+    <form id="user-form">
+      <input type="hidden" name="id"/>
+      <div class="row">
+        <div>
+          <label>Username *</label>
+          <input name="username" required autocomplete="off"/>
+        </div>
+        <div>
+          <label>รหัสผ่าน <span id="pw-hint" class="sub" style="font-size:12px;">*</span></label>
+          <input name="password" type="text" autocomplete="new-password"/>
+        </div>
+      </div>
+      <label>ชื่อ-นามสกุล *</label>
+      <input name="name" required/>
+
+      <label>Role (สิทธิ์) *</label>
+      <select name="role" required id="role-select">
+        <option value="">— เลือก —</option>
+        <option value="executive">ผู้บริหาร (ดูได้ทั้งหมด)</option>
+        <option value="manager">ผู้จัดการ (ดูฝ่ายตัวเอง + override ได้)</option>
+        <option value="division_head">หัวหน้าฝ่าย (ดูฝ่ายตัวเอง + ทุกแผนก/ตำแหน่งในฝ่าย)</option>
+        <option value="section_head">หัวหน้าแผนก (ดูแผนกตัวเอง + ตำแหน่งในแผนก)</option>
+        <option value="officer">เจ้าหน้าที่ (ดูตำแหน่งตัวเองเท่านั้น)</option>
+      </select>
+
+      <div class="row">
+        <div>
+          <label>ฝ่าย <span id="div-req" class="sub" style="font-size:12px;"></span></label>
+          <select name="division_id" id="sel-div"><option value="">— ไม่ระบุ —</option></select>
+        </div>
+        <div>
+          <label>แผนก <span id="sec-req" class="sub" style="font-size:12px;"></span></label>
+          <select name="section_id" id="sel-sec"><option value="">— ไม่ระบุ —</option></select>
+        </div>
+        <div>
+          <label>ตำแหน่ง <span id="pos-req" class="sub" style="font-size:12px;"></span></label>
+          <select name="position_id" id="sel-pos"><option value="">— ไม่ระบุ —</option></select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div><label>เข้างาน</label><input name="work_start" type="time" value="09:00"/></div>
+        <div><label>ออกงาน</label><input name="work_end" type="time" value="18:00"/></div>
+        <div><label>เริ่มพัก</label><input name="break_start" type="time" value="12:00"/></div>
+        <div><label>เลิกพัก</label><input name="break_end" type="time" value="13:00"/></div>
+      </div>
+
+      <!-- Manager-only: scope override -->
+      <div id="override-panel" style="display:none; margin-top:16px; padding:12px; border:1px dashed #cbd5e1; border-radius:8px; background:#fffbeb;">
+        <h3 style="margin:0 0 4px;">ตั้งค่า scope เพิ่มเติม (เฉพาะ Manager)</h3>
+        <p class="sub" style="font-size:13px;">ผู้จัดการเริ่มจากเห็นแค่ฝ่ายตัวเอง — เลือกฝ่าย/แผนก/ตำแหน่งอื่นที่อนุญาตให้ดูได้</p>
+        <div class="row">
+          <div>
+            <label>ฝ่ายเพิ่มเติม</label>
+            <div class="scope-list" id="ov-divs"></div>
+          </div>
+          <div>
+            <label>แผนกเพิ่มเติม</label>
+            <div class="scope-list" id="ov-secs"></div>
+          </div>
+          <div>
+            <label>ตำแหน่งเพิ่มเติม</label>
+            <div class="scope-list" id="ov-poss"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="form-err" style="color:#b91c1c; margin-top:12px; display:none;"></div>
+
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:20px;">
+        <button type="button" class="ghost" onclick="closeModal()">ยกเลิก</button>
+        <button type="submit">บันทึก</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const ROLE_LABEL = {
+  executive: 'ผู้บริหาร', manager: 'ผู้จัดการ',
+  division_head: 'หัวหน้าฝ่าย', section_head: 'หัวหน้าแผนก', officer: 'เจ้าหน้าที่',
+};
+let USERS = [], DIVS = [], SECS = [], POSS = [];
+
+async function loadAll() {
+  [USERS, DIVS, SECS, POSS] = await Promise.all([
+    fetch('/api/users').then(r => r.json()),
+    fetch('/api/divisions').then(r => r.json()),
+    fetch('/api/sections').then(r => r.json()),
+    fetch('/api/positions').then(r => r.json()),
+  ]);
+  renderUsers();
+}
+
+function renderUsers() {
+  const tbody = document.getElementById('user-tbody');
+  if (USERS.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">ยังไม่มีผู้ใช้ — กดปุ่ม + เพิ่มผู้ใช้ใหม่</td></tr>';
+    return;
+  }
+  const divMap = Object.fromEntries(DIVS.map(d => [d.id, d.name]));
+  const secMap = Object.fromEntries(SECS.map(s => [s.id, s.name]));
+  const posMap = Object.fromEntries(POSS.map(p => [p.id, p.name]));
+  tbody.innerHTML = USERS.map(u => `
+    <tr>
+      <td><strong>${esc(u.username)}</strong></td>
+      <td>${esc(u.name)}</td>
+      <td><span class="role-badge role-${u.role}">${esc(ROLE_LABEL[u.role] || u.role)}</span></td>
+      <td>${esc(divMap[u.division_id] || '–')}</td>
+      <td>${esc(secMap[u.section_id] || '–')}</td>
+      <td>${esc(posMap[u.position_id] || '–')}</td>
+      <td style="font-size:12px;">${esc(u.work_start)}–${esc(u.work_end)} <span class="sub">(พัก ${esc(u.break_start)}–${esc(u.break_end)})</span></td>
+      <td>
+        <button class="ghost" onclick="openEdit('${u.id}')">แก้</button>
+        <button class="ghost" style="color:#b91c1c;" onclick="delUser('${u.id}')">ลบ</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+// --- Modal ---
+function openCreate() {
+  document.getElementById('modal-title').textContent = 'เพิ่มผู้ใช้ใหม่';
+  document.getElementById('pw-hint').textContent = '*';
+  document.getElementById('user-form').reset();
+  document.querySelector('input[name=work_start]').value = '09:00';
+  document.querySelector('input[name=work_end]').value = '18:00';
+  document.querySelector('input[name=break_start]').value = '12:00';
+  document.querySelector('input[name=break_end]').value = '13:00';
+  document.querySelector('input[name=id]').value = '';
+  populateSelects();
+  populateOverride([], [], []);
+  onRoleChange();
+  document.getElementById('modal-bg').classList.add('show');
+}
+function openEdit(id) {
+  const u = USERS.find(x => x.id === id); if (!u) return;
+  document.getElementById('modal-title').textContent = 'แก้ไขผู้ใช้: ' + u.username;
+  document.getElementById('pw-hint').textContent = '(เว้นว่าง = ไม่เปลี่ยน)';
+  const f = document.getElementById('user-form');
+  f.reset();
+  f.id.value = u.id;
+  f.username.value = u.username;
+  f.password.value = '';
+  f.name.value = u.name;
+  f.role.value = u.role;
+  populateSelects();
+  f.division_id.value = u.division_id || '';
+  f.section_id.value  = u.section_id  || '';
+  f.position_id.value = u.position_id || '';
+  f.work_start.value = u.work_start;
+  f.work_end.value   = u.work_end;
+  f.break_start.value = u.break_start;
+  f.break_end.value   = u.break_end;
+  const ov = u.scope_override || {};
+  populateOverride(ov.divisions || [], ov.sections || [], ov.positions || []);
+  onRoleChange();
+  document.getElementById('modal-bg').classList.add('show');
+}
+function closeModal() {
+  document.getElementById('modal-bg').classList.remove('show');
+  document.getElementById('form-err').style.display = 'none';
+}
+
+function populateSelects() {
+  const dSel = document.getElementById('sel-div');
+  const sSel = document.getElementById('sel-sec');
+  const pSel = document.getElementById('sel-pos');
+  dSel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + DIVS.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+  sSel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + SECS.map(s => {
+    const div = DIVS.find(x => x.id === s.division_id);
+    return `<option value="${s.id}">${esc(s.name)} (${esc(div?.name || '?')})</option>`;
+  }).join('');
+  pSel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + POSS.map(p => {
+    const sec = SECS.find(x => x.id === p.section_id);
+    const div = sec ? DIVS.find(x => x.id === sec.division_id) : null;
+    return `<option value="${p.id}">${esc(p.name)} (${esc(sec?.name || '?')} / ${esc(div?.name || '?')})</option>`;
+  }).join('');
+}
+
+function populateOverride(divIds, secIds, posIds) {
+  document.getElementById('ov-divs').innerHTML = DIVS.map(d =>
+    `<label><input type="checkbox" name="ov_div" value="${d.id}" ${divIds.includes(d.id) ? 'checked' : ''}/> ${esc(d.name)}</label>`
+  ).join('') || '<span class="sub" style="font-size:13px;">– ยังไม่มีฝ่าย –</span>';
+  document.getElementById('ov-secs').innerHTML = SECS.map(s => {
+    const div = DIVS.find(x => x.id === s.division_id);
+    return `<label><input type="checkbox" name="ov_sec" value="${s.id}" ${secIds.includes(s.id) ? 'checked' : ''}/> ${esc(s.name)} <span class="sub" style="font-size:11px;">(${esc(div?.name || '?')})</span></label>`;
+  }).join('') || '<span class="sub" style="font-size:13px;">– ยังไม่มีแผนก –</span>';
+  document.getElementById('ov-poss').innerHTML = POSS.map(p => {
+    const sec = SECS.find(x => x.id === p.section_id);
+    return `<label><input type="checkbox" name="ov_pos" value="${p.id}" ${posIds.includes(p.id) ? 'checked' : ''}/> ${esc(p.name)} <span class="sub" style="font-size:11px;">(${esc(sec?.name || '?')})</span></label>`;
+  }).join('') || '<span class="sub" style="font-size:13px;">– ยังไม่มีตำแหน่ง –</span>';
+}
+
+function onRoleChange() {
+  const r = document.getElementById('role-select').value;
+  // Position-anchored model: every user needs all 3 scope fields, regardless of role.
+  // Each user gets one anchor employee record auto-created on save.
+  const setReq = (el) => el.textContent = r ? '(จำเป็น)' : '';
+  setReq(document.getElementById('div-req'));
+  setReq(document.getElementById('sec-req'));
+  setReq(document.getElementById('pos-req'));
+  document.getElementById('override-panel').style.display = r === 'manager' ? 'block' : 'none';
+}
+document.getElementById('role-select').addEventListener('change', onRoleChange);
+
+// Auto-narrow section dropdown to selected division (UX nicety)
+document.getElementById('sel-div').addEventListener('change', () => {
+  const did = document.getElementById('sel-div').value;
+  const sSel = document.getElementById('sel-sec');
+  const cur = sSel.value;
+  const opts = SECS.filter(s => !did || s.division_id === did);
+  sSel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + opts.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  if (opts.some(s => s.id === cur)) sSel.value = cur;
+  // cascade to positions
+  document.getElementById('sel-sec').dispatchEvent(new Event('change'));
+});
+document.getElementById('sel-sec').addEventListener('change', () => {
+  const sid = document.getElementById('sel-sec').value;
+  const pSel = document.getElementById('sel-pos');
+  const cur = pSel.value;
+  const opts = POSS.filter(p => !sid || p.section_id === sid);
+  pSel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + opts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  if (opts.some(p => p.id === cur)) pSel.value = cur;
+});
+
+// --- Submit ---
+document.getElementById('user-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const id = fd.get('id') || '';
+  const body = {
+    username: fd.get('username'),
+    name: fd.get('name'),
+    role: fd.get('role'),
+    division_id: fd.get('division_id') || null,
+    section_id:  fd.get('section_id')  || null,
+    position_id: fd.get('position_id') || null,
+    work_start: fd.get('work_start'),
+    work_end:   fd.get('work_end'),
+    break_start: fd.get('break_start'),
+    break_end:   fd.get('break_end'),
+  };
+  if (fd.get('password')) body.password = fd.get('password');
+  if (body.role === 'manager') {
+    body.scope_override = {
+      divisions: fd.getAll('ov_div'),
+      sections:  fd.getAll('ov_sec'),
+      positions: fd.getAll('ov_pos'),
+    };
+  } else {
+    body.scope_override = null;
+  }
+
+  const url = id ? '/api/users/' + id : '/api/users';
+  const method = id ? 'PUT' : 'POST';
+  const r = await fetch(url, { method, headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    const errEl = document.getElementById('form-err');
+    errEl.textContent = 'ผิดพลาด: ' + (d.error || 'unknown');
+    errEl.style.display = 'block';
+    return;
+  }
+  closeModal();
+  loadAll();
+});
+
+async function delUser(id) {
+  const u = USERS.find(x => x.id === id);
+  if (!confirm('ลบผู้ใช้ "' + u.name + '" (' + u.username + ')?')) return;
+  const r = await fetch('/api/users/' + id, { method:'DELETE' });
+  if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ลบไม่ได้: ' + (e.error || 'unknown')); return; }
+  loadAll();
+}
+
+async function logout() {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/login';
+}
+
+loadAll();
+</script>
+</body>
+</html>

@@ -6,118 +6,154 @@
   <title>Dashboard | HR-WWN</title>
   <link rel="stylesheet" href="/styles.css"/>
   <link rel="icon" type="image/png" href="/logo.png"/>
-  <script src="/i18n.js"></script>
+  <style>
+    .div-block { background:#fff; border:1px solid var(--border); border-radius:12px; padding:16px 20px; margin:14px 0; border-top:4px solid var(--brand); }
+    .sec-block { background:#f8fafc; border:1px solid var(--border); border-radius:10px; padding:10px 14px; margin:10px 0; }
+    .pos-row { display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px dashed #e2e8f0; }
+    .pos-row:last-child { border-bottom:0; }
+    .pos-label { font-size:14px; }
+    .iv-status { display:inline-block; padding:2px 10px; border-radius:999px; font-size:11px; font-weight:600; }
+    .iv-vacant      { background:#f1f5f9; color:#475569; }
+    .iv-not_started { background:#fef3c7; color:#92400e; }
+    .iv-in_progress { background:#dbeafe; color:#1e40af; }
+    .iv-completed   { background:#dcfce7; color:#166534; }
+  </style>
 </head>
 <body>
 <div class="container wide">
   <div class="topbar">
-    <div class="logo"><img src="/logo.png" alt="JIANCHA" class="logo-img"/><span class="logo-sub" data-i18n="brand">HR-WWN</span></div>
+    <div class="logo"><span>HR-WWN</span></div>
     <nav>
-      <a href="/" data-i18n="nav_home">หน้าแรก</a>
-      <a href="/examples" data-i18n="nav_examples">📘 ตัวอย่าง</a>
-      <a href="/dashboard" data-i18n="nav_dashboard">Dashboard</a>
-      <a href="/admin" data-i18n="nav_admin">🔐 Admin</a>
-      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;" data-i18n="nav_logout">ออกจากระบบ</a>
+      <a href="/">หน้าแรก</a>
+      <a href="/profile">👤 โปรไฟล์</a>
+      <a href="/dashboard">📋 Dashboard</a>
+      <a href="/reports">📊 รายงาน</a>
+      <a href="/admin" id="nav-admin" style="display:none;">🔐 Admin</a>
+      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;">ออกจากระบบ</a>
     </nav>
   </div>
 
-  <h1 data-i18n="dash_h1">Dashboard ภาพรวมบริษัท</h1>
-  <p class="sub" data-i18n="dash_sub">พนักงานทุกคน จัดตามฝ่าย · ใช้วิเคราะห์ภาพรวมและหาจุดปรับปรุง</p>
+  <h1>📋 สถานะ Interview ตามตำแหน่ง</h1>
+  <p class="sub">ดูทุกตำแหน่งในขอบเขตของคุณ · ใครครองตำแหน่ง · สถานะ interview ของแต่ละคน</p>
 
   <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-      <div>
-        <p class="sub" id="summary" style="margin:0;">...</p>
-      </div>
-      <div>
-        <button id="analyze-btn" data-i18n="dash_analyze">🔍 วิเคราะห์ภาพรวมบริษัท</button>
-        <a id="report-link" href="/api/outputs/_company/optimization-report.md" target="_blank" style="margin-left:8px; display:none;">
-          <button class="ghost" data-i18n="dash_open_report">📄 เปิดรายงาน (.md)</button>
-        </a>
-      </div>
+      <p class="sub" id="summary" style="margin:0;">กำลังโหลด...</p>
+      <div id="analyze-zone"></div>
     </div>
   </div>
 
-  <div id="divisions"></div>
+  <div id="tree"></div>
 
-  <div class="card">
-    <h2 data-i18n="dash_report_h2">รายงาน Optimization ล่าสุด</h2>
-    <div id="report-preview" class="empty" data-i18n="dash_no_report">ยังไม่มีรายงาน — กดปุ่ม "วิเคราะห์ภาพรวมบริษัท" ข้างบน</div>
+  <div class="card" id="report-card" style="display:none;">
+    <h2 style="margin-top:0;">รายงาน Optimization ล่าสุด</h2>
+    <div id="report-preview" class="empty">กดปุ่ม "วิเคราะห์ภาพรวมบริษัท" ข้างบน</div>
   </div>
 </div>
 
 <script>
-const T = (k, v) => (window.I18N ? window.I18N.t(k, v) : k);
-function esc(s){return String(s||'').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
-function pill(s){
-  if (s==='completed') return `<span class="pill green">${T('status_done')}</span>`;
-  if (s==='in_progress') return `<span class="pill blue">${T('status_in_progress')}</span>`;
-  return `<span class="pill gray">${T('status_not_started')}</span>`;
-}
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const STATUS_LABEL = {
+  not_started:'ยังไม่ตอบ', in_progress:'กำลังตอบ', completed:'เสร็จ',
+};
+
+let ME;
 
 async function load() {
-  const [divs, emps] = await Promise.all([
+  const [me, divs, secs, poss, emps] = await Promise.all([
+    fetch('/api/me').then(r => r.json()),
     fetch('/api/divisions').then(r => r.json()),
-    fetch('/api/employees').then(r => r.json()),
+    fetch('/api/sections').then(r => r.json()),
+    fetch('/api/positions').then(r => r.json()),
+    fetch('/api/employees').then(r => r.json()),  // active only
   ]);
+  ME = me;
+  if (me.role === 'admin') document.getElementById('nav-admin').style.display = 'inline';
 
-  const done = emps.filter(e => e.interviewStatus==='completed').length;
-  document.getElementById('summary').textContent =
-    `${divs.length} ${T('dash_summary_divs')} · ${emps.length} ${T('dash_summary_emps')} · ${T('dash_summary_done')} ${done} (${emps.length ? Math.round(done/emps.length*100) : 0}%)`;
+  // Summary
+  const totalEmps = emps.length;
+  const completed = emps.filter(e => e.interviewStatus === 'completed').length;
+  const inProgress = emps.filter(e => e.interviewStatus === 'in_progress').length;
+  const pct = totalEmps ? Math.round(completed / totalEmps * 100) : 0;
+  document.getElementById('summary').innerHTML =
+    `${divs.length} ฝ่าย · ${poss.length} ตำแหน่ง · มีคนครอง ${totalEmps} · เสร็จ ${completed} (${pct}%) · กำลังตอบ ${inProgress}`;
 
-  const byDiv = {};
-  for (const e of emps) {
-    const k = e.division_id || '_other';
-    (byDiv[k] = byDiv[k] || []).push(e);
+  // Analyze button — admin/exec/manager only
+  if (['admin','executive','manager'].includes(me.role)) {
+    document.getElementById('analyze-zone').innerHTML = `
+      <button id="analyze-btn">🔍 วิเคราะห์ภาพรวมบริษัท</button>
+      <a id="report-link" href="/api/outputs/_company/optimization-report.md" target="_blank" style="margin-left:8px; display:none;">
+        <button class="ghost">📄 เปิดรายงาน</button>
+      </a>
+    `;
+    document.getElementById('analyze-btn').addEventListener('click', runAnalyze);
   }
 
-  const container = document.getElementById('divisions');
-  container.innerHTML = divs.map(d => {
-    const list = byDiv[d.id] || [];
-    if (!list.length) {
-      return `<div class="card" style="border-top:4px solid ${esc(d.color)};">
-        <h2>${esc(d.icon||'🏢')} ${esc(d.name)} <span class="pill gray" style="font-size:12px;">0 คน</span></h2>
-        <p class="empty">ยังไม่มีพนักงาน · <a href="/division?id=${esc(d.id)}">เพิ่มพนักงาน →</a></p>
+  // Build tree: division -> section -> position (+ incumbent emp if any)
+  const empByPos = Object.fromEntries(emps.map(e => [e.position_id, e]));
+  const tree = document.getElementById('tree');
+  if (divs.length === 0) {
+    tree.innerHTML = '<div class="card empty">ไม่มีฝ่ายในขอบเขตของคุณ</div>';
+    return;
+  }
+  tree.innerHTML = divs.map(d => {
+    const secsInDiv = secs.filter(s => s.division_id === d.id);
+    if (!secsInDiv.length) {
+      return `<div class="div-block" style="border-top-color:${esc(d.color)}">
+        <h2 style="margin:0 0 4px;">${esc(d.icon || '🏢')} ${esc(d.name)}</h2>
+        <p class="empty" style="padding:8px;">– ยังไม่มีแผนก –</p>
       </div>`;
     }
-    const doneCount = list.filter(e => e.interviewStatus==='completed').length;
-    return `<div class="card" style="border-top:4px solid ${esc(d.color)};">
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-        <h2 style="margin:0;">${esc(d.icon||'🏢')} ${esc(d.name)}
-          <span class="pill blue" style="font-size:12px;">${list.length} คน</span>
-          ${doneCount ? `<span class="pill green" style="font-size:12px;">✓ ${doneCount}</span>` : ''}
-        </h2>
-        <a href="/division?id=${esc(d.id)}" style="font-size:14px;">จัดการฝ่ายนี้ →</a>
-      </div>
-      <table style="margin-top:12px;">
-        <thead><tr><th>ชื่อ</th><th>ตำแหน่ง</th><th>แผนกย่อย</th><th>หน้าที่หลัก</th><th>สถานะ</th><th></th></tr></thead>
-        <tbody>${list.map(e => `<tr>
-          <td><strong>${esc(e.name)}</strong></td>
-          <td>${esc(e.role)}</td>
-          <td>${esc(e.department || '-')}</td>
-          <td style="max-width:220px; font-size:13px; color:#475569;">${esc(e.primary_duty || '-')}</td>
-          <td>${pill(e.interviewStatus)}</td>
-          <td>
-            ${e.interviewStatus==='completed'
-              ? `<a class="row-btn ghost" href="/review?id=${e.id}">📄 ดูผล</a>`
-              : `<a class="row-btn primary" href="/interview?id=${e.id}">▶ เริ่มอินเทอร์วิว</a>`}
-            <button class="row-btn ghost del-btn" data-del-id="${esc(e.id)}" data-del-name="${esc(e.name)}" style="margin-left:6px;">🗑 ${T('dash_delete')}</button>
-          </td>
-        </tr>`).join('')}</tbody>
-      </table>
+    return `<div class="div-block" style="border-top-color:${esc(d.color)}">
+      <h2 style="margin:0 0 12px;">${esc(d.icon || '🏢')} ${esc(d.name)}</h2>
+      ${secsInDiv.map(s => {
+        const posInSec = poss.filter(p => p.section_id === s.id);
+        if (!posInSec.length) {
+          return `<div class="sec-block"><strong>📋 ${esc(s.name)}</strong> <span class="empty">– ยังไม่มีตำแหน่ง –</span></div>`;
+        }
+        return `<div class="sec-block">
+          <strong>📋 ${esc(s.name)}</strong>
+          <div style="margin-top:6px;">
+            ${posInSec.map(p => {
+              const e = empByPos[p.id];
+              if (!e) {
+                return `<div class="pos-row">
+                  <div class="pos-label">👤 ${esc(p.name)}</div>
+                  <div><span class="iv-status iv-vacant">ตำแหน่งว่าง</span>
+                    ${ME.role === 'admin' || ME.role === 'executive'
+                      ? `<a href="/position-history?id=${esc(p.id)}" style="font-size:12px; margin-left:8px;">ประวัติ</a>` : ''}
+                  </div>
+                </div>`;
+              }
+              const statusKey = e.interviewStatus || 'not_started';
+              const statusTxt = STATUS_LABEL[statusKey] || statusKey;
+              const link = statusKey === 'completed'
+                ? `<a href="/review?id=${esc(e.id)}" style="font-size:12px; margin-left:8px;">📄 ดูเอกสาร</a>`
+                : (e.user_id === ME.user_id
+                    ? `<a href="/interview?id=${esc(e.id)}" style="font-size:12px; margin-left:8px;">▶ ตอบของฉัน</a>`
+                    : '');
+              const delBtn = ME.role === 'admin'
+                ? `<button class="ghost del-btn" style="font-size:12px; padding:2px 8px; margin-left:8px;" data-id="${esc(e.id)}" data-name="${esc(e.name)}">🗑</button>`
+                : '';
+              return `<div class="pos-row">
+                <div class="pos-label">👤 ${esc(p.name)} <span style="color:#475569;">→ ${esc(e.name)}</span></div>
+                <div><span class="iv-status iv-${statusKey}">${esc(statusTxt)}</span>${link}${delBtn}</div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+      }).join('')}
     </div>`;
   }).join('');
 
-  // Wire delete buttons (admin only — endpoint enforces this server-side too)
+  // Wire delete buttons (admin only)
   document.querySelectorAll('.del-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const id = btn.dataset.delId;
-      const name = btn.dataset.delName;
-      if (!confirm(T('dash_delete_confirm', { name }))) return;
+      const id = btn.dataset.id;
+      if (!confirm(`ลบ "${btn.dataset.name}" และ interview ทั้งหมด?`)) return;
       btn.disabled = true;
       const r = await fetch('/api/interview/' + encodeURIComponent(id), { method: 'DELETE' });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) { alert(d.error || T('iv_error')); btn.disabled = false; return; }
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert('ลบไม่ได้: ' + (d.error || 'unknown')); btn.disabled = false; return; }
       await load();
     });
   });
@@ -127,24 +163,24 @@ async function load() {
     const r = await fetch('/api/outputs/_company/optimization-report.md');
     if (r.ok) {
       const txt = await r.text();
+      document.getElementById('report-card').style.display = 'block';
       document.getElementById('report-preview').innerHTML =
         `<pre style="white-space:pre-wrap; font-family:inherit; font-size:14px; max-height:600px; overflow:auto;">${esc(txt)}</pre>`;
-      document.getElementById('report-link').style.display = 'inline-block';
+      const link = document.getElementById('report-link');
+      if (link) link.style.display = 'inline-block';
     }
   } catch {}
 }
 
-document.getElementById('analyze-btn').addEventListener('click', async () => {
+async function runAnalyze() {
   const btn = document.getElementById('analyze-btn');
-  btn.disabled = true; btn.textContent = T('dash_analyzing');
+  btn.disabled = true; btn.textContent = '⏳ กำลังวิเคราะห์...';
   const r = await fetch('/api/company/analyze', { method: 'POST' });
   const data = await r.json();
-  if (data.ok) {
-    alert(`✓ ${data.count} — ${T('status_done')}`);
-    await load();
-  } else { alert(T('iv_error')); }
-  btn.disabled = false; btn.textContent = T('dash_analyze');
-});
+  if (data.ok) { alert(`✓ วิเคราะห์เสร็จ — มี ${data.count} interview ที่ตอบครบ`); await load(); }
+  else { alert('ผิดพลาด: ' + (data.error || 'unknown')); }
+  btn.disabled = false; btn.textContent = '🔍 วิเคราะห์ภาพรวมบริษัท';
+}
 
 load();
 </script>

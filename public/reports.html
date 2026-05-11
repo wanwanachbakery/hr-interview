@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>รายงาน | HR-WWN</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="icon" type="image/png" href="/logo.png"/>
+  <style>
+    .stat { background:#fff; border:1px solid var(--border); border-radius:10px; padding:14px 18px; }
+    .stat .num { font-size:28px; font-weight:700; color:var(--brand-dark); }
+    .stat .lbl { color:var(--muted); font-size:13px; margin-top:2px; }
+    .filter-bar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+    .filter-bar select, .filter-bar input { flex:1; min-width:160px; }
+    .role-badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+    .role-executive    { background:#fef3c7; color:#92400e; }
+    .role-manager      { background:#dbeafe; color:#1e40af; }
+    .role-division_head{ background:#e9d5ff; color:#6b21a8; }
+    .role-section_head { background:#bbf7d0; color:#166534; }
+    .role-officer      { background:#f1f5f9; color:#475569; }
+  </style>
+</head>
+<body>
+<div class="container wide">
+  <div class="topbar">
+    <div class="logo">
+      <span>HR-WWN</span>
+      <span id="role-badge" class="pill gray" style="font-size:11px;"></span>
+    </div>
+    <nav>
+      <a href="/">หน้าแรก</a>
+      <a href="/profile">👤 โปรไฟล์</a>
+      <a href="/reports">📊 รายงาน</a>
+      <a href="/admin" id="nav-admin" style="display:none;">🔐 Admin</a>
+      <a href="#" onclick="logout();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <h1>📊 รายงาน</h1>
+  <p class="sub" id="scope-note">กำลังโหลด...</p>
+
+  <!-- Summary cards -->
+  <div class="card">
+    <h2 style="margin-top:0;">สรุปภาพรวม</h2>
+    <div class="row" id="summary-row"><div class="empty">กำลังโหลด...</div></div>
+  </div>
+
+  <!-- By division -->
+  <div class="card">
+    <h2 style="margin-top:0;">จำนวนผู้ใช้แต่ละฝ่าย</h2>
+    <table id="by-div-tbl">
+      <thead><tr><th>ฝ่าย</th><th style="text-align:right;">จำนวน</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- User list -->
+  <div class="card">
+    <h2 style="margin-top:0;">รายชื่อผู้ใช้ <span id="user-count" class="sub" style="font-size:14px;"></span></h2>
+
+    <div class="filter-bar">
+      <input id="f-search" placeholder="ค้นหาชื่อ / username..."/>
+      <select id="f-role">
+        <option value="">— ทุก role —</option>
+        <option value="executive">ผู้บริหาร</option>
+        <option value="manager">ผู้จัดการ</option>
+        <option value="division_head">หัวหน้าฝ่าย</option>
+        <option value="section_head">หัวหน้าแผนก</option>
+        <option value="officer">เจ้าหน้าที่</option>
+      </select>
+      <select id="f-div"><option value="">— ทุกฝ่าย —</option></select>
+      <select id="f-sec"><option value="">— ทุกแผนก —</option></select>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Username</th><th>ชื่อ</th><th>Role</th>
+          <th>ฝ่าย</th><th>แผนก</th><th>ตำแหน่ง</th>
+          <th>เวลาทำงาน</th>
+        </tr>
+      </thead>
+      <tbody id="user-tbody"><tr><td colspan="7" class="empty">กำลังโหลด...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const ROLE_LABEL = {
+  admin:'ผู้ดูแลระบบ', executive:'ผู้บริหาร', manager:'ผู้จัดการ',
+  division_head:'หัวหน้าฝ่าย', section_head:'หัวหน้าแผนก', officer:'เจ้าหน้าที่',
+};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+let ME, USERS = [];
+
+(async function init() {
+  ME = await fetch('/api/me').then(r => r.json());
+  const badge = document.getElementById('role-badge');
+  badge.textContent = ROLE_LABEL[ME.role] || ME.role;
+  if (ME.role === 'admin') {
+    document.getElementById('nav-admin').style.display = 'inline';
+    badge.className = 'pill blue';
+  } else if (ME.role === 'executive') badge.className = 'pill green';
+  else badge.className = 'pill gray';
+
+  const scope = {
+    admin: 'คุณมีสิทธิ์ admin — เห็นรายงานทั้งหมด',
+    executive: 'คุณเป็นผู้บริหาร — เห็นรายงานทั้งบริษัท',
+    manager: 'คุณเป็นผู้จัดการ — เห็นเฉพาะฝ่ายของคุณ + ที่ admin อนุญาตเพิ่ม',
+    division_head: 'คุณเป็นหัวหน้าฝ่าย — เห็นเฉพาะฝ่ายของคุณ',
+    section_head: 'คุณเป็นหัวหน้าแผนก — เห็นเฉพาะแผนกของคุณ',
+    officer: 'คุณเป็นเจ้าหน้าที่ — เห็นเฉพาะข้อมูลของตัวเอง',
+  };
+  document.getElementById('scope-note').textContent = scope[ME.role] || '';
+
+  await loadAll();
+})();
+
+async function loadAll() {
+  const [summary, users, divs, secs] = await Promise.all([
+    fetch('/api/reports/summary').then(r => r.json()),
+    fetch('/api/reports/users').then(r => r.json()),
+    fetch('/api/divisions').then(r => r.json()),
+    fetch('/api/sections').then(r => r.json()),
+  ]);
+  USERS = users;
+
+  // Summary cards
+  const cards = [
+    { num: summary.total_users, lbl: 'ผู้ใช้ที่มองเห็นได้' },
+    { num: summary.by_division.length, lbl: 'ฝ่ายในมุมมองของคุณ' },
+    ...Object.entries(summary.by_role || {}).map(([role, n]) => ({
+      num: n, lbl: ROLE_LABEL[role] || role,
+    })),
+  ];
+  document.getElementById('summary-row').innerHTML = cards.map(c => `
+    <div class="stat">
+      <div class="num">${c.num}</div>
+      <div class="lbl">${esc(c.lbl)}</div>
+    </div>
+  `).join('');
+
+  // By division
+  const tbody = document.querySelector('#by-div-tbl tbody');
+  if (summary.by_division.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="2" class="empty">ไม่มีฝ่ายในมุมมองของคุณ</td></tr>';
+  } else {
+    tbody.innerHTML = summary.by_division
+      .sort((a, b) => b.count - a.count)
+      .map(d => `<tr><td>${esc(d.name)}</td><td style="text-align:right;"><strong>${d.count}</strong> คน</td></tr>`)
+      .join('');
+  }
+
+  // Filter selects
+  const dSel = document.getElementById('f-div');
+  dSel.innerHTML = '<option value="">— ทุกฝ่าย —</option>' + divs.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+  const sSel = document.getElementById('f-sec');
+  sSel.innerHTML = '<option value="">— ทุกแผนก —</option>' + secs.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+
+  renderUsers();
+}
+
+function renderUsers() {
+  const tbody = document.getElementById('user-tbody');
+  const q = (document.getElementById('f-search').value || '').trim().toLowerCase();
+  const role = document.getElementById('f-role').value;
+  const div = document.getElementById('f-div').value;
+  const sec = document.getElementById('f-sec').value;
+  const filtered = USERS.filter(u => {
+    if (role && u.role !== role) return false;
+    if (div && u.division_id !== div) return false;
+    if (sec && u.section_id !== sec) return false;
+    if (q) {
+      const hay = (u.username + ' ' + u.name).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  document.getElementById('user-count').textContent = `(${filtered.length} / ${USERS.length})`;
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">ไม่มีผู้ใช้ตามเงื่อนไข</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtered.map(u => `
+    <tr>
+      <td><strong>${esc(u.username)}</strong></td>
+      <td>${esc(u.name)}</td>
+      <td><span class="role-badge role-${u.role}">${esc(ROLE_LABEL[u.role] || u.role)}</span></td>
+      <td>${esc(u.division_name || '–')}</td>
+      <td>${esc(u.section_name || '–')}</td>
+      <td>${esc(u.position_name || '–')}</td>
+      <td style="font-size:12px;">${esc(u.work_start)}–${esc(u.work_end)} <span class="sub">(พัก ${esc(u.break_start)}–${esc(u.break_end)})</span></td>
+    </tr>
+  `).join('');
+}
+
+['f-search','f-role','f-div','f-sec'].forEach(id => {
+  document.getElementById(id).addEventListener('input', renderUsers);
+  document.getElementById(id).addEventListener('change', renderUsers);
+});
+
+async function logout() {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/login';
+}
+</script>
+</body>
+</html>

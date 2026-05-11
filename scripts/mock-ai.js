@@ -332,7 +332,12 @@ function normalizeLang(lang) {
 
 function buildScript(interview) {
   const lang = normalizeLang(interview.lang);
-  const hours = scheduleHours(interview.schedule || '09-18');
+  // Prefer per-user hours stored on the interview (position-anchored model where the
+  // user's profile sets work_start/end/break). Fall back to the preset schedule for
+  // legacy interviews that never had hours computed.
+  const hours = (Array.isArray(interview.hours) && interview.hours.length)
+    ? interview.hours
+    : scheduleHours(interview.schedule || '09-18');
 
   const intro = INTRO_QUESTIONS.map(q => ({
     key: q.key, category: q.category, text: q.text[lang] || q.text.th,

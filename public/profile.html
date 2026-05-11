@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>โปรไฟล์ | HR-WWN</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="icon" type="image/png" href="/logo.png"/>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="logo">
+      <span>HR-WWN</span>
+      <span id="role-badge" class="pill gray" style="font-size:11px;"></span>
+    </div>
+    <nav>
+      <a href="/">หน้าแรก</a>
+      <a href="/profile">👤 โปรไฟล์</a>
+      <a href="/reports">📊 รายงาน</a>
+      <a href="#" onclick="logout();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <h1>👤 โปรไฟล์ของฉัน</h1>
+  <p class="sub">แก้ไขข้อมูลส่วนตัว · เวลาทำงาน · รหัสผ่าน</p>
+
+  <!-- Profile + work times -->
+  <div class="card">
+    <h2>ข้อมูลทั่วไป</h2>
+    <form id="profile-form">
+      <div class="row">
+        <div>
+          <label>Username</label>
+          <input id="f-username" disabled/>
+        </div>
+        <div>
+          <label>ชื่อ-นามสกุล</label>
+          <input name="name" id="f-name"/>
+        </div>
+        <div>
+          <label>สิทธิ์ (role)</label>
+          <input id="f-role" disabled/>
+        </div>
+      </div>
+
+      <div class="row">
+        <div><label>ฝ่าย</label><input id="f-div" disabled/></div>
+        <div><label>แผนก</label><input id="f-sec" disabled/></div>
+        <div><label>ตำแหน่ง</label><input id="f-pos" disabled/></div>
+      </div>
+      <p class="hint">ฝ่าย / แผนก / ตำแหน่ง ของตัวเอง admin เป็นคนตั้งให้ (แก้เองไม่ได้) — แต่หากเป็นหัวหน้าจะแก้ "ชื่อ" ของหน่วยงานในความรับผิดชอบได้ในหน้านี้ด้านล่าง</p>
+
+      <h3 style="margin-top:20px;">เวลาทำงาน</h3>
+      <div class="row">
+        <div><label>เข้างาน</label><input name="work_start" type="time" id="f-ws"/></div>
+        <div><label>ออกงาน</label><input name="work_end" type="time" id="f-we"/></div>
+        <div><label>เริ่มพัก</label><input name="break_start" type="time" id="f-bs"/></div>
+        <div><label>เลิกพัก</label><input name="break_end" type="time" id="f-be"/></div>
+      </div>
+
+      <h3 style="margin-top:20px;">เปลี่ยนรหัสผ่าน</h3>
+      <div class="row">
+        <div>
+          <label>รหัสผ่านใหม่ <span class="sub" style="font-size:12px;">(เว้นว่าง = ไม่เปลี่ยน)</span></label>
+          <input name="password" type="password" autocomplete="new-password"/>
+        </div>
+      </div>
+
+      <div id="prof-msg" style="margin-top:12px;"></div>
+      <div style="margin-top:14px;">
+        <button type="submit">💾 บันทึก</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Edit org names — visibility based on role -->
+  <div class="card" id="edit-org-card">
+    <h2>แก้ชื่อหน่วยงานในความรับผิดชอบ</h2>
+    <p class="sub" id="edit-hint">กำลังโหลด...</p>
+    <div id="edit-div" style="display:none; margin-top:12px;">
+      <h3 style="margin:8px 0;">🏢 ฝ่าย</h3>
+      <form class="row" data-kind="division">
+        <div><label>ชื่อฝ่าย (TH)</label><input name="name"/></div>
+        <div><label>EN</label><input name="name_en"/></div>
+        <div style="flex:0 0 auto; align-self:flex-end;"><button type="submit">บันทึก</button></div>
+      </form>
+    </div>
+    <div id="edit-sec" style="display:none; margin-top:16px;">
+      <h3 style="margin:8px 0;">📋 แผนกที่ดูแล</h3>
+      <div id="sec-list"></div>
+    </div>
+    <div id="edit-pos" style="display:none; margin-top:16px;">
+      <h3 style="margin:8px 0;">👤 ตำแหน่งที่ดูแล</h3>
+      <div id="pos-list"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const ROLE_LABEL = {
+  admin:'ผู้ดูแลระบบ', executive:'ผู้บริหาร', manager:'ผู้จัดการ',
+  division_head:'หัวหน้าฝ่าย', section_head:'หัวหน้าแผนก', officer:'เจ้าหน้าที่',
+};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+
+let ME, PROFILE;
+let DIVS = [], SECS = [], POSS = [];
+
+(async function init() {
+  ME = await fetch('/api/me').then(r => r.json());
+  if (ME.role === 'admin') {
+    alert('Admin ใช้หน้านี้ไม่ได้ — กลับไปที่ /admin');
+    location.href = '/admin';
+    return;
+  }
+  const badge = document.getElementById('role-badge');
+  badge.textContent = ROLE_LABEL[ME.role] || ME.role;
+  badge.className = 'pill gray';
+
+  PROFILE = await fetch('/api/me/profile').then(r => r.json());
+  document.getElementById('f-username').value = PROFILE.username;
+  document.getElementById('f-name').value = PROFILE.name || '';
+  document.getElementById('f-role').value = ROLE_LABEL[PROFILE.role];
+  document.getElementById('f-div').value = ME.division_name || '–';
+  document.getElementById('f-sec').value = ME.section_name || '–';
+  document.getElementById('f-pos').value = ME.position_name || '–';
+  document.getElementById('f-ws').value = PROFILE.work_start || '09:00';
+  document.getElementById('f-we').value = PROFILE.work_end   || '18:00';
+  document.getElementById('f-bs').value = PROFILE.break_start|| '12:00';
+  document.getElementById('f-be').value = PROFILE.break_end  || '13:00';
+
+  // Org-edit panel — visibility per role
+  await loadOrg();
+})();
+
+async function loadOrg() {
+  [DIVS, SECS, POSS] = await Promise.all([
+    fetch('/api/divisions').then(r => r.json()),
+    fetch('/api/sections').then(r => r.json()),
+    fetch('/api/positions').then(r => r.json()),
+  ]);
+  const hint = document.getElementById('edit-hint');
+  const r = ME.role;
+
+  // Officer: cannot rename anything
+  if (r === 'officer') {
+    hint.innerHTML = '<em>ในระดับเจ้าหน้าที่ ไม่สามารถแก้ชื่อฝ่าย/แผนก/ตำแหน่งได้</em>';
+    return;
+  }
+
+  // Build list of what user can edit (based on what they can view via API)
+  const myDiv = DIVS.find(d => d.id === ME.division_id);
+  let editable = { divs: [], secs: [], poss: [] };
+
+  if (r === 'executive') {
+    editable.divs = DIVS;
+    editable.secs = SECS;
+    editable.poss = POSS;
+  } else if (r === 'manager') {
+    // Per server filter, the lists already only contain what manager can see
+    editable.divs = DIVS;
+    editable.secs = SECS;
+    editable.poss = POSS;
+  } else if (r === 'division_head') {
+    editable.divs = myDiv ? [myDiv] : [];
+    editable.secs = SECS.filter(s => s.division_id === ME.division_id);
+    editable.poss = POSS.filter(p => editable.secs.some(s => s.id === p.section_id));
+  } else if (r === 'section_head') {
+    editable.divs = [];
+    editable.secs = SECS.filter(s => s.id === ME.section_id);
+    editable.poss = POSS.filter(p => p.section_id === ME.section_id);
+  }
+
+  hint.textContent = `คุณสามารถแก้ชื่อ: ${editable.divs.length} ฝ่าย · ${editable.secs.length} แผนก · ${editable.poss.length} ตำแหน่ง`;
+
+  // Division section — show only if 1 div editable; if multiple, list them
+  if (editable.divs.length === 1) {
+    const d = editable.divs[0];
+    const wrap = document.getElementById('edit-div');
+    wrap.style.display = 'block';
+    const form = wrap.querySelector('form');
+    form.querySelector('[name=name]').value = d.name;
+    form.querySelector('[name=name_en]').value = d.name_en || '';
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const body = Object.fromEntries(new FormData(form).entries());
+      const r = await fetch('/api/divisions/' + d.id, { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+      if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (e.error || 'unknown')); return; }
+      alert('บันทึกชื่อฝ่ายแล้ว');
+      loadOrg();
+    };
+  } else if (editable.divs.length > 1) {
+    const wrap = document.getElementById('edit-div');
+    wrap.style.display = 'block';
+    wrap.innerHTML = '<h3 style="margin:8px 0;">🏢 ฝ่ายที่ดูแล</h3>' + editable.divs.map(d => `
+      <form class="row" data-id="${d.id}" style="margin-bottom:8px;">
+        <div><label>ชื่อฝ่าย</label><input name="name" value="${esc(d.name)}"/></div>
+        <div><label>EN</label><input name="name_en" value="${esc(d.name_en || '')}"/></div>
+        <div style="flex:0 0 auto; align-self:flex-end;"><button type="submit">บันทึก</button></div>
+      </form>
+    `).join('');
+    wrap.querySelectorAll('form').forEach(f => {
+      f.onsubmit = async (e) => {
+        e.preventDefault();
+        const body = Object.fromEntries(new FormData(f).entries());
+        const id = f.dataset.id;
+        const r = await fetch('/api/divisions/' + id, { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+        if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (e.error || 'unknown')); return; }
+        alert('บันทึกแล้ว');
+      };
+    });
+  }
+
+  // Sections
+  if (editable.secs.length > 0) {
+    document.getElementById('edit-sec').style.display = 'block';
+    document.getElementById('sec-list').innerHTML = editable.secs.map(s => `
+      <form class="row" data-id="${s.id}" style="margin-bottom:8px;">
+        <div><label>ชื่อแผนก</label><input name="name" value="${esc(s.name)}"/></div>
+        <div><label>EN</label><input name="name_en" value="${esc(s.name_en || '')}"/></div>
+        <div style="flex:0 0 auto; align-self:flex-end;"><button type="submit">บันทึก</button></div>
+      </form>
+    `).join('');
+    document.querySelectorAll('#sec-list form').forEach(f => {
+      f.onsubmit = async (e) => {
+        e.preventDefault();
+        const body = Object.fromEntries(new FormData(f).entries());
+        const id = f.dataset.id;
+        const r = await fetch('/api/sections/' + id, { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+        if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (e.error || 'unknown')); return; }
+        alert('บันทึกแล้ว');
+      };
+    });
+  }
+
+  // Positions
+  if (editable.poss.length > 0) {
+    document.getElementById('edit-pos').style.display = 'block';
+    document.getElementById('pos-list').innerHTML = editable.poss.map(p => `
+      <form class="row" data-id="${p.id}" style="margin-bottom:8px;">
+        <div><label>ชื่อตำแหน่ง</label><input name="name" value="${esc(p.name)}"/></div>
+        <div><label>EN</label><input name="name_en" value="${esc(p.name_en || '')}"/></div>
+        <div style="flex:0 0 auto; align-self:flex-end;"><button type="submit">บันทึก</button></div>
+      </form>
+    `).join('');
+    document.querySelectorAll('#pos-list form').forEach(f => {
+      f.onsubmit = async (e) => {
+        e.preventDefault();
+        const body = Object.fromEntries(new FormData(f).entries());
+        const id = f.dataset.id;
+        const r = await fetch('/api/positions/' + id, { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+        if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (e.error || 'unknown')); return; }
+        alert('บันทึกแล้ว');
+      };
+    });
+  }
+}
+
+document.getElementById('profile-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = {
+    name: fd.get('name'),
+    work_start: fd.get('work_start'),
+    work_end: fd.get('work_end'),
+    break_start: fd.get('break_start'),
+    break_end: fd.get('break_end'),
+  };
+  if (fd.get('password')) body.password = fd.get('password');
+  const r = await fetch('/api/me/profile', { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+  const msg = document.getElementById('prof-msg');
+  if (!r.ok) {
+    const d = await r.json().catch(()=>({}));
+    msg.innerHTML = `<span style="color:#b91c1c;">ผิดพลาด: ${esc(d.error || 'unknown')}</span>`;
+    return;
+  }
+  msg.innerHTML = '<span style="color:#166534;">✓ บันทึกแล้ว</span>';
+  e.target.querySelector('[name=password]').value = '';
+  setTimeout(() => msg.innerHTML = '', 3000);
+});
+
+async function logout() {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/login';
+}
+</script>
+</body>
+</html>

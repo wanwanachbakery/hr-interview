@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>โครงสร้างองค์กร | HR-WWN</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="icon" type="image/png" href="/logo.png"/>
+  <style>
+    .tree-div { border-left: 4px solid var(--brand); padding: 12px 16px; background: #f8fafc; border-radius: 8px; margin: 12px 0; }
+    .tree-sec { border-left: 3px solid #94a3b8; padding: 8px 12px; background: #fff; border-radius: 6px; margin: 8px 0 8px 24px; }
+    .tree-pos { padding: 4px 12px; margin: 4px 0 4px 56px; color: #475569; }
+    .item-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .item-actions button { padding: 4px 10px; font-size: 13px; margin-left: 4px; }
+    .add-form { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .add-form input, .add-form select { flex: 1; min-width: 140px; }
+    .add-form button { flex: 0 0 auto; }
+  </style>
+</head>
+<body>
+<div class="container wide">
+  <div class="topbar">
+    <div class="logo">
+      <span>HR-WWN</span>
+      <span class="pill blue" style="font-size:11px;">ADMIN</span>
+    </div>
+    <nav>
+      <a href="/admin">🔐 Admin</a>
+      <a href="/admin/org">🏢 องค์กร</a>
+      <a href="/admin/users">👥 ผู้ใช้</a>
+      <a href="#" onclick="logout();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <h1>🏢 โครงสร้างองค์กร</h1>
+  <p class="sub">บริษัท → ฝ่าย → แผนก → ตำแหน่ง</p>
+
+  <!-- Company -->
+  <div class="card">
+    <h2>ข้อมูลบริษัท</h2>
+    <form id="company-form" class="row">
+      <div>
+        <label>ชื่อบริษัท (TH)</label>
+        <input name="name" required/>
+      </div>
+      <div>
+        <label>Company Name (EN)</label>
+        <input name="name_en"/>
+      </div>
+      <div style="flex:0 0 auto; align-self:flex-end;">
+        <button type="submit">บันทึก</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Add division -->
+  <div class="card">
+    <h2>เพิ่มฝ่ายใหม่</h2>
+    <form id="div-form" class="add-form">
+      <input name="name" placeholder="ชื่อฝ่าย (TH) เช่น ฝ่ายบัญชี" required/>
+      <input name="name_en" placeholder="Name (EN)"/>
+      <input name="icon" placeholder="🏢" maxlength="4" style="max-width:80px;"/>
+      <input name="color" type="color" value="#3b82f6" style="max-width:80px;"/>
+      <button type="submit">+ เพิ่มฝ่าย</button>
+    </form>
+  </div>
+
+  <!-- Tree -->
+  <h2>โครงสร้างปัจจุบัน</h2>
+  <div id="tree"></div>
+</div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+
+let DIVS = [], SECS = [], POSS = [];
+
+async function loadAll() {
+  const [co, divs, secs, poss] = await Promise.all([
+    fetch('/api/company').then(r => r.json()),
+    fetch('/api/divisions').then(r => r.json()),
+    fetch('/api/sections').then(r => r.json()),
+    fetch('/api/positions').then(r => r.json()),
+  ]);
+  DIVS = divs; SECS = secs; POSS = poss;
+
+  document.querySelector('#company-form input[name=name]').value = co.name || '';
+  document.querySelector('#company-form input[name=name_en]').value = co.name_en || '';
+
+  renderTree();
+}
+
+function renderTree() {
+  const t = document.getElementById('tree');
+  if (DIVS.length === 0) {
+    t.innerHTML = '<div class="card empty">ยังไม่มีฝ่าย — ใช้ฟอร์มด้านบนเพิ่ม</div>';
+    return;
+  }
+  t.innerHTML = DIVS.map(d => {
+    const secs = SECS.filter(s => s.division_id === d.id);
+    return `
+      <div class="tree-div" style="border-left-color:${esc(d.color)}">
+        <div class="item-row">
+          <div><span style="font-size:20px;">${esc(d.icon)}</span> <strong style="font-size:17px;">${esc(d.name)}</strong> ${d.name_en ? `<span class="sub" style="font-size:13px;">(${esc(d.name_en)})</span>` : ''}</div>
+          <div class="item-actions">
+            <button class="ghost" onclick="editDiv('${d.id}')">แก้</button>
+            <button class="ghost" style="color:#b91c1c;" onclick="delDiv('${d.id}')">ลบ</button>
+          </div>
+        </div>
+        <form class="add-form" onsubmit="return addSec(event, '${d.id}')">
+          <input name="name" placeholder="เพิ่มแผนกในฝ่ายนี้ — ชื่อแผนก" required/>
+          <input name="name_en" placeholder="Name (EN)"/>
+          <button type="submit">+ เพิ่มแผนก</button>
+        </form>
+        ${secs.map(s => {
+          const poss = POSS.filter(p => p.section_id === s.id);
+          return `
+            <div class="tree-sec">
+              <div class="item-row">
+                <div>📋 <strong>${esc(s.name)}</strong> ${s.name_en ? `<span class="sub" style="font-size:13px;">(${esc(s.name_en)})</span>` : ''}</div>
+                <div class="item-actions">
+                  <button class="ghost" onclick="editSec('${s.id}')">แก้</button>
+                  <button class="ghost" style="color:#b91c1c;" onclick="delSec('${s.id}')">ลบ</button>
+                </div>
+              </div>
+              <form class="add-form" onsubmit="return addPos(event, '${s.id}')">
+                <input name="name" placeholder="เพิ่มตำแหน่งในแผนกนี้ — ชื่อตำแหน่ง" required/>
+                <input name="name_en" placeholder="Name (EN)"/>
+                <button type="submit">+ เพิ่มตำแหน่ง</button>
+              </form>
+              ${poss.map(p => `
+                <div class="tree-pos">
+                  <div class="item-row">
+                    <div>👤 ${esc(p.name)} ${p.name_en ? `<span class="sub" style="font-size:12px;">(${esc(p.name_en)})</span>` : ''}</div>
+                    <div class="item-actions">
+                      <button class="ghost" onclick="editPos('${p.id}')">แก้</button>
+                      <button class="ghost" style="color:#b91c1c;" onclick="delPos('${p.id}')">ลบ</button>
+                    </div>
+                  </div>
+                </div>
+              `).join('') || '<div class="tree-pos sub" style="font-size:13px;">– ยังไม่มีตำแหน่ง –</div>'}
+            </div>
+          `;
+        }).join('') || '<div class="tree-sec sub" style="font-size:13px;">– ยังไม่มีแผนก –</div>'}
+      </div>
+    `;
+  }).join('');
+}
+
+// --- Company ---
+document.getElementById('company-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  const r = await fetch('/api/company', { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); alert('ผิดพลาด: ' + (d.error || 'unknown')); return; }
+  alert('บันทึกชื่อบริษัทแล้ว');
+});
+
+// --- Division CRUD ---
+document.getElementById('div-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  const r = await fetch('/api/divisions', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); alert('ผิดพลาด: ' + (d.error || 'unknown')); return; }
+  e.target.reset();
+  e.target.querySelector('[name=color]').value = '#3b82f6';
+  loadAll();
+});
+async function editDiv(id) {
+  const d = DIVS.find(x => x.id === id); if (!d) return;
+  const name = prompt('ชื่อฝ่าย (TH):', d.name); if (name === null) return;
+  const name_en = prompt('Name (EN):', d.name_en || '') || '';
+  const icon = prompt('Icon (emoji):', d.icon) || d.icon;
+  const r = await fetch('/api/divisions/' + id, { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({ name, name_en, icon }) });
+  if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (e.error || 'unknown')); return; }
+  loadAll();
+}
+async function delDiv(id) {
+  const d = DIVS.find(x => x.id === id);
+  if (!confirm('ลบฝ่าย "' + d.name + '"?')) return;
+  const r = await fetch('/api/divisions/' + id, { method:'DELETE' });
+  if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ลบไม่ได้: ' + (e.error || 'unknown')); return; }
+  loadAll();
+}
+
+// --- Section CRUD ---
+async function addSec(e, division_id) {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  body.division_id = division_id;
+  const r = await fetch('/api/sections', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); alert('ผิดพลาด: ' + (d.error || 'unknown')); return false; }
+  e.target.reset();
+  loadAll();
+  return false;
+}
+async function editSec(id) {
+  const s = SECS.find(x => x.id === id); if (!s) return;
+  const name = prompt('ชื่อแผนก (TH):', s.name); if (name === null) return;
+  const name_en = prompt('Name (EN):', s.name_en || '') || '';
+  const r = await fetch('/api/sections/' + id, { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({ name, name_en }) });
+  if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (e.error || 'unknown')); return; }
+  loadAll();
+}
+async function delSec(id) {
+  const s = SECS.find(x => x.id === id);
+  if (!confirm('ลบแผนก "' + s.name + '"?')) return;
+  const r = await fetch('/api/sections/' + id, { method:'DELETE' });
+  if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ลบไม่ได้: ' + (e.error || 'unknown')); return; }
+  loadAll();
+}
+
+// --- Position CRUD ---
+async function addPos(e, section_id) {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  body.section_id = section_id;
+  const r = await fetch('/api/positions', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); alert('ผิดพลาด: ' + (d.error || 'unknown')); return false; }
+  e.target.reset();
+  loadAll();
+  return false;
+}
+async function editPos(id) {
+  const p = POSS.find(x => x.id === id); if (!p) return;
+  const name = prompt('ชื่อตำแหน่ง (TH):', p.name); if (name === null) return;
+  const name_en = prompt('Name (EN):', p.name_en || '') || '';
+  const r = await fetch('/api/positions/' + id, { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({ name, name_en }) });
+  if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (e.error || 'unknown')); return; }
+  loadAll();
+}
+async function delPos(id) {
+  const p = POSS.find(x => x.id === id);
+  if (!confirm('ลบตำแหน่ง "' + p.name + '"?')) return;
+  const r = await fetch('/api/positions/' + id, { method:'DELETE' });
+  if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ลบไม่ได้: ' + (e.error || 'unknown')); return; }
+  loadAll();
+}
+
+async function logout() {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/login';
+}
+
+loadAll();
+</script>
+</body>
+</html>

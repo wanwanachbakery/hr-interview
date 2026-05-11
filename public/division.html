@@ -11,7 +11,7 @@
 <body>
 <div class="container">
   <div class="topbar">
-    <div class="logo"><img src="/logo.png" alt="JIANCHA" class="logo-img"/><span class="logo-sub" data-i18n="brand">HR-WWN</span></div>
+    <div class="logo"><span>HR-WWN</span></div>
     <nav>
       <a href="/" data-i18n="nav_home">หน้าแรก</a>
       <a href="/examples" data-i18n="nav_examples">📘 ตัวอย่าง</a>
@@ -21,7 +21,8 @@
   </div>
   <script>
     fetch('/api/me').then(r=>r.json()).then(me=>{
-      if (me.role === 'admin') document.getElementById('nav-dashboard').style.display = 'inline';
+      // Dashboard is now accessible to everyone — server filters by scope.
+      document.getElementById('nav-dashboard').style.display = 'inline';
     }).catch(()=>{});
   </script>
 
@@ -111,14 +112,14 @@ async function load() {
     fetch('/api/employees?division_id=' + encodeURIComponent(divId)).then(r => r.json()),
     fetch('/api/me').then(r => r.json()),
   ]);
-  // Division users can only access their own division
-  if (me.role === 'division' && me.division_id !== divId) {
-    alert('คุณไม่มีสิทธิ์เข้าดูฝ่ายนี้');
-    location.href = '/';
-    return;
-  }
+  // /api/divisions is already scope-filtered server-side — if the user can't see this
+  // division, it won't be in the list and we'll bounce them back to home.
   const div = divs.find(d => d.id === divId);
-  if (!div) { alert('ไม่พบฝ่าย'); location.href = '/'; return; }
+  if (!div) { alert('คุณไม่มีสิทธิ์เข้าดูฝ่ายนี้ หรือไม่พบฝ่าย'); location.href = '/'; return; }
+  // Add employee form: visible to anyone who can add in this scope
+  // (server enforces; here we just show the UI). Officer's "add" auto-fills their own scope.
+  if (me.role !== 'executive') document.getElementById('add-emp-card').style.display = 'block';
+  else document.getElementById('add-emp-card').style.display = 'block'; // exec also can add
 
   document.getElementById('title').textContent = `${div.icon || '🏢'} ${div.name}`;
   document.getElementById('sub').textContent = `${div.name_en || ''} · พนักงาน ${emps.length} คน · อินเทอร์วิวแล้ว ${emps.filter(e=>e.interviewStatus==='completed').length} คน`;
@@ -311,10 +312,10 @@ document.getElementById('cal-today').addEventListener('click', () => {
 });
 document.addEventListener('langchange', renderCalendar);
 
-// Admin-only scope toggle
+// Scope toggle available to admin / executive / manager (anyone who can see > 1 division)
 async function setupScope() {
   const me = await fetch('/api/me').then(r => r.json());
-  if (me.role !== 'admin') return;
+  if (!['admin', 'executive', 'manager'].includes(me.role)) return;
   const toggle = document.getElementById('scope-toggle');
   toggle.style.display = 'inline-flex';
   const mineBtn = document.getElementById('scope-mine');

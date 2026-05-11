@@ -6,73 +6,102 @@
   <title>Admin | HR-WWN</title>
   <link rel="stylesheet" href="/styles.css"/>
   <link rel="icon" type="image/png" href="/logo.png"/>
-  <script src="/i18n.js"></script>
 </head>
 <body>
 <div class="container">
   <div class="topbar">
-    <div class="logo"><img src="/logo.png" alt="JIANCHA" class="logo-img"/><span class="logo-sub" data-i18n="brand">HR-WWN</span> <span class="pill blue" style="font-size:11px;">ADMIN</span></div>
+    <div class="logo">
+      <span>HR-WWN</span>
+      <span class="pill blue" style="font-size:11px;">ADMIN</span>
+    </div>
     <nav>
-      <a href="/" data-i18n="nav_home">หน้าแรก</a>
-      <a href="/examples" data-i18n="nav_examples">📘 ตัวอย่าง</a>
-      <a href="/dashboard" data-i18n="nav_dashboard">Dashboard</a>
-      <a href="/admin" data-i18n="nav_admin">🔐 Admin</a>
-      <a href="#" onclick="logout();return false;" data-i18n="nav_logout">ออกจากระบบ</a>
+      <a href="/admin">🔐 Admin</a>
+      <a href="/admin/org">🏢 องค์กร</a>
+      <a href="/admin/users">👥 ผู้ใช้</a>
+      <a href="/reports">📊 รายงาน</a>
+      <a href="#" onclick="logout();return false;">ออกจากระบบ</a>
     </nav>
   </div>
 
-  <h1>🔐 Admin — จัดการรหัสผ่าน</h1>
-  <p class="sub">หน้านี้เปิดดูได้เฉพาะรหัส admin · แจกรหัสให้พนักงานเฉพาะของฝ่ายเค้าเท่านั้น</p>
+  <h1>🔐 Admin Console</h1>
+  <p class="sub">ศูนย์กลางการจัดการระบบ — เลือกเมนูด้านล่าง</p>
 
-  <div class="card">
-    <h2>Master password (เข้าดูทุกอย่าง)</h2>
-    <div id="master" style="font-family:monospace; font-size:20px; background:#fef3c7; padding:12px 16px; border-radius:8px; display:inline-block;">...</div>
-    <p class="hint">ใช้รหัสนี้จะเข้าดูได้ทุกฝ่าย + Dashboard + รายงานรวมบริษัท</p>
+  <div class="grid" style="grid-template-columns:repeat(auto-fill, minmax(260px, 1fr));">
+    <a href="/admin/org" class="div-card" style="border-top-color:#0ea5e9;">
+      <div class="icon">🏢</div>
+      <div class="name">โครงสร้างองค์กร</div>
+      <div class="meta">บริษัท · ฝ่าย · แผนก · ตำแหน่ง</div>
+    </a>
+    <a href="/admin/users" class="div-card" style="border-top-color:#10b981;">
+      <div class="icon">👥</div>
+      <div class="name">จัดการผู้ใช้</div>
+      <div class="meta">เพิ่ม / แก้ไข / ลบ user · กำหนดสิทธิ์</div>
+    </a>
+    <a href="/dashboard" class="div-card" style="border-top-color:#ec4899;">
+      <div class="icon">🎤</div>
+      <div class="name">อินเทอร์วิว + JD/KPI</div>
+      <div class="meta">เพิ่มพนักงาน · สัมภาษณ์ · วิเคราะห์รวมบริษัท</div>
+    </a>
+    <a href="/reports" class="div-card" style="border-top-color:#8b5cf6;">
+      <div class="icon">📊</div>
+      <div class="name">รายงาน</div>
+      <div class="meta">สรุป + รายชื่อผู้ใช้ทั้งหมด</div>
+    </a>
+    <a href="#" onclick="changeMaster();return false;" class="div-card" style="border-top-color:#f59e0b;">
+      <div class="icon">🔑</div>
+      <div class="name">รหัส Master Admin</div>
+      <div class="meta">ดู / เปลี่ยนรหัสผ่านผู้ดูแลระบบ</div>
+    </a>
   </div>
 
-  <div class="card">
-    <h2>รหัสของแต่ละฝ่าย</h2>
-    <p class="sub">พนักงานใช้รหัสของฝ่ายตัวเองเท่านั้น — จะเห็นแต่ข้อมูลของฝ่ายเค้า</p>
-    <table>
-      <thead><tr><th>ฝ่าย</th><th>รหัสผ่าน</th><th>Copy</th></tr></thead>
-      <tbody id="div-pw"></tbody>
-    </table>
-  </div>
-
-  <div class="card" style="background:#fef2f2; border-color:#fecaca;">
-    <h2>⚠️ วิธีเปลี่ยนรหัส</h2>
-    <p class="sub">แก้ไฟล์ <code>data/auth.json</code> แล้ว restart server — หน้านี้ไม่รองรับการแก้รหัสผ่านจริงเพื่อป้องกันความผิดพลาด</p>
+  <div class="card" style="margin-top:24px;">
+    <h2>ข้อมูลโดยสรุป</h2>
+    <div id="summary" class="row" style="margin-top:8px;">
+      <div><span class="sub">บริษัท:</span> <strong id="s-co">–</strong></div>
+      <div><span class="sub">ฝ่าย:</span> <strong id="s-div">0</strong></div>
+      <div><span class="sub">แผนก:</span> <strong id="s-sec">0</strong></div>
+      <div><span class="sub">ตำแหน่ง:</span> <strong id="s-pos">0</strong></div>
+      <div><span class="sub">ผู้ใช้:</span> <strong id="s-usr">0</strong></div>
+    </div>
   </div>
 </div>
 
 <script>
-function esc(s){return String(s||'').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
-
-async function load() {
-  const [auth, divs] = await Promise.all([
-    fetch('/api/admin/passwords').then(r => r.json()),
-    fetch('/api/divisions').then(r => r.json()),
-  ]);
-  document.getElementById('master').textContent = auth.master;
-  const divMap = Object.fromEntries(divs.map(d => [d.id, d]));
-
-  const tbody = document.getElementById('div-pw');
-  tbody.innerHTML = Object.entries(auth.divisions || {}).map(([id, pw]) => {
-    const d = divMap[id] || { icon: '🏢', name: id };
-    return `<tr>
-      <td>${esc(d.icon || '🏢')} <strong>${esc(d.name)}</strong> <span style="color:#94a3b8; font-size:12px;">${esc(id)}</span></td>
-      <td style="font-family:monospace; font-size:15px;">${esc(pw)}</td>
-      <td><button class="ghost" onclick="navigator.clipboard.writeText('${esc(pw)}').then(()=>this.textContent='✓ คัดลอกแล้ว')">คัดลอก</button></td>
-    </tr>`;
-  }).join('');
-}
-
 async function logout() {
   await fetch('/api/logout', { method: 'POST' });
   location.href = '/login';
 }
 
-load();
+async function changeMaster() {
+  const pw = prompt('กรอกรหัสผ่าน master ใหม่ (อย่างน้อย 6 ตัวอักษร):\n\nหมายเหตุ: รหัสปัจจุบันถูก hash ไว้ (ดูไม่ได้) — ลืมรหัสต้องแก้ data/auth.json โดยตรง');
+  if (!pw) return;
+  if (pw.length < 6) { alert('รหัสต้องยาวอย่างน้อย 6 ตัวอักษร'); return; }
+  const r = await fetch('/api/admin/auth', {
+    method: 'PUT', headers: {'content-type':'application/json'},
+    body: JSON.stringify({ master: pw }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    alert('ผิดพลาด: ' + (d.error || 'unknown'));
+    return;
+  }
+  alert('เปลี่ยนรหัสสำเร็จ — ครั้งหน้าใช้รหัสใหม่ login');
+}
+
+(async function summary() {
+  const [co, divs, secs, poss, usrs] = await Promise.all([
+    fetch('/api/company').then(r => r.json()),
+    fetch('/api/divisions').then(r => r.json()),
+    fetch('/api/sections').then(r => r.json()),
+    fetch('/api/positions').then(r => r.json()),
+    fetch('/api/users').then(r => r.json()),
+  ]);
+  document.getElementById('s-co').textContent = co.name || '(ยังไม่ตั้งค่า)';
+  document.getElementById('s-div').textContent = divs.length;
+  document.getElementById('s-sec').textContent = secs.length;
+  document.getElementById('s-pos').textContent = poss.length;
+  document.getElementById('s-usr').textContent = usrs.length;
+})();
 </script>
 </body>
 </html>

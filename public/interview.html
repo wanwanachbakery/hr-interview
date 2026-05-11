@@ -11,7 +11,7 @@
 <body>
 <div class="container">
   <div class="topbar">
-    <div class="logo"><img src="/logo.png" alt="JIANCHA" class="logo-img"/><span class="logo-sub" data-i18n="brand">HR-WWN</span></div>
+    <div class="logo"><span>HR-WWN</span></div>
     <nav>
       <a href="/" data-i18n="nav_home">หน้าแรก</a>
       <a href="/examples" target="_blank" data-i18n="nav_examples">📘 ตัวอย่าง</a>
@@ -26,11 +26,14 @@
     <p class="hint" id="prog-text"></p>
   </div>
 
-  <!-- Schedule picker shown only when starting a brand-new interview -->
+  <!-- Pre-start card: shows the user's own work hours (from their profile) before starting -->
   <div class="card" id="schedule-card" style="display:none;">
-    <h2 data-i18n="iv_start_title">ก่อนเริ่ม — เลือกเวลาทำงานของคุณ</h2>
-    <p class="sub" data-i18n="iv_start_sub">เวลาที่คุณเลือกจะใช้กำหนดคำถามรายชั่วโมง (ข้ามพักเที่ยงอัตโนมัติ)</p>
-    <form id="schedule-form" class="schedule-picker" autocomplete="off"></form>
+    <h2>ก่อนเริ่ม — ยืนยันเวลาทำงานของคุณ</h2>
+    <p class="sub">AI จะถามคำถามรายชั่วโมงตามเวลานี้ (ข้ามพักอัตโนมัติ) — ตั้งจากโปรไฟล์ของคุณ ถ้าต้องการแก้ ไปที่หน้า <a href="/profile">👤 โปรไฟล์</a> ก่อน</p>
+
+    <div id="my-hours-box" style="background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:14px 18px; font-size:15px;">
+      กำลังโหลด...
+    </div>
 
     <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border, #e5e7eb);">
       <label for="iv-date" style="display:block; font-weight:600; margin-bottom:6px;">วันที่สัมภาษณ์</label>
@@ -39,7 +42,7 @@
     </div>
 
     <div style="text-align:right; margin-top:16px;">
-      <button type="button" id="schedule-submit" data-i18n="iv_start_btn">เริ่มอินเทอร์วิว →</button>
+      <button type="button" id="schedule-submit">เริ่มอินเทอร์วิว →</button>
     </div>
   </div>
 
@@ -100,23 +103,25 @@ function updateProgress() {
   document.getElementById('prog-text').textContent = `${tpl} (${pct}%)`;
 }
 
-// ---------- Schedule picker ----------
-async function renderSchedulePicker() {
-  const lang = (window.I18N && window.I18N.getLang()) || 'th';
-  const schedules = await fetch('/api/schedules?lang=' + lang).then(r => r.json());
-  const formEl = document.getElementById('schedule-form');
-  formEl.innerHTML = schedules.map((s, i) => `
-    <label class="schedule-option${i===0?' selected':''}">
-      <input type="radio" name="schedule" value="${esc(s.id)}" ${i===0?'checked':''}/>
-      <span class="label">${esc(s.label)}</span>
-    </label>
-  `).join('');
-  formEl.querySelectorAll('input[type=radio]').forEach(r => {
-    r.addEventListener('change', () => {
-      formEl.querySelectorAll('.schedule-option').forEach(el => el.classList.remove('selected'));
-      r.closest('.schedule-option').classList.add('selected');
-    });
-  });
+// ---------- Display user's own hours (from /api/me/profile) ----------
+async function renderMyHours() {
+  const box = document.getElementById('my-hours-box');
+  try {
+    const me = await fetch('/api/me/profile').then(r => r.json());
+    if (!me || !me.work_start) {
+      box.innerHTML = '<span style="color:#b91c1c;">ไม่พบเวลาทำงานในโปรไฟล์ — ติดต่อ admin</span>';
+      return;
+    }
+    box.innerHTML = `
+      <div style="display:flex; gap:24px; flex-wrap:wrap;">
+        <div><strong>เข้างาน:</strong> ${esc(me.work_start)}</div>
+        <div><strong>ออกงาน:</strong> ${esc(me.work_end)}</div>
+        <div><strong>พักเที่ยง:</strong> ${esc(me.break_start)} – ${esc(me.break_end)}</div>
+      </div>
+    `;
+  } catch (err) {
+    box.innerHTML = '<span style="color:#b91c1c;">โหลดเวลาทำงานไม่สำเร็จ</span>';
+  }
 }
 
 // ---------- Start flow ----------
@@ -152,7 +157,7 @@ function estimateTotal(data) {
 
 async function start() {
   // Peek at existing interview — if there are any answers OR it's a legacy interview,
-  // resume straight into chat; otherwise show schedule picker first.
+  // resume straight into chat; otherwise show the "confirm hours + date" pre-start card.
   const initial = await fetchInterview(null);
   const iv = initial.interview;
   const hasAnswers = iv.answers.length > 0;
@@ -162,10 +167,8 @@ async function start() {
     await beginAfterStart(initial);
     return;
   }
-  // Preload defaults from the interview record (server already defaulted them on create)
-  _preloadSchedule = iv.schedule || '09-18';
-  _preloadLang = iv.lang || ((window.I18N && window.I18N.getLang()) || 'th');
-  await renderSchedulePicker();
+  // Show the user's own hours (no picker — hours come from profile)
+  await renderMyHours();
   // Initialise the date picker — default today, cap at today (no future).
   const dateInput = document.getElementById('iv-date');
   const todayStr = new Date().toLocaleDateString('en-CA');
@@ -174,24 +177,19 @@ async function start() {
   scheduleCard.style.display = 'block';
   chatCard.style.display = 'none';
 }
-let _preloadSchedule = '09-18';
-let _preloadLang = 'th';
 
 document.getElementById('schedule-submit').addEventListener('click', async () => {
-  const chosen = document.querySelector('#schedule-form input[name=schedule]:checked');
-  const schedule = chosen ? chosen.value : '09-18';
   const lang = (window.I18N && window.I18N.getLang()) || 'th';
   const dateInput = document.getElementById('iv-date');
   const todayStr = new Date().toLocaleDateString('en-CA');
   let interviewDate = dateInput.value || todayStr;
   if (interviewDate > todayStr) interviewDate = todayStr; // never future
-  const data = await fetchInterview({ schedule, lang, interviewDate });
+  // No schedule sent — server reads work_start/end/break from the user's profile
+  const data = await fetchInterview({ lang, interviewDate });
   await beginAfterStart(data);
 });
 
-document.addEventListener('langchange', async () => {
-  // Re-render the schedule picker labels if still visible
-  if (scheduleCard.style.display !== 'none') await renderSchedulePicker();
+document.addEventListener('langchange', () => {
   // Re-render progress text (it uses a translated template)
   updateProgress();
 });
