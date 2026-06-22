@@ -145,6 +145,50 @@ systemctl status cloudflared   # ต้องเห็น active (running)
 
 ---
 
+## ขั้นที่ 8 — เปิดใช้ Claude API (สร้างเอกสารด้วย AI จริง)
+
+ระบบจะใช้ **Claude (Sonnet 4.6)** สร้าง Job Description / KPI / Optimization และรายงานภาพรวมบริษัท
+ถ้า **ไม่ได้** ตั้งค่า key ระบบจะใช้ตัวสร้างเอกสารแบบ mock เดิม (ทำงานได้ปกติ แต่เป็นแม่แบบสำเร็จรูป)
+
+> 🔐 **ห้ามใส่ API key ในโค้ดหรือ push ขึ้น GitHub เด็ดขาด** — เก็บเป็น env var บน droplet เท่านั้น
+
+```bash
+# บน droplet
+cd /opt/hr-interview
+git pull
+npm install --omit=dev          # ติดตั้ง @anthropic-ai/sdk ที่เพิ่มเข้ามา
+
+# ใส่ key (แทน sk-ant-... ด้วย key จริงของคุณ)
+export ANTHROPIC_API_KEY="sk-ant-..."
+pm2 restart hr-interview --update-env
+pm2 save                         # บันทึก env ไว้ให้คงอยู่หลัง reboot
+```
+
+ตรวจสอบว่าใช้ Claude แล้ว:
+```bash
+pm2 logs hr-interview --lines 30 | grep "document engine"
+# ต้องเห็น:  [ai] document engine: Claude (claude-sonnet-4-6)
+```
+
+ทดสอบเชื่อมต่อ Claude (ไม่เขียนข้อมูลลงดิสก์):
+```bash
+ANTHROPIC_API_KEY="sk-ant-..." node scripts/smoke-claude.js
+```
+
+**เปลี่ยน key:** ใส่ค่าใหม่แล้วทำซ้ำเหมือนตอนตั้งครั้งแรก (`export ... ; pm2 restart hr-interview --update-env ; pm2 save`)
+
+**ปิด Claude (กลับไปใช้ mock):**
+```bash
+pm2 delete hr-interview
+PORT=3000 NODE_ENV=production SECURE_COOKIES=true AUTO_OPEN_BROWSER=false \
+  pm2 start server.js --name hr-interview --update-env   # เริ่มใหม่โดยไม่มี ANTHROPIC_API_KEY
+pm2 save
+```
+
+> หมายเหตุ: เมื่อเปิด Claude แล้ว การกด "ปิดอินเทอร์วิว" จะใช้เวลานานขึ้นเล็กน้อย (ไม่กี่วินาที–~30 วิ) เพราะ AI กำลังคิดและร่างเอกสารจริง
+
+---
+
 ## การดูแลระบบ
 
 | งาน | คำสั่ง (บน droplet) |

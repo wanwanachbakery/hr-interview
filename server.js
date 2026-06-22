@@ -13,6 +13,29 @@ const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const xlsx = require('xlsx');
 const ai = require('./scripts/mock-ai');
+// Real-Claude layer (Sonnet 4.6) for JD/KPI/Optimization + company report.
+// Safe to require even without the SDK/key — it lazily inits and falls back to
+// mock-ai on any problem. Only generateDocuments + analyzeCompany use Claude;
+// interview questions/probes stay on mock-ai (cheaper, deterministic).
+const claude = require('./scripts/claude-ai');
+
+// Pick Claude when a key is configured, otherwise mock. Both wrappers are async
+// and never throw — claude-ai already falls back to mock internally.
+async function generateDocuments(interview) {
+  if (claude.isEnabled()) {
+    try { return await claude.generateDocuments(interview); }
+    catch (e) { console.error('[ai] generateDocuments fell back to mock:', e.message); }
+  }
+  return ai.generateDocuments(interview);
+}
+async function analyzeCompany(interviews) {
+  if (claude.isEnabled()) {
+    try { return await claude.analyzeCompany(interviews); }
+    catch (e) { console.error('[ai] analyzeCompany fell back to mock:', e.message); }
+  }
+  return ai.analyzeCompany(interviews);
+}
+console.log('[ai] document engine:', claude.isEnabled() ? ('Claude (' + claude.MODEL + ')') : 'mock-ai (set ANTHROPIC_API_KEY to enable Claude)');
 
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
@@ -1211,7 +1234,7 @@ tenantRouter.post('/api/interview/:id/message', (req, res) => {
 });
 
 // Finish -> generate JD/KPI/Optimization docs
-tenantRouter.post('/api/interview/:id/finish', (req, res) => {
+tenantRouter.post('/api/interview/:id/finish', async (req, res) => {
   const iv = loadInterview(req.params.id);
   if (!iv) return res.status(404).json({ error: 'not found' });
   const liveEmp = load.employees().find(e => e.id === req.params.id);
@@ -1224,7 +1247,7 @@ tenantRouter.post('/api/interview/:id/finish', (req, res) => {
 
   const outDir = path.join(ctxDb().outDir, iv.id);
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-  const docs = ai.generateDocuments(iv);
+  const docs = await generateDocuments(iv);
   const files = [];
   for (const [name, content] of Object.entries(docs)) {
     fs.writeFileSync(path.join(outDir, name), content);
@@ -1301,12 +1324,12 @@ tenantRouter.get('/api/interviews/history', (req, res) => {
 });
 
 // Company-wide analysis — admin + executive + manager
-tenantRouter.post('/api/company/analyze', requireRoles('admin', 'executive', 'manager'), (req, res) => {
+tenantRouter.post('/api/company/analyze', requireRoles('admin', 'executive', 'manager'), async (req, res) => {
   const list = load.employees();
   const interviews = list
     .map(e => loadInterview(e.id))
     .filter(iv => iv && iv.finishedAt);
-  const md = ai.analyzeCompany(interviews);
+  const md = await analyzeCompany(interviews);
   const outDir = ctxDb().cmpOutDir;
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, 'optimization-report.md'), md);
