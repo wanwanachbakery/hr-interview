@@ -1,11 +1,11 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-title HR-WWN — Install
+title HR-Interview — Install
 
 echo.
 echo =========================================================
-echo   HR-WWN  —  ติดตั้งครั้งแรก (รันครั้งเดียวพอ)
+echo   HR-Interview  —  ติดตั้งครั้งแรก (รันครั้งเดียวพอ)
 echo =========================================================
 echo.
 
@@ -57,7 +57,7 @@ echo    1. ดับเบิลคลิก  2-START.bat  เพื่อเร
 echo    2. เบราว์เซอร์จะเปิดให้อัตโนมัติ
 echo    3. Login ครั้งแรกใช้:
 echo         Username: admin
-echo         Password: JC2026!Init
+echo         Password: WWN2026!Init
 echo    4. หลัง login ให้เปลี่ยนรหัสผ่านทันที (ที่หน้า Admin)
 echo.
 pause

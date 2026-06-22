@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>จัดการผู้ใช้ | HR-WWN</title>
+  <title>จัดการผู้ใช้ | HR-Interview</title>
   <link rel="stylesheet" href="/styles.css"/>
   <link rel="icon" type="image/png" href="/logo.png"/>
   <style>
@@ -20,18 +20,90 @@
     .scope-list label { display:flex; gap:6px; align-items:center; font-weight:400; margin:2px 0; cursor:pointer; }
     .scope-list label input { width:auto; }
   </style>
+<script>
+  // Multi-tenant: derive /t/{tenantId} prefix from URL and apply to <a href="/...">
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  // Date helpers — Christian Era (ค.ศ.), DD/MM/YYYY, 24-hour HH:MM
+  window.formatDate = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear();
+  };
+  window.formatTime = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getHours()) + ':' + p(d.getMinutes());
+  };
+  window.formatDateTime = (iso) => {
+    if (!iso) return '';
+    const d = window.formatDate(iso), t = window.formatTime(iso);
+    return d && t ? d + ' ' + t : (d || t);
+  };
+  function shouldPrefix(href) {
+    return href && href.startsWith('/')
+      && !href.startsWith('/t/') && !href.startsWith('/super')
+      && !href.startsWith('/styles') && !href.startsWith('/logo')
+      && !href.startsWith('/i18n') && !href.startsWith('/favicon');
+  }
+  function rewriteLinks(root) {
+    if (!window.TBASE || !root) return;
+    // Self — handles addedNodes that ARE the <a> (e.g. innerHTML="<a>...</a>").
+    // Only Element nodes have tagName; Document (nodeType 9) doesn't but still has querySelectorAll.
+    if (root.nodeType === 1 && root.tagName === 'A' && shouldPrefix(root.getAttribute('href'))) {
+      root.setAttribute('href', window.TBASE + root.getAttribute('href'));
+    }
+    // Descendants — both Document and Element expose querySelectorAll
+    if (typeof root.querySelectorAll === 'function') {
+      root.querySelectorAll('a[href^="/"]').forEach(a => {
+        const h = a.getAttribute('href');
+        if (shouldPrefix(h)) a.setAttribute('href', window.TBASE + h);
+      });
+    }
+  }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    // Catch links inserted later via innerHTML/appendChild
+    new MutationObserver(muts => {
+      for (const m of muts) {
+        // m.target is the element whose children changed — re-scan its subtree
+        rewriteLinks(m.target);
+        // m.addedNodes are the new direct children — also scan each (handles self-A case)
+        for (const node of m.addedNodes) rewriteLinks(node);
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+    // Show tenant company name in topbar (next to the HR-Interview brand)
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span');
+      span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      span.textContent = '...';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => {
+        span.textContent = c && c.name ? c.name : '';
+        if (!c || !c.name) span.style.display = 'none';
+      }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
 </head>
 <body>
 <div class="container wide">
   <div class="topbar">
     <div class="logo">
-      <span>HR-WWN</span>
+      <span>HR-Interview</span>
       <span class="pill blue" style="font-size:11px;">ADMIN</span>
     </div>
     <nav>
       <a href="/admin">🔐 Admin</a>
       <a href="/admin/org">🏢 องค์กร</a>
       <a href="/admin/users">👥 ผู้ใช้</a>
+      <a href="/dashboard">📋 Dashboard</a>
       <a href="#" onclick="logout();return false;">ออกจากระบบ</a>
     </nav>
   </div>
@@ -41,6 +113,17 @@
 
   <div class="card" style="background:#fffbeb; border-color:#fcd34d; padding:12px 16px; margin-bottom:16px;">
     <strong>⚠️ Position-anchored model:</strong> ทุก user ต้องผูก <strong>ฝ่าย + แผนก + ตำแหน่ง ครบ 3 ฟิลด์</strong> (รวม executive) — เมื่อบันทึก ระบบจะ auto-create employee record สำหรับ interview ของ user คนนั้น · <strong>เปลี่ยนตำแหน่ง = reset interview</strong> (ข้อมูลเก่าจะ archive ติดกับตำแหน่งเดิม)
+  </div>
+
+  <div class="card" style="background:#f0fdf4; border-color:#86efac;">
+    <h2 style="margin-top:0;">📊 นำเข้า User จาก Excel (Add only — ข้าม username ซ้ำ)</h2>
+    <p class="sub">หมายเหตุ: ต้องสร้างโครงสร้าง ฝ่าย/แผนก/ตำแหน่ง ใน /admin/org ก่อน เพราะ Excel ต้องอ้างชื่อที่มีอยู่</p>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+      <a href="/api/admin/import/template/users"><button class="ghost">📥 ดาวน์โหลด Template</button></a>
+      <input type="file" id="users-file" accept=".xlsx,.xls" style="display:none;"/>
+      <button type="button" onclick="document.getElementById('users-file').click()" style="background:#10b981;">📤 เลือกไฟล์ + นำเข้า</button>
+      <span id="users-import-status" style="font-size:14px;"></span>
+    </div>
   </div>
 
   <div style="margin: 16px 0;">
@@ -104,10 +187,10 @@
       </div>
 
       <div class="row">
-        <div><label>เข้างาน</label><input name="work_start" type="time" value="09:00"/></div>
-        <div><label>ออกงาน</label><input name="work_end" type="time" value="18:00"/></div>
-        <div><label>เริ่มพัก</label><input name="break_start" type="time" value="12:00"/></div>
-        <div><label>เลิกพัก</label><input name="break_end" type="time" value="13:00"/></div>
+        <div><label>เข้างาน <span class="sub" style="font-size:12px;">(24 ชม.)</span></label><input name="work_start" type="text" pattern="^([01]\d|2[0-3]):[0-5]\d$" placeholder="HH:MM" maxlength="5" inputmode="numeric" value="09:00" required title="รูปแบบ HH:MM แบบ 24 ชั่วโมง เช่น 08:00, 17:30"/></div>
+        <div><label>ออกงาน <span class="sub" style="font-size:12px;">(24 ชม.)</span></label><input name="work_end" type="text" pattern="^([01]\d|2[0-3]):[0-5]\d$" placeholder="HH:MM" maxlength="5" inputmode="numeric" value="18:00" required title="รูปแบบ HH:MM แบบ 24 ชั่วโมง"/></div>
+        <div><label>เริ่มพัก <span class="sub" style="font-size:12px;">(24 ชม.)</span></label><input name="break_start" type="text" pattern="^([01]\d|2[0-3]):[0-5]\d$" placeholder="HH:MM" maxlength="5" inputmode="numeric" value="12:00" required title="รูปแบบ HH:MM แบบ 24 ชั่วโมง"/></div>
+        <div><label>เลิกพัก <span class="sub" style="font-size:12px;">(24 ชม.)</span></label><input name="break_end" type="text" pattern="^([01]\d|2[0-3]):[0-5]\d$" placeholder="HH:MM" maxlength="5" inputmode="numeric" value="13:00" required title="รูปแบบ HH:MM แบบ 24 ชั่วโมง"/></div>
       </div>
 
       <!-- Manager-only: scope override -->
@@ -150,10 +233,10 @@ let USERS = [], DIVS = [], SECS = [], POSS = [];
 
 async function loadAll() {
   [USERS, DIVS, SECS, POSS] = await Promise.all([
-    fetch('/api/users').then(r => r.json()),
-    fetch('/api/divisions').then(r => r.json()),
-    fetch('/api/sections').then(r => r.json()),
-    fetch('/api/positions').then(r => r.json()),
+    fetch(TBASE + '/api/users').then(r => r.json()),
+    fetch(TBASE + '/api/divisions').then(r => r.json()),
+    fetch(TBASE + '/api/sections').then(r => r.json()),
+    fetch(TBASE + '/api/positions').then(r => r.json()),
   ]);
   renderUsers();
 }
@@ -318,7 +401,7 @@ document.getElementById('user-form').addEventListener('submit', async e => {
     body.scope_override = null;
   }
 
-  const url = id ? '/api/users/' + id : '/api/users';
+  const url = TBASE + (id ? '/api/users/' + id : '/api/users');
   const method = id ? 'PUT' : 'POST';
   const r = await fetch(url, { method, headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
   if (!r.ok) {
@@ -335,15 +418,45 @@ document.getElementById('user-form').addEventListener('submit', async e => {
 async function delUser(id) {
   const u = USERS.find(x => x.id === id);
   if (!confirm('ลบผู้ใช้ "' + u.name + '" (' + u.username + ')?')) return;
-  const r = await fetch('/api/users/' + id, { method:'DELETE' });
+  const r = await fetch(TBASE + '/api/users/' + id, { method:'DELETE' });
   if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ลบไม่ได้: ' + (e.error || 'unknown')); return; }
   loadAll();
 }
 
 async function logout() {
-  await fetch('/api/logout', { method: 'POST' });
-  location.href = '/login';
+  await fetch(TBASE + '/api/logout', { method: 'POST' });
+  location.href = TBASE + '/login';
 }
+
+// ---------- Excel import handler ----------
+document.getElementById('users-file').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const status = document.getElementById('users-import-status');
+  status.style.color = '#475569';
+  status.textContent = 'กำลังอัปโหลด...';
+  try {
+    const buf = await file.arrayBuffer();
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+    const r = await fetch(TBASE + '/api/admin/import/users', {
+      method: 'POST', headers: {'content-type':'application/json'},
+      body: JSON.stringify({ file: b64 }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'unknown');
+    status.style.color = '#166534';
+    status.innerHTML = `✓ เพิ่ม ${data.added} user · ข้าม ${data.skipped} (username ซ้ำ) · error ${data.errorCount}`;
+    if (data.errors && data.errors.length) {
+      status.innerHTML += '<br><small style="color:#b91c1c;">' + data.errors.slice(0, 5).map(er => `แถว ${er.row}: ${er.error}`).join(' · ') + '</small>';
+    }
+    loadAll();
+  } catch (err) {
+    status.style.color = '#b91c1c';
+    status.textContent = '✗ ผิดพลาด: ' + err.message;
+  } finally {
+    e.target.value = '';
+  }
+});
 
 loadAll();
 </script>

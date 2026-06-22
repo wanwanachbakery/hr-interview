@@ -1,0 +1,42 @@
+# Fly.io configuration for HR-Interview (multi-tenant)
+# Change `app` to your chosen name (must be globally unique on fly.dev).
+
+app = "hr-interview"
+primary_region = "sin"   # Singapore — closest free-tier region for Thailand
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+  SECURE_COOKIES = "true"
+  AUTO_OPEN_BROWSER = "false"
+  NODE_ENV = "production"
+  # Persist data inside the mounted volume so it survives deploys and machine restarts
+  DATA_DIR = "/app/persist/data"
+  OUTPUT_DIR = "/app/persist/outputs"
+
+# Persistent volume — holds all tenant data + outputs across deploys.
+# Free tier allows up to 3 GB total. Create with:
+#   fly volumes create hrdata --size 1 --region sin
+[mounts]
+  source = "hrdata"
+  destination = "/app/persist"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"   # stop when idle to stay in free tier
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/super/login"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

@@ -1,14 +1,22 @@
-<!doctype html>
-<html lang="th">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>เข้าสู่ระบบ | HR-Interview</title>
-  <link rel="stylesheet" href="/styles.css"/>
-  <link rel="icon" type="image/png" href="/logo.png"/>
-<script>
+/**
+ * Inject the multi-tenant TBASE helper into every tenant HTML file and rewrite
+ * fetch / location.href URLs so they include /t/{tenantId} automatically.
+ *
+ * Run from project root:  node scripts/_inject-tbase.js
+ */
+const fs = require('fs');
+const path = require('path');
+
+const PUB = path.resolve(__dirname, '..', 'public');
+const FILES = [
+  'login.html', 'index.html', 'admin.html', 'admin-org.html', 'admin-users.html',
+  'profile.html', 'reports.html', 'dashboard.html', 'division.html',
+  'interview.html', 'review.html', 'examples.html',
+];
+
+const SNIPPET = `<script>
   // Multi-tenant: derive /t/{tenantId} prefix from URL and apply to <a href="/...">
-  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TENANT_ID = (location.pathname.match(/^\\/t\\/([^/]+)/) || [])[1] || '';
   window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
   // Date helpers — Christian Era (ค.ศ.), DD/MM/YYYY, 24-hour HH:MM
   window.formatDate = (iso) => {
@@ -76,69 +84,44 @@
       }).catch(() => { span.style.display = 'none'; });
     }
   });
-</script>
-</head>
-<body>
-<div style="max-width:420px; margin:80px auto; padding:0 16px;">
-  <div style="text-align:center; margin-bottom:24px;">
-    <div id="company-name-box" style="font-size:26px; font-weight:700; color:#0369a1; margin-bottom:8px; min-height:32px; line-height:1.3;"></div>
-    <h1 style="margin:4px 0; font-size:20px; color:#64748b; font-weight:500;">HR-Interview</h1>
-    <p class="sub" id="company-sub" style="margin-top:4px;">ระบบบริหารทรัพยากรบุคคล</p>
-  </div>
+</script>`;
 
-  <div class="card">
-    <h2 style="margin-top:0;">🔐 เข้าสู่ระบบ</h2>
-    <p class="sub">กรอก username และ password ที่ admin สร้างให้</p>
-    <form id="login-form">
-      <label>Username</label>
-      <input name="username" type="text" required autofocus autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="เช่น somchai หรือ admin"/>
+let totalChanged = 0;
+for (const fname of FILES) {
+  const file = path.join(PUB, fname);
+  if (!fs.existsSync(file)) { console.log('  - SKIP (not found): ' + fname); continue; }
+  let html = fs.readFileSync(file, 'utf8');
+  const before = html;
 
-      <label style="margin-top:12px;">รหัสผ่าน</label>
-      <input name="password" type="password" required autocomplete="current-password"/>
+  // 1) Remove any previously-injected TBASE snippet, then inject fresh one
+  html = html.replace(/<script>\s*\/\/ Multi-tenant: derive[\s\S]*?<\/script>\s*/i, '');
+  html = html.replace(/<\/head>/i, SNIPPET + '\n</head>');
 
-      <div id="err" style="color:#b91c1c; font-size:14px; margin-top:8px; display:none;"></div>
-      <div style="margin-top:16px;">
-        <button type="submit" style="width:100%;">เข้าสู่ระบบ →</button>
-      </div>
-    </form>
-  </div>
+  // 2) Rewrite fetch URLs
+  //    fetch('/api/...')   → fetch(TBASE + '/api/...')
+  //    fetch("/api/...")   → fetch(TBASE + "/api/...")
+  //    fetch(`/api/...`)   → fetch(`${TBASE}/api/...`)
+  html = html.replace(/\bfetch\(\s*'(\/api\/[^']*)'/g,  "fetch(TBASE + '$1'");
+  html = html.replace(/\bfetch\(\s*"(\/api\/[^"]*)"/g,  'fetch(TBASE + "$1"');
+  html = html.replace(/\bfetch\(\s*`(\/api\/[^`]*)`/g,  'fetch(`${TBASE}$1`');
 
-  <p class="sub" style="text-align:center; font-size:12px; margin-top:16px;">
-    ลืมรหัสผ่าน? ติดต่อผู้ดูแลระบบ (admin)
-  </p>
-</div>
+  // 3) Rewrite location.href / location.replace targeting tenant pages
+  //    Catches: '/login', '/admin', '/', '/interview?id=' + ..., etc.
+  html = html.replace(/location\.href\s*=\s*'\/(?!t\/|super|api\/|styles|logo|i18n|favicon)([^']*)'/g,
+                       "location.href = TBASE + '/$1'");
+  html = html.replace(/location\.href\s*=\s*"\/(?!t\/|super|api\/|styles|logo|i18n|favicon)([^"]*)"/g,
+                       'location.href = TBASE + "/$1"');
+  // Template literals: location.href = `/review?id=${id}` → `${TBASE}/review?id=${id}`
+  html = html.replace(/location\.href\s*=\s*`\/(?!t\/|super|api\/|styles|logo|i18n|favicon)([^`]*)`/g,
+                       'location.href = `${TBASE}/$1`');
 
-<script>
-// /api/company is public for login pages — fills tenant's company name above the HR-Interview brand
-fetch(TBASE + '/api/company').then(r => r.json()).then(c => {
-  if (c && c.name) {
-    const box = document.getElementById('company-name-box');
-    if (box) box.textContent = c.name;
-    document.title = c.name + ' | HR-Interview';
+  if (html !== before) {
+    fs.writeFileSync(file, html);
+    totalChanged++;
+    console.log('  ✓ ' + fname);
+  } else {
+    console.log('  - no changes: ' + fname);
   }
-}).catch(() => {});
+}
 
-document.getElementById('login-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const body = Object.fromEntries(new FormData(e.target).entries());
-  const err = document.getElementById('err');
-  err.style.display = 'none';
-  const r = await fetch(TBASE + '/api/login', {
-    method: 'POST',
-    headers: {'content-type':'application/json'},
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({error: 'เข้าสู่ระบบไม่สำเร็จ'}));
-    err.textContent = d.error || 'เข้าสู่ระบบไม่สำเร็จ';
-    err.style.display = 'block';
-    return;
-  }
-  const data = await r.json().catch(() => ({}));
-  // Admin lands on the admin hub; everyone else on the home page
-  const target = data.role === 'admin' ? '/admin' : '/';
-  location.href = TBASE + target;
-});
-</script>
-</body>
-</html>
+console.log(`\nDone. ${totalChanged}/${FILES.length} files updated.`);

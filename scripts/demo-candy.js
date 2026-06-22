@@ -1,5 +1,5 @@
 /**
- * Demo seed: simulate a candy company filling out HR-WWN.
+ * Demo seed: simulate a candy company filling out HR-Interview.
  * Uses native fetch (Node 18+).
  */
 const BASE = 'http://localhost:3000';
@@ -38,7 +38,7 @@ function line(title) { console.log('\n=== ' + title + ' ==='); }
 
 (async () => {
   line('Login as admin');
-  console.log(await loginAs('admin', 'JC2026!Init'));
+  console.log(await loginAs('admin', 'WWN2026!Init'));
 
   line('Set company name');
   console.log(await api('PUT', '/api/company', {

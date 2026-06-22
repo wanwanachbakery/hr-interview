@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>โครงสร้างองค์กร | HR-WWN</title>
+  <title>โครงสร้างองค์กร | HR-Interview</title>
   <link rel="stylesheet" href="/styles.css"/>
   <link rel="icon" type="image/png" href="/logo.png"/>
   <style>
@@ -16,18 +16,90 @@
     .add-form input, .add-form select { flex: 1; min-width: 140px; }
     .add-form button { flex: 0 0 auto; }
   </style>
+<script>
+  // Multi-tenant: derive /t/{tenantId} prefix from URL and apply to <a href="/...">
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  // Date helpers — Christian Era (ค.ศ.), DD/MM/YYYY, 24-hour HH:MM
+  window.formatDate = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear();
+  };
+  window.formatTime = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getHours()) + ':' + p(d.getMinutes());
+  };
+  window.formatDateTime = (iso) => {
+    if (!iso) return '';
+    const d = window.formatDate(iso), t = window.formatTime(iso);
+    return d && t ? d + ' ' + t : (d || t);
+  };
+  function shouldPrefix(href) {
+    return href && href.startsWith('/')
+      && !href.startsWith('/t/') && !href.startsWith('/super')
+      && !href.startsWith('/styles') && !href.startsWith('/logo')
+      && !href.startsWith('/i18n') && !href.startsWith('/favicon');
+  }
+  function rewriteLinks(root) {
+    if (!window.TBASE || !root) return;
+    // Self — handles addedNodes that ARE the <a> (e.g. innerHTML="<a>...</a>").
+    // Only Element nodes have tagName; Document (nodeType 9) doesn't but still has querySelectorAll.
+    if (root.nodeType === 1 && root.tagName === 'A' && shouldPrefix(root.getAttribute('href'))) {
+      root.setAttribute('href', window.TBASE + root.getAttribute('href'));
+    }
+    // Descendants — both Document and Element expose querySelectorAll
+    if (typeof root.querySelectorAll === 'function') {
+      root.querySelectorAll('a[href^="/"]').forEach(a => {
+        const h = a.getAttribute('href');
+        if (shouldPrefix(h)) a.setAttribute('href', window.TBASE + h);
+      });
+    }
+  }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    // Catch links inserted later via innerHTML/appendChild
+    new MutationObserver(muts => {
+      for (const m of muts) {
+        // m.target is the element whose children changed — re-scan its subtree
+        rewriteLinks(m.target);
+        // m.addedNodes are the new direct children — also scan each (handles self-A case)
+        for (const node of m.addedNodes) rewriteLinks(node);
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+    // Show tenant company name in topbar (next to the HR-Interview brand)
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span');
+      span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      span.textContent = '...';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => {
+        span.textContent = c && c.name ? c.name : '';
+        if (!c || !c.name) span.style.display = 'none';
+      }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
 </head>
 <body>
 <div class="container wide">
   <div class="topbar">
     <div class="logo">
-      <span>HR-WWN</span>
+      <span>HR-Interview</span>
       <span class="pill blue" style="font-size:11px;">ADMIN</span>
     </div>
     <nav>
       <a href="/admin">🔐 Admin</a>
       <a href="/admin/org">🏢 องค์กร</a>
       <a href="/admin/users">👥 ผู้ใช้</a>
+      <a href="/dashboard">📋 Dashboard</a>
       <a href="#" onclick="logout();return false;">ออกจากระบบ</a>
     </nav>
   </div>
@@ -51,6 +123,18 @@
         <button type="submit">บันทึก</button>
       </div>
     </form>
+  </div>
+
+  <!-- Excel import -->
+  <div class="card" style="background:#f0fdf4; border-color:#86efac;">
+    <h2 style="margin-top:0;">📊 นำเข้าจาก Excel (Add only — ข้ามที่ซ้ำ)</h2>
+    <p class="sub">โหลด template → กรอกข้อมูลใน Excel → อัปโหลดกลับมา ระบบจะเพิ่มเฉพาะ ฝ่าย/แผนก/ตำแหน่ง ใหม่ (ของเดิมไม่กระทบ)</p>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+      <a href="/api/admin/import/template/org"><button class="ghost">📥 ดาวน์โหลด Template</button></a>
+      <input type="file" id="org-file" accept=".xlsx,.xls" style="display:none;"/>
+      <button type="button" onclick="document.getElementById('org-file').click()" style="background:#10b981;">📤 เลือกไฟล์ + นำเข้า</button>
+      <span id="org-import-status" style="font-size:14px;"></span>
+    </div>
   </div>
 
   <!-- Add division -->
@@ -77,10 +161,10 @@ let DIVS = [], SECS = [], POSS = [];
 
 async function loadAll() {
   const [co, divs, secs, poss] = await Promise.all([
-    fetch('/api/company').then(r => r.json()),
-    fetch('/api/divisions').then(r => r.json()),
-    fetch('/api/sections').then(r => r.json()),
-    fetch('/api/positions').then(r => r.json()),
+    fetch(TBASE + '/api/company').then(r => r.json()),
+    fetch(TBASE + '/api/divisions').then(r => r.json()),
+    fetch(TBASE + '/api/sections').then(r => r.json()),
+    fetch(TBASE + '/api/positions').then(r => r.json()),
   ]);
   DIVS = divs; SECS = secs; POSS = poss;
 
@@ -151,7 +235,7 @@ function renderTree() {
 document.getElementById('company-form').addEventListener('submit', async e => {
   e.preventDefault();
   const body = Object.fromEntries(new FormData(e.target).entries());
-  const r = await fetch('/api/company', { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
+  const r = await fetch(TBASE + '/api/company', { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
   if (!r.ok) { const d = await r.json().catch(() => ({})); alert('ผิดพลาด: ' + (d.error || 'unknown')); return; }
   alert('บันทึกชื่อบริษัทแล้ว');
 });
@@ -160,7 +244,7 @@ document.getElementById('company-form').addEventListener('submit', async e => {
 document.getElementById('div-form').addEventListener('submit', async e => {
   e.preventDefault();
   const body = Object.fromEntries(new FormData(e.target).entries());
-  const r = await fetch('/api/divisions', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+  const r = await fetch(TBASE + '/api/divisions', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
   if (!r.ok) { const d = await r.json().catch(() => ({})); alert('ผิดพลาด: ' + (d.error || 'unknown')); return; }
   e.target.reset();
   e.target.querySelector('[name=color]').value = '#3b82f6';
@@ -171,14 +255,14 @@ async function editDiv(id) {
   const name = prompt('ชื่อฝ่าย (TH):', d.name); if (name === null) return;
   const name_en = prompt('Name (EN):', d.name_en || '') || '';
   const icon = prompt('Icon (emoji):', d.icon) || d.icon;
-  const r = await fetch('/api/divisions/' + id, { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({ name, name_en, icon }) });
+  const r = await fetch(TBASE + '/api/divisions/' + id, { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({ name, name_en, icon }) });
   if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (e.error || 'unknown')); return; }
   loadAll();
 }
 async function delDiv(id) {
   const d = DIVS.find(x => x.id === id);
   if (!confirm('ลบฝ่าย "' + d.name + '"?')) return;
-  const r = await fetch('/api/divisions/' + id, { method:'DELETE' });
+  const r = await fetch(TBASE + '/api/divisions/' + id, { method:'DELETE' });
   if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ลบไม่ได้: ' + (e.error || 'unknown')); return; }
   loadAll();
 }
@@ -188,7 +272,7 @@ async function addSec(e, division_id) {
   e.preventDefault();
   const body = Object.fromEntries(new FormData(e.target).entries());
   body.division_id = division_id;
-  const r = await fetch('/api/sections', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+  const r = await fetch(TBASE + '/api/sections', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
   if (!r.ok) { const d = await r.json().catch(() => ({})); alert('ผิดพลาด: ' + (d.error || 'unknown')); return false; }
   e.target.reset();
   loadAll();
@@ -198,14 +282,14 @@ async function editSec(id) {
   const s = SECS.find(x => x.id === id); if (!s) return;
   const name = prompt('ชื่อแผนก (TH):', s.name); if (name === null) return;
   const name_en = prompt('Name (EN):', s.name_en || '') || '';
-  const r = await fetch('/api/sections/' + id, { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({ name, name_en }) });
+  const r = await fetch(TBASE + '/api/sections/' + id, { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({ name, name_en }) });
   if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (e.error || 'unknown')); return; }
   loadAll();
 }
 async function delSec(id) {
   const s = SECS.find(x => x.id === id);
   if (!confirm('ลบแผนก "' + s.name + '"?')) return;
-  const r = await fetch('/api/sections/' + id, { method:'DELETE' });
+  const r = await fetch(TBASE + '/api/sections/' + id, { method:'DELETE' });
   if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ลบไม่ได้: ' + (e.error || 'unknown')); return; }
   loadAll();
 }
@@ -215,7 +299,7 @@ async function addPos(e, section_id) {
   e.preventDefault();
   const body = Object.fromEntries(new FormData(e.target).entries());
   body.section_id = section_id;
-  const r = await fetch('/api/positions', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+  const r = await fetch(TBASE + '/api/positions', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
   if (!r.ok) { const d = await r.json().catch(() => ({})); alert('ผิดพลาด: ' + (d.error || 'unknown')); return false; }
   e.target.reset();
   loadAll();
@@ -225,22 +309,53 @@ async function editPos(id) {
   const p = POSS.find(x => x.id === id); if (!p) return;
   const name = prompt('ชื่อตำแหน่ง (TH):', p.name); if (name === null) return;
   const name_en = prompt('Name (EN):', p.name_en || '') || '';
-  const r = await fetch('/api/positions/' + id, { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({ name, name_en }) });
+  const r = await fetch(TBASE + '/api/positions/' + id, { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({ name, name_en }) });
   if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (e.error || 'unknown')); return; }
   loadAll();
 }
 async function delPos(id) {
   const p = POSS.find(x => x.id === id);
   if (!confirm('ลบตำแหน่ง "' + p.name + '"?')) return;
-  const r = await fetch('/api/positions/' + id, { method:'DELETE' });
+  const r = await fetch(TBASE + '/api/positions/' + id, { method:'DELETE' });
   if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ลบไม่ได้: ' + (e.error || 'unknown')); return; }
   loadAll();
 }
 
 async function logout() {
-  await fetch('/api/logout', { method: 'POST' });
-  location.href = '/login';
+  await fetch(TBASE + '/api/logout', { method: 'POST' });
+  location.href = TBASE + '/login';
 }
+
+// ---------- Excel import handler ----------
+document.getElementById('org-file').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const status = document.getElementById('org-import-status');
+  status.style.color = '#475569';
+  status.textContent = 'กำลังอัปโหลด...';
+  try {
+    const buf = await file.arrayBuffer();
+    // Base64 encode in chunks (avoid call stack overflow for large files)
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+    const r = await fetch(TBASE + '/api/admin/import/org', {
+      method: 'POST', headers: {'content-type':'application/json'},
+      body: JSON.stringify({ file: b64 }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'unknown');
+    status.style.color = '#166534';
+    status.innerHTML = `✓ เพิ่ม: ฝ่าย ${data.addedDiv} · แผนก ${data.addedSec} · ตำแหน่ง ${data.addedPos} · ข้าม ${data.skipped} (ซ้ำ) · error ${data.errorCount}`;
+    if (data.errors && data.errors.length) {
+      status.innerHTML += '<br><small style="color:#b91c1c;">' + data.errors.slice(0, 5).map(er => `แถว ${er.row}: ${er.error}`).join(' · ') + '</small>';
+    }
+    loadAll();
+  } catch (err) {
+    status.style.color = '#b91c1c';
+    status.textContent = '✗ ผิดพลาด: ' + err.message;
+  } finally {
+    e.target.value = '';
+  }
+});
 
 loadAll();
 </script>

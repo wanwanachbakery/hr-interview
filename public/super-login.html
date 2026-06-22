@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Super Admin | HR-Interview</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="icon" type="image/png" href="/logo.png"/>
+</head>
+<body>
+<div style="max-width:420px; margin:80px auto; padding:0 16px;">
+  <div style="text-align:center; margin-bottom:24px;">
+    <h1 style="margin:8px 0 4px; font-size:32px;">HR-Interview</h1>
+    <p class="sub">👑 Super Admin Console</p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0;">🔐 Super-admin Login</h2>
+    <p class="sub">เข้าระบบเพื่อจัดการบริษัท (tenant) ทั้งหมด</p>
+    <form id="form">
+      <label>รหัสผ่าน Super-admin</label>
+      <input name="password" type="password" required autofocus autocomplete="current-password"/>
+      <div id="err" style="color:#b91c1c; font-size:14px; margin-top:8px; display:none;"></div>
+      <div style="margin-top:16px;">
+        <button type="submit" style="width:100%;">เข้าสู่ระบบ →</button>
+      </div>
+    </form>
+  </div>
+
+  <p class="sub" style="text-align:center; font-size:12px; margin-top:16px;">
+    ลืมรหัส? แก้ไฟล์ <code>data/_super_auth.json</code> โดยตรง (ลบทิ้ง → server จะสร้างใหม่ด้วยรหัสเริ่มต้น)
+  </p>
+</div>
+
+<script>
+document.getElementById('form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  const err = document.getElementById('err');
+  err.style.display = 'none';
+  const r = await fetch('/api/super/login', {
+    method: 'POST', headers: {'content-type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    err.textContent = d.error || 'เข้าสู่ระบบไม่สำเร็จ';
+    err.style.display = 'block';
+    return;
+  }
+  location.href = '/super';
+});
+</script>
+</body>
+</html>

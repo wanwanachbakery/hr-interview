@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Super Admin · Tenants | HR-Interview</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="icon" type="image/png" href="/logo.png"/>
+  <style>
+    .tenant-row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:14px; border:1px solid var(--border); border-radius:10px; margin-bottom:10px; background:#fff; }
+    .tenant-info { flex:1; min-width:200px; }
+    .tenant-actions { display:flex; gap:6px; flex-wrap:wrap; }
+    .tenant-actions button, .tenant-actions a { font-size:13px; padding:6px 12px; }
+    .url-pill { font-family:monospace; background:#f1f5f9; padding:2px 8px; border-radius:4px; font-size:12px; }
+  </style>
+</head>
+<body>
+<div class="container wide">
+  <div class="topbar">
+    <div class="logo">
+      <span>HR-Interview</span>
+      <span class="pill blue" style="font-size:11px;">SUPER ADMIN</span>
+    </div>
+    <nav>
+      <a href="#" onclick="changePassword();return false;">🔑 เปลี่ยนรหัส Super-admin</a>
+      <a href="#" onclick="logout();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <h1>👑 จัดการบริษัท (Tenants)</h1>
+  <p class="sub">แต่ละบริษัทมีฐานข้อมูลแยกกัน — สร้าง tenant ใหม่จะได้ URL `/t/{id}` ส่งให้ admin ของบริษัทนั้น login</p>
+
+  <!-- Create -->
+  <div class="card">
+    <h2 style="margin-top:0;">➕ สร้างบริษัทใหม่</h2>
+    <form id="create-form" class="row">
+      <div>
+        <label>Tenant ID (URL-friendly, a-z 0-9 - เท่านั้น)</label>
+        <input name="id" required placeholder="เช่น companyA หรือ siam-snacks" pattern="[a-z0-9][a-z0-9-]*" maxlength="32"/>
+      </div>
+      <div>
+        <label>ชื่อบริษัท (ภาษาไทย/อังกฤษ)</label>
+        <input name="name" required placeholder="เช่น บริษัทขนมสยาม จำกัด"/>
+      </div>
+      <div>
+        <label>รหัส admin เริ่มต้น (ของ tenant นี้)</label>
+        <input name="admin_password" placeholder="เว้นว่าง = ใช้ WWN2026!Init"/>
+      </div>
+      <div style="flex:0 0 auto; align-self:flex-end;">
+        <button type="submit">+ สร้าง</button>
+      </div>
+    </form>
+    <div id="create-msg" style="margin-top:8px; font-size:14px;"></div>
+  </div>
+
+  <!-- List -->
+  <h2>📋 บริษัทที่มีอยู่ <span id="tenant-count" class="sub" style="font-size:14px;"></span></h2>
+  <div id="tenant-list"></div>
+</div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+// Date format: DD/MM/YYYY (Christian Era)
+function formatDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso); if (isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear();
+}
+
+async function load() {
+  const tenants = await fetch('/api/super/tenants').then(r => r.json());
+  document.getElementById('tenant-count').textContent = `(${tenants.length})`;
+  const list = document.getElementById('tenant-list');
+  if (!tenants.length) {
+    list.innerHTML = '<div class="card empty">ยังไม่มี tenant — สร้างด้านบน</div>';
+    return;
+  }
+  list.innerHTML = tenants.map(t => {
+    const url = '/t/' + t.id;
+    const full = location.origin + url;
+    return `
+      <div class="tenant-row">
+        <div class="tenant-info">
+          <div><strong style="font-size:16px;">${esc(t.name)}</strong></div>
+          <div class="sub" style="font-size:13px; margin-top:4px;">
+            ID: <code>${esc(t.id)}</code> ·
+            URL: <span class="url-pill">${esc(full)}</span>
+            <button class="ghost" style="font-size:11px; padding:2px 8px; margin-left:4px;" onclick="navigator.clipboard.writeText('${esc(full)}').then(()=>this.textContent='✓ คัดลอกแล้ว')">📋 copy</button>
+          </div>
+          <div class="sub" style="font-size:13px; margin-top:2px;">User: ${t.user_count || 0} คน · สร้าง: ${esc(formatDate(t.created_at))}</div>
+        </div>
+        <div class="tenant-actions">
+          <a href="${esc(url)}" target="_blank"><button class="ghost">เปิด ↗</button></a>
+          <button class="ghost" onclick="rename('${esc(t.id)}', '${esc(t.name)}')">📝 เปลี่ยนชื่อ</button>
+          <button class="ghost" onclick="renameId('${esc(t.id)}')">🔗 เปลี่ยน URL ID</button>
+          <button class="ghost" onclick="resetAdmin('${esc(t.id)}')">🔑 reset admin pw</button>
+          <button class="ghost" style="color:#b91c1c;" onclick="del('${esc(t.id)}', '${esc(t.name)}')">🗑 ลบ</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+document.getElementById('create-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  const msg = document.getElementById('create-msg');
+  msg.textContent = '';
+  const r = await fetch('/api/super/tenants', {
+    method: 'POST', headers: {'content-type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  const d = await r.json();
+  if (!r.ok) {
+    msg.style.color = '#b91c1c';
+    msg.textContent = '✗ ' + (d.error || 'unknown');
+    return;
+  }
+  msg.style.color = '#166534';
+  const url = location.origin + d.url_path;
+  msg.innerHTML = `✓ สร้างสำเร็จ — URL: <span class="url-pill">${esc(url)}</span> · admin login: รหัสที่ตั้งไว้`;
+  e.target.reset();
+  load();
+});
+
+async function rename(id, current) {
+  const name = prompt('ชื่อใหม่ของบริษัท:', current);
+  if (!name || name === current) return;
+  const r = await fetch('/api/super/tenants/' + id, {
+    method: 'PUT', headers: {'content-type':'application/json'},
+    body: JSON.stringify({ name }),
+  });
+  if (!r.ok) { const d = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (d.error || 'unknown')); return; }
+  load();
+}
+
+async function renameId(currentId) {
+  const newId = prompt(`เปลี่ยน URL ID ของ tenant\n\nID เดิม: ${currentId}\nURL เดิม: ${location.origin}/t/${currentId}\n\nID ใหม่ (a-z, 0-9, ขีดกลาง 1-32 ตัวอักษร):`);
+  if (!newId) return;
+  const clean = newId.trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(clean)) {
+    alert('รูปแบบไม่ถูก — ใช้ได้แค่ a-z, 0-9, ขีดกลาง');
+    return;
+  }
+  if (clean === currentId) { alert('ID เหมือนเดิม — ไม่มีอะไรเปลี่ยน'); return; }
+  if (!confirm(`เปลี่ยน URL ID\n  ${currentId}  →  ${clean}\n\nผลกระทบ:\n  - URL ใหม่: ${location.origin}/t/${clean}\n  - User ที่กำลัง login อยู่ของ tenant นี้จะต้อง login ใหม่\n\nดำเนินการต่อ?`)) return;
+  const r = await fetch(`/api/super/tenants/${currentId}/rename-id`, {
+    method: 'POST', headers: {'content-type':'application/json'},
+    body: JSON.stringify({ new_id: clean }),
+  });
+  const d = await r.json();
+  if (!r.ok) { alert('ผิดพลาด: ' + (d.error || 'unknown')); return; }
+  alert(`✓ เปลี่ยน URL ID เรียบร้อย\n\nURL ใหม่: ${location.origin}${d.new_url}`);
+  load();
+}
+
+async function resetAdmin(id) {
+  const pw = prompt(`รีเซ็ตรหัส admin ของ tenant "${id}" — ใส่รหัสใหม่ (อย่างน้อย 6 ตัว):`);
+  if (!pw) return;
+  if (pw.length < 6) { alert('รหัสต้องยาวอย่างน้อย 6 ตัว'); return; }
+  const r = await fetch(`/api/super/tenants/${id}/reset-admin-password`, {
+    method: 'POST', headers: {'content-type':'application/json'},
+    body: JSON.stringify({ password: pw }),
+  });
+  if (!r.ok) { const d = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (d.error || 'unknown')); return; }
+  alert(`✓ รีเซ็ตเรียบร้อย — แจ้ง admin ของ ${id} ว่ารหัสใหม่: ${pw}`);
+}
+
+async function del(id, name) {
+  if (!confirm(`ลบบริษัท "${name}" (${id}) และข้อมูลทั้งหมด?\n\nลบแล้วกู้ไม่ได้!`)) return;
+  const typed = prompt('พิมพ์ DELETE เพื่อยืนยัน:');
+  if (typed !== 'DELETE') return;
+  const r = await fetch('/api/super/tenants/' + id, {
+    method: 'DELETE', headers: {'content-type':'application/json'},
+    body: JSON.stringify({ confirm: 'DELETE' }),
+  });
+  if (!r.ok) { const d = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (d.error || 'unknown')); return; }
+  load();
+}
+
+async function changePassword() {
+  const pw = prompt('รหัส Super-admin ใหม่ (อย่างน้อย 6 ตัว):');
+  if (!pw) return;
+  if (pw.length < 6) { alert('รหัสต้องยาวอย่างน้อย 6 ตัว'); return; }
+  const r = await fetch('/api/super/password', {
+    method: 'PUT', headers: {'content-type':'application/json'},
+    body: JSON.stringify({ password: pw }),
+  });
+  if (!r.ok) { const d = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (d.error || 'unknown')); return; }
+  alert('✓ เปลี่ยนรหัสเรียบร้อย — login ครั้งหน้าใช้รหัสใหม่');
+}
+
+async function logout() {
+  await fetch('/api/super/logout', { method: 'POST' });
+  location.href = '/super/login';
+}
+
+load();
+</script>
+</body>
+</html>

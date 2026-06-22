@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>หน้าแรก | HR-WWN</title>
+  <title>หน้าแรก | HR-Interview</title>
   <link rel="stylesheet" href="/styles.css"/>
   <link rel="icon" type="image/png" href="/logo.png"/>
   <style>
@@ -16,18 +16,90 @@
     .iv-archived    { background:#f1f5f9; color:#475569; }
     .iv-missing     { background:#fee2e2; color:#991b1b; }
   </style>
+<script>
+  // Multi-tenant: derive /t/{tenantId} prefix from URL and apply to <a href="/...">
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  // Date helpers — Christian Era (ค.ศ.), DD/MM/YYYY, 24-hour HH:MM
+  window.formatDate = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear();
+  };
+  window.formatTime = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getHours()) + ':' + p(d.getMinutes());
+  };
+  window.formatDateTime = (iso) => {
+    if (!iso) return '';
+    const d = window.formatDate(iso), t = window.formatTime(iso);
+    return d && t ? d + ' ' + t : (d || t);
+  };
+  function shouldPrefix(href) {
+    return href && href.startsWith('/')
+      && !href.startsWith('/t/') && !href.startsWith('/super')
+      && !href.startsWith('/styles') && !href.startsWith('/logo')
+      && !href.startsWith('/i18n') && !href.startsWith('/favicon');
+  }
+  function rewriteLinks(root) {
+    if (!window.TBASE || !root) return;
+    // Self — handles addedNodes that ARE the <a> (e.g. innerHTML="<a>...</a>").
+    // Only Element nodes have tagName; Document (nodeType 9) doesn't but still has querySelectorAll.
+    if (root.nodeType === 1 && root.tagName === 'A' && shouldPrefix(root.getAttribute('href'))) {
+      root.setAttribute('href', window.TBASE + root.getAttribute('href'));
+    }
+    // Descendants — both Document and Element expose querySelectorAll
+    if (typeof root.querySelectorAll === 'function') {
+      root.querySelectorAll('a[href^="/"]').forEach(a => {
+        const h = a.getAttribute('href');
+        if (shouldPrefix(h)) a.setAttribute('href', window.TBASE + h);
+      });
+    }
+  }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    // Catch links inserted later via innerHTML/appendChild
+    new MutationObserver(muts => {
+      for (const m of muts) {
+        // m.target is the element whose children changed — re-scan its subtree
+        rewriteLinks(m.target);
+        // m.addedNodes are the new direct children — also scan each (handles self-A case)
+        for (const node of m.addedNodes) rewriteLinks(node);
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+    // Show tenant company name in topbar (next to the HR-Interview brand)
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span');
+      span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      span.textContent = '...';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => {
+        span.textContent = c && c.name ? c.name : '';
+        if (!c || !c.name) span.style.display = 'none';
+      }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
 </head>
 <body>
 <div class="container wide">
   <div class="topbar">
     <div class="logo">
-      <span>HR-WWN</span>
+      <span>HR-Interview</span>
       <span id="role-badge" class="pill gray" style="font-size:11px;"></span>
     </div>
     <nav>
       <a href="/">หน้าแรก</a>
       <a href="/profile">👤 โปรไฟล์</a>
       <a href="/reports">📊 รายงาน</a>
+      <a href="/dashboard">📋 Dashboard</a>
       <a href="/admin" id="nav-admin" style="display:none;">🔐 Admin</a>
       <a href="#" onclick="logout();return false;">ออกจากระบบ</a>
     </nav>
@@ -61,8 +133,8 @@
     </a>
     <a href="/dashboard" class="div-card" style="border-top-color:#ec4899;">
       <div class="icon">📋</div>
-      <div class="name">ดูสถานะของทีม</div>
-      <div class="meta">ใครตอบ interview แล้ว / ยังไม่ตอบ</div>
+      <div class="name">Dashboard</div>
+      <div class="meta">ดูสถานะ interview · จัดการพนักงาน</div>
     </a>
     <a href="/reports" class="div-card" style="border-top-color:#10b981;">
       <div class="icon">📊</div>
@@ -89,8 +161,8 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;
 
 (async function init() {
   const [me, co] = await Promise.all([
-    fetch('/api/me').then(r => r.json()),
-    fetch('/api/company').then(r => r.json()),
+    fetch(TBASE + '/api/me').then(r => r.json()),
+    fetch(TBASE + '/api/company').then(r => r.json()),
   ]);
   document.getElementById('hello').textContent = 'สวัสดี ' + (me.name || me.username || '');
   document.getElementById('company-name').textContent = co.name || '';
@@ -108,8 +180,8 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;
   }
 
   const [profile, emp] = await Promise.all([
-    fetch('/api/me/profile').then(r => r.json()).catch(() => null),
-    fetch('/api/me/employee').then(r => r.json()).catch(() => null),
+    fetch(TBASE + '/api/me/profile').then(r => r.json()).catch(() => null),
+    fetch(TBASE + '/api/me/employee').then(r => r.json()).catch(() => null),
   ]);
 
   // Interview anchor card
@@ -144,8 +216,8 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;
 })();
 
 async function logout() {
-  await fetch('/api/logout', { method: 'POST' });
-  location.href = '/login';
+  await fetch(TBASE + '/api/logout', { method: 'POST' });
+  location.href = TBASE + '/login';
 }
 </script>
 </body>

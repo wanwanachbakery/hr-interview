@@ -1,12 +1,13 @@
 {
-  "name": "hr-wwn",
+  "name": "hr-interview",
   "version": "0.1.0",
-  "description": "HR-WWN — JIANCHA HR portal: collects employee workflow and generates JD/KPI/optimization reports",
+  "description": "HR-Interview — JIANCHA HR portal: collects employee workflow and generates JD/KPI/optimization reports",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "xlsx": "^0.18.5"
   }
 }

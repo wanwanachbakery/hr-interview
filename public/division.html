@@ -3,24 +3,95 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>ฝ่าย | HR-WWN</title>
+  <title>ฝ่าย | HR-Interview</title>
   <link rel="stylesheet" href="/styles.css"/>
   <link rel="icon" type="image/png" href="/logo.png"/>
   <script src="/i18n.js"></script>
+<script>
+  // Multi-tenant: derive /t/{tenantId} prefix from URL and apply to <a href="/...">
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  // Date helpers — Christian Era (ค.ศ.), DD/MM/YYYY, 24-hour HH:MM
+  window.formatDate = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear();
+  };
+  window.formatTime = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getHours()) + ':' + p(d.getMinutes());
+  };
+  window.formatDateTime = (iso) => {
+    if (!iso) return '';
+    const d = window.formatDate(iso), t = window.formatTime(iso);
+    return d && t ? d + ' ' + t : (d || t);
+  };
+  function shouldPrefix(href) {
+    return href && href.startsWith('/')
+      && !href.startsWith('/t/') && !href.startsWith('/super')
+      && !href.startsWith('/styles') && !href.startsWith('/logo')
+      && !href.startsWith('/i18n') && !href.startsWith('/favicon');
+  }
+  function rewriteLinks(root) {
+    if (!window.TBASE || !root) return;
+    // Self — handles addedNodes that ARE the <a> (e.g. innerHTML="<a>...</a>").
+    // Only Element nodes have tagName; Document (nodeType 9) doesn't but still has querySelectorAll.
+    if (root.nodeType === 1 && root.tagName === 'A' && shouldPrefix(root.getAttribute('href'))) {
+      root.setAttribute('href', window.TBASE + root.getAttribute('href'));
+    }
+    // Descendants — both Document and Element expose querySelectorAll
+    if (typeof root.querySelectorAll === 'function') {
+      root.querySelectorAll('a[href^="/"]').forEach(a => {
+        const h = a.getAttribute('href');
+        if (shouldPrefix(h)) a.setAttribute('href', window.TBASE + h);
+      });
+    }
+  }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    // Catch links inserted later via innerHTML/appendChild
+    new MutationObserver(muts => {
+      for (const m of muts) {
+        // m.target is the element whose children changed — re-scan its subtree
+        rewriteLinks(m.target);
+        // m.addedNodes are the new direct children — also scan each (handles self-A case)
+        for (const node of m.addedNodes) rewriteLinks(node);
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+    // Show tenant company name in topbar (next to the HR-Interview brand)
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span');
+      span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      span.textContent = '...';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => {
+        span.textContent = c && c.name ? c.name : '';
+        if (!c || !c.name) span.style.display = 'none';
+      }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
 </head>
 <body>
 <div class="container">
   <div class="topbar">
-    <div class="logo"><span>HR-WWN</span></div>
+    <div class="logo"><span>HR-Interview</span></div>
     <nav>
       <a href="/" data-i18n="nav_home">หน้าแรก</a>
       <a href="/examples" data-i18n="nav_examples">📘 ตัวอย่าง</a>
-      <a href="/dashboard" id="nav-dashboard" style="display:none;" data-i18n="nav_dashboard">Dashboard</a>
-      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;" data-i18n="nav_logout">ออกจากระบบ</a>
+      <a href="/dashboard" id="nav-dashboard" data-i18n="nav_dashboard">📋 Dashboard</a>
+      <a href="#" onclick="(async()=>{await fetch(TBASE + '/api/logout',{method:'POST'});location.href = TBASE + '/login';})();return false;" data-i18n="nav_logout">ออกจากระบบ</a>
     </nav>
   </div>
   <script>
-    fetch('/api/me').then(r=>r.json()).then(me=>{
+    fetch(TBASE + '/api/me').then(r=>r.json()).then(me=>{
       // Dashboard is now accessible to everyone — server filters by scope.
       document.getElementById('nav-dashboard').style.display = 'inline';
     }).catch(()=>{});
@@ -97,7 +168,7 @@
 <script>
 const qs = new URLSearchParams(location.search);
 const divId = qs.get('id');
-if (!divId) location.href = '/';
+if (!divId) location.href = TBASE + '/';
 
 function esc(s){return String(s||'').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
 function pill(s){
@@ -108,14 +179,14 @@ function pill(s){
 
 async function load() {
   const [divs, emps, me] = await Promise.all([
-    fetch('/api/divisions').then(r => r.json()),
-    fetch('/api/employees?division_id=' + encodeURIComponent(divId)).then(r => r.json()),
-    fetch('/api/me').then(r => r.json()),
+    fetch(TBASE + '/api/divisions').then(r => r.json()),
+    fetch(TBASE + '/api/employees?division_id=' + encodeURIComponent(divId)).then(r => r.json()),
+    fetch(TBASE + '/api/me').then(r => r.json()),
   ]);
   // /api/divisions is already scope-filtered server-side — if the user can't see this
   // division, it won't be in the list and we'll bounce them back to home.
   const div = divs.find(d => d.id === divId);
-  if (!div) { alert('คุณไม่มีสิทธิ์เข้าดูฝ่ายนี้ หรือไม่พบฝ่าย'); location.href = '/'; return; }
+  if (!div) { alert('คุณไม่มีสิทธิ์เข้าดูฝ่ายนี้ หรือไม่พบฝ่าย'); location.href = TBASE + '/'; return; }
   // Add employee form: visible to anyone who can add in this scope
   // (server enforces; here we just show the UI). Officer's "add" auto-fills their own scope.
   if (me.role !== 'executive') document.getElementById('add-emp-card').style.display = 'block';
@@ -145,14 +216,14 @@ document.getElementById('emp-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const body = Object.fromEntries(new FormData(e.target).entries());
   body.division_id = divId;
-  const r = await fetch('/api/employees', {
+  const r = await fetch(TBASE + '/api/employees', {
     method: 'POST',
     headers: {'content-type':'application/json'},
     body: JSON.stringify(body),
   });
   if (!r.ok) { const err = await r.json().catch(()=>({})); alert(err.error || 'เกิดข้อผิดพลาด'); return; }
   const emp = await r.json();
-  location.href = '/interview?id=' + emp.id;
+  location.href = TBASE + '/interview?id=' + emp.id;
 });
 
 /* ---------- Calendar ---------- */
@@ -173,15 +244,16 @@ function ymd(d) {
 }
 
 async function loadHistory() {
-  const r = await fetch('/api/interviews/history?scope=' + encodeURIComponent(calScope));
+  const r = await fetch(TBASE + '/api/interviews/history?scope=' + encodeURIComponent(calScope));
   calData = await r.json();
   renderCalendar();
 }
 
 function weekdayLabels(lang) {
   // Use toLocaleDateString with a reference week (2026-01-05 = Monday)
+  // Thai locale forced to Gregorian calendar so years are ค.ศ. (no BE conversion).
   const base = new Date(2026, 0, 5);
-  const locale = lang === 'cn' ? 'zh-CN' : (lang === 'en' ? 'en-US' : 'th-TH');
+  const locale = lang === 'cn' ? 'zh-CN' : (lang === 'en' ? 'en-US' : 'th-TH-u-ca-gregory');
   const out = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(base); d.setDate(base.getDate() + i);
@@ -192,7 +264,8 @@ function weekdayLabels(lang) {
 
 function renderCalendar() {
   const lang = (window.I18N && window.I18N.getLang()) || 'th';
-  const locale = lang === 'cn' ? 'zh-CN' : (lang === 'en' ? 'en-US' : 'th-TH');
+  // th-TH-u-ca-gregory → keeps Thai month names but year is Christian Era (2026 not 2569)
+  const locale = lang === 'cn' ? 'zh-CN' : (lang === 'en' ? 'en-US' : 'th-TH-u-ca-gregory');
 
   calLabel.textContent = calMonth.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
 
@@ -274,9 +347,12 @@ function selectDay(key, byDateArg) {
   document.querySelectorAll('.cal-day').forEach(el => el.classList.toggle('selected', el.getAttribute('data-key') === key));
   const entries = byDate[key] || [];
   const lang = (window.I18N && window.I18N.getLang()) || 'th';
-  const locale = lang === 'cn' ? 'zh-CN' : (lang === 'en' ? 'en-US' : 'th-TH');
+  // DD/MM/YYYY (ค.ศ.) + weekday name in the user's language
   const [y,m,d] = key.split('-').map(Number);
-  const dateLabel = new Date(y, m-1, d).toLocaleDateString(locale, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const dateObj = new Date(y, m-1, d);
+  const wdLocale = lang === 'cn' ? 'zh-CN' : (lang === 'en' ? 'en-US' : 'th-TH-u-ca-gregory');
+  const weekday = dateObj.toLocaleDateString(wdLocale, { weekday: 'long' });
+  const dateLabel = `${String(d).padStart(2,'0')}/${String(m).padStart(2,'0')}/${y} (${weekday})`;
   if (!entries.length) {
     calSelected.innerHTML = `<div class="cal-selected-panel"><h3>${esc(dateLabel)}</h3><p class="empty" style="padding:12px;">${esc(T('cal_no_day'))}</p></div>`;
     return;
@@ -314,7 +390,7 @@ document.addEventListener('langchange', renderCalendar);
 
 // Scope toggle available to admin / executive / manager (anyone who can see > 1 division)
 async function setupScope() {
-  const me = await fetch('/api/me').then(r => r.json());
+  const me = await fetch(TBASE + '/api/me').then(r => r.json());
   if (!['admin', 'executive', 'manager'].includes(me.role)) return;
   const toggle = document.getElementById('scope-toggle');
   toggle.style.display = 'inline-flex';

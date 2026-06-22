@@ -1,5 +1,5 @@
 /**
- * server.js - HR-WWN
+ * server.js - HR-Interview
  * Node + Express, JSON files for storage. Runs at http://localhost:3000
  *
  * Phase 1+2: Per-user accounts, 5-tier RBAC, full org tree
@@ -10,63 +10,41 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { AsyncLocalStorage } = require('async_hooks');
+const xlsx = require('xlsx');
 const ai = require('./scripts/mock-ai');
 
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, 'data');
-const INTERVIEW_DIR = path.join(DATA_DIR, 'interviews');
-const OUTPUT_DIR = path.join(ROOT, 'outputs');
+// DATA_DIR / OUTPUT_DIR can be overridden via env so a persistent volume
+// (e.g. Fly.io) can mount outside the source tree without breaking dev defaults.
+const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
+const TENANT_DATA_DIR = path.join(DATA_DIR, 'tenants');
+const OUTPUT_DIR = process.env.OUTPUT_DIR || path.join(ROOT, 'outputs');
+const TENANT_OUTPUT_DIR = path.join(OUTPUT_DIR, 'tenants');
+const TENANTS_FILE = path.join(DATA_DIR, '_tenants.json');
+const SUPER_AUTH_FILE = path.join(DATA_DIR, '_super_auth.json');
+const SECRET_FILE = path.join(DATA_DIR, '_secret');
 
-const F = {
-  employees: path.join(DATA_DIR, 'employees.json'),
-  divisions: path.join(DATA_DIR, 'divisions.json'),
-  sections:  path.join(DATA_DIR, 'sections.json'),
-  positions: path.join(DATA_DIR, 'positions.json'),
-  users:     path.join(DATA_DIR, 'users.json'),
-  company:   path.join(DATA_DIR, 'company.json'),
-  auth:      path.join(DATA_DIR, 'auth.json'),
-  secret:    path.join(DATA_DIR, '.secret'),
-};
-
-for (const d of [DATA_DIR, INTERVIEW_DIR, OUTPUT_DIR, path.join(OUTPUT_DIR, '_company')]) {
+for (const d of [DATA_DIR, TENANT_DATA_DIR, OUTPUT_DIR, TENANT_OUTPUT_DIR]) {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 }
 const ensure = (p, def) => { if (!fs.existsSync(p)) fs.writeFileSync(p, def); };
-ensure(F.employees, '[]');
-ensure(F.divisions, '[]');
-ensure(F.sections, '[]');
-ensure(F.positions, '[]');
-ensure(F.users, '[]');
-ensure(F.company, JSON.stringify({ name: 'บริษัทตัวอย่าง จำกัด', name_en: 'Sample Company Ltd.' }, null, 2));
-ensure(F.auth, JSON.stringify({ master: 'JC2026!Init' }, null, 2));
+ensure(TENANTS_FILE, '[]');
+ensure(SUPER_AUTH_FILE, JSON.stringify({ master: 'super!2026' }, null, 2));
 
-// Production hardening flag — when behind HTTPS proxy (Cloudflare Tunnel),
-// set SECURE_COOKIES=true so the auth cookie carries the Secure flag.
+// Production hardening flag — when behind HTTPS proxy (Fly.io / Cloudflare),
+// set SECURE_COOKIES=true so cookies carry the Secure flag.
 const SECURE_COOKIES = String(process.env.SECURE_COOKIES || '').toLowerCase() === 'true';
 const cookieSuffix = SECURE_COOKIES ? '; Secure' : '';
 
 let SECRET;
-if (fs.existsSync(F.secret)) {
-  SECRET = fs.readFileSync(F.secret, 'utf8').trim();
+if (fs.existsSync(SECRET_FILE)) {
+  SECRET = fs.readFileSync(SECRET_FILE, 'utf8').trim();
 } else {
   SECRET = crypto.randomBytes(32).toString('hex');
-  fs.writeFileSync(F.secret, SECRET);
+  fs.writeFileSync(SECRET_FILE, SECRET);
 }
-
-// Migrate legacy plain-text master password to a salted scrypt hash so
-// data/auth.json stops leaking the password if shared/backed-up.
-(function migrateAuth() {
-  const raw = (() => { try { return JSON.parse(fs.readFileSync(F.auth, 'utf8')); } catch { return null; } })();
-  if (!raw || typeof raw.master !== 'string') return;
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(String(raw.master), salt, 64).toString('hex');
-  fs.writeFileSync(F.auth, JSON.stringify({
-    master_salt: salt, master_hash: hash,
-    migrated_at: new Date().toISOString(),
-  }, null, 2));
-  console.log('[migration] master password hashed (was plain text)');
-})();
 
 // ---------- JSON helpers ----------
 function readJson(file, fallback) {
@@ -75,26 +53,115 @@ function readJson(file, fallback) {
 function writeJson(file, obj) {
   fs.writeFileSync(file, JSON.stringify(obj, null, 2));
 }
-const load = {
-  employees: () => readJson(F.employees, []),
-  divisions: () => readJson(F.divisions, []),
-  sections:  () => readJson(F.sections, []),
-  positions: () => readJson(F.positions, []),
-  users:     () => readJson(F.users, []),
-  company:   () => readJson(F.company, { name: '', name_en: '' }),
-  auth:      () => readJson(F.auth, { master: '' }),
-};
-const save = {
-  employees: (l) => writeJson(F.employees, l),
-  divisions: (l) => writeJson(F.divisions, l),
-  sections:  (l) => writeJson(F.sections, l),
-  positions: (l) => writeJson(F.positions, l),
-  users:     (l) => writeJson(F.users, l),
-  company:   (o) => writeJson(F.company, o),
-};
 function genId(prefix) {
   return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
+
+// Migrate super-admin password from plain to hashed (idempotent — runs once).
+(function migrateSuperAuth() {
+  const raw = readJson(SUPER_AUTH_FILE, null);
+  if (!raw || typeof raw.master !== 'string') return;
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(String(raw.master), salt, 64).toString('hex');
+  writeJson(SUPER_AUTH_FILE, { master_salt: salt, master_hash: hash, migrated_at: new Date().toISOString() });
+  console.log('[migration] super-admin password hashed');
+})();
+
+// ============================================================
+// Multi-tenant: per-tenant data layer
+// ============================================================
+// All tenant data lives in data/tenants/<id>/ and outputs/tenants/<id>/.
+// AsyncLocalStorage gives every async request its own tenant db so existing
+// `load.users()` / `save.users(...)` call sites don't need a signature change.
+const ALS = new AsyncLocalStorage();
+
+function tenantDb(tenantId) {
+  const dir = path.join(TENANT_DATA_DIR, tenantId);
+  const intDir = path.join(dir, 'interviews');
+  const outDir = path.join(TENANT_OUTPUT_DIR, tenantId);
+  const cmpOutDir = path.join(outDir, '_company');
+  const F = {
+    employees: path.join(dir, 'employees.json'),
+    divisions: path.join(dir, 'divisions.json'),
+    sections:  path.join(dir, 'sections.json'),
+    positions: path.join(dir, 'positions.json'),
+    users:     path.join(dir, 'users.json'),
+    company:   path.join(dir, 'company.json'),
+    auth:      path.join(dir, 'auth.json'),
+  };
+  return {
+    id: tenantId,
+    dir, intDir, outDir, cmpOutDir,
+    files: F,
+    employees:    () => readJson(F.employees, []),
+    divisions:    () => readJson(F.divisions, []),
+    sections:     () => readJson(F.sections, []),
+    positions:    () => readJson(F.positions, []),
+    users:        () => readJson(F.users, []),
+    company:      () => readJson(F.company, { name: '', name_en: '' }),
+    auth:         () => readJson(F.auth, { master: '' }),
+    saveEmployees: (l) => writeJson(F.employees, l),
+    saveDivisions: (l) => writeJson(F.divisions, l),
+    saveSections:  (l) => writeJson(F.sections, l),
+    savePositions: (l) => writeJson(F.positions, l),
+    saveUsers:     (l) => writeJson(F.users, l),
+    saveCompany:   (o) => writeJson(F.company, o),
+    saveAuth:      (o) => writeJson(F.auth, o),
+    interviewPath: (id) => path.join(intDir, `${id}.json`),
+    loadInterview: (id) => readJson(path.join(intDir, `${id}.json`), null),
+    saveInterview: (iv) => writeJson(path.join(intDir, `${iv.id}.json`), iv),
+  };
+}
+
+function initTenantFolder(tenantId, initialAdminPassword) {
+  const db = tenantDb(tenantId);
+  for (const d of [db.dir, db.intDir, db.outDir, db.cmpOutDir]) {
+    if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+  }
+  ensure(db.files.employees, '[]');
+  ensure(db.files.divisions, '[]');
+  ensure(db.files.sections, '[]');
+  ensure(db.files.positions, '[]');
+  ensure(db.files.users, '[]');
+  ensure(db.files.company, JSON.stringify({ name: 'บริษัทตัวอย่าง จำกัด', name_en: 'Sample Company Ltd.' }, null, 2));
+  if (!fs.existsSync(db.files.auth)) {
+    const pw = initialAdminPassword || 'WWN2026!Init';
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync(String(pw), salt, 64).toString('hex');
+    writeJson(db.files.auth, { master_salt: salt, master_hash: hash, created_at: new Date().toISOString() });
+  }
+  ensure(path.join(db.intDir, '.gitkeep'), '');
+  return db;
+}
+
+function loadTenants() { return readJson(TENANTS_FILE, []); }
+function saveTenants(list) { writeJson(TENANTS_FILE, list); }
+function findTenant(id) { return loadTenants().find(t => t.id === id); }
+
+// Tenant-context proxies — read by all existing helpers/routes.
+// Will throw if called outside a tenant request (should never happen in practice).
+function ctxDb() {
+  const s = ALS.getStore();
+  if (!s || !s.db) throw new Error('tenant context required');
+  return s.db;
+}
+const load = {
+  employees: () => ctxDb().employees(),
+  divisions: () => ctxDb().divisions(),
+  sections:  () => ctxDb().sections(),
+  positions: () => ctxDb().positions(),
+  users:     () => ctxDb().users(),
+  company:   () => ctxDb().company(),
+  auth:      () => ctxDb().auth(),
+};
+const save = {
+  employees: (l) => ctxDb().saveEmployees(l),
+  divisions: (l) => ctxDb().saveDivisions(l),
+  sections:  (l) => ctxDb().saveSections(l),
+  positions: (l) => ctxDb().savePositions(l),
+  users:     (l) => ctxDb().saveUsers(l),
+  company:   (o) => ctxDb().saveCompany(o),
+};
 
 // ---------- password ----------
 function hashPassword(password, salt) {
@@ -132,18 +199,26 @@ function parseCookie(req, name) {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-// ---------- middleware ----------
+// ---------- tenant-scoped middleware (used inside tenantRouter) ----------
 const PUBLIC_PATHS = new Set([
   '/login', '/api/login', '/api/logout', '/api/lang',
-  '/styles.css', '/favicon.ico', '/i18n.js', '/logo.png'
 ]);
+// GET /api/company is public so the login page can show the tenant's company
+// name before authentication. Other methods (PUT) still require admin.
+function isPublicRequest(req) {
+  if (PUBLIC_PATHS.has(req.path)) return true;
+  if (req.method === 'GET' && req.path === '/api/company') return true;
+  return false;
+}
 function authMiddleware(req, res, next) {
-  if (PUBLIC_PATHS.has(req.path)) return next();
+  if (isPublicRequest(req)) return next();
   const token = parseCookie(req, 'auth');
   const session = verifyToken(token);
-  if (!session) {
+  // Server-side tenant isolation: a token carries its tenant_id and we reject
+  // it if it doesn't match the URL's tenant. Belt-and-braces with cookie Path.
+  if (!session || session.tenant_id !== req.tenant.id) {
     if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'unauthorized' });
-    return res.redirect('/login');
+    return res.redirect(req.tbase + '/login');
   }
   req.session = session;
   next();
@@ -151,7 +226,7 @@ function authMiddleware(req, res, next) {
 function requireAdmin(req, res, next) {
   if (req.session?.role !== 'admin') {
     if (req.path.startsWith('/api/')) return res.status(403).json({ error: 'admin only' });
-    return res.redirect('/');
+    return res.redirect(req.tbase || '/');
   }
   next();
 }
@@ -159,7 +234,7 @@ function requireRoles(...roles) {
   return (req, res, next) => {
     if (!roles.includes(req.session?.role)) {
       if (req.path.startsWith('/api/')) return res.status(403).json({ error: 'forbidden' });
-      return res.redirect('/');
+      return res.redirect(req.tbase || '/');
     }
     next();
   };
@@ -248,14 +323,10 @@ function archiveEmployeeForUser(userId, reason) {
 
 // ---------- RBAC scope check ----------
 // target = { division_id, section_id, position_id }
-// canEdit = same as canView for section_head and above; officer cannot rename anything.
-function canEdit(session, target) {
-  if (!session) return false;
-  const r = session.role;
-  if (r === 'admin' || r === 'executive') return true;
-  if (r === 'officer') return false;
-  return canView(session, target);
-}
+//
+// canView is LENIENT — section_head/officer can also "see" their parent division
+// (and officer their parent section) so the dashboard tree has a root to render.
+// canEdit is STRICT — section_head only edits own section, never the parent division.
 function canView(session, target) {
   if (!session) return false;
   const r = session.role;
@@ -277,23 +348,78 @@ function canView(session, target) {
     return !!target.division_id && target.division_id === myDiv;
   }
   if (r === 'section_head') {
-    return !!target.section_id && target.section_id === mySec;
+    // Own section (and anything carrying our section_id — positions/emps in it)
+    if (target.section_id && target.section_id === mySec) return true;
+    // Parent division — only when target is "about" a division (no section_id specified).
+    // Lets the dashboard render the parent ฝ่าย so the tree has a root.
+    if (target.division_id && target.division_id === myDiv && !target.section_id && !target.position_id) return true;
+    return false;
   }
   if (r === 'officer') {
-    return !!target.position_id && target.position_id === myPos;
+    // Own position (and anything carrying our position_id)
+    if (target.position_id && target.position_id === myPos) return true;
+    // Parent section — only when target is about a section (no position_id)
+    if (target.section_id && target.section_id === mySec && !target.position_id) return true;
+    // Parent division — only when target is about a division
+    if (target.division_id && target.division_id === myDiv && !target.section_id && !target.position_id) return true;
+    return false;
+  }
+  return false;
+}
+
+function canEdit(session, target) {
+  if (!session) return false;
+  const r = session.role;
+  if (r === 'admin' || r === 'executive') return true;
+  if (r === 'officer') return false;
+  if (r === 'manager') {
+    if (target.division_id && target.division_id === session.division_id) return true;
+    const ov = session.scope_override || {};
+    if (target.division_id && (ov.divisions || []).includes(target.division_id)) return true;
+    if (target.section_id && (ov.sections || []).includes(target.section_id)) return true;
+    if (target.position_id && (ov.positions || []).includes(target.position_id)) return true;
+    return false;
+  }
+  if (r === 'division_head') {
+    return !!(target.division_id && target.division_id === session.division_id);
+  }
+  if (r === 'section_head') {
+    // Own section + positions in it (positions are passed with section_id). Never the parent division.
+    return !!(target.section_id && target.section_id === session.section_id);
   }
   return false;
 }
 
 // ---------- app ----------
 const app = express();
-// Trust the first proxy (Cloudflare Tunnel / similar) so req.ip and req.secure
+// Trust the first proxy (Fly.io / Cloudflare / similar) so req.ip and req.secure
 // reflect the real client, not 127.0.0.1.
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
-app.use(express.json({ limit: '1mb' }));
-app.use(authMiddleware);
+app.use(express.json({ limit: '5mb' }));  // bumped for base64-encoded Excel uploads
 app.use(express.static(path.join(ROOT, 'public')));
+
+// ============================================================
+// Tenant subrouter — every request that touches per-tenant data goes here.
+// Mounted at /t/:tenantId later, after all routes are declared on it.
+// ============================================================
+const tenantRouter = express.Router({ mergeParams: true });
+
+// Resolve the tenant from the URL param and stash db + tbase on req.
+// Also run the rest of the request inside an AsyncLocalStorage so existing
+// load/save helpers can pick up the current tenant's db without explicit args.
+tenantRouter.use((req, res, next) => {
+  const t = findTenant(req.params.tenantId);
+  if (!t) {
+    if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'tenant not found' });
+    return res.status(404).send(`Tenant "${req.params.tenantId}" not found`);
+  }
+  req.tenant = t;
+  req.db = tenantDb(t.id);
+  req.tbase = '/t/' + t.id;
+  ALS.run({ db: req.db, tenant: t }, () => next());
+});
+tenantRouter.use(authMiddleware);
 
 // ---------- Login rate limit (in-memory; resets on restart) ----------
 // 5 failed attempts in 5 minutes → block that IP for 15 minutes.
@@ -301,7 +427,14 @@ const RL_WINDOW = 5 * 60 * 1000;
 const RL_MAX = 5;
 const RL_BLOCK = 15 * 60 * 1000;
 const rlMap = new Map();
+// Skip rate-limiting for loopback addresses: on a local/demo machine every user
+// shares 127.0.0.1, so per-IP limiting would wrongly lock everyone out together.
+// Real deployments behind a proxy see distinct client IPs, so protection still applies there.
+function isLoopback(ip) {
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
 function rlCheck(ip) {
+  if (isLoopback(ip)) return { allowed: true };
   const now = Date.now();
   const r = rlMap.get(ip);
   if (!r) return { allowed: true };
@@ -315,6 +448,7 @@ function rlCheck(ip) {
   return { allowed: true };
 }
 function rlFail(ip) {
+  if (isLoopback(ip)) return;
   const now = Date.now();
   let r = rlMap.get(ip);
   if (!r || r.firstAttempt < now - RL_WINDOW) {
@@ -327,7 +461,7 @@ function rlFail(ip) {
 function rlOk(ip) { rlMap.delete(ip); }
 
 // ---------- login ----------
-app.post('/api/login', (req, res) => {
+tenantRouter.post('/api/login', (req, res) => {
   const ip = req.ip || 'unknown';
   const gate = rlCheck(ip);
   if (!gate.allowed) {
@@ -352,8 +486,8 @@ app.post('/api/login', (req, res) => {
       return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
     }
     rlOk(ip);
-    const token = signToken({ role: 'admin', username: 'admin', exp: Date.now() + 7*24*3600*1000 });
-    res.setHeader('Set-Cookie', `auth=${token}; Path=/; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=${7*24*3600}`);
+    const token = signToken({ role: 'admin', username: 'admin', tenant_id: req.tenant.id, exp: Date.now() + 7*24*3600*1000 });
+    res.setHeader('Set-Cookie', `auth=${token}; Path=${req.tbase}; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=${7*24*3600}`);
     return res.json({ ok: true, role: 'admin', name: 'ผู้ดูแลระบบ' });
   }
 
@@ -367,6 +501,7 @@ app.post('/api/login', (req, res) => {
   rlOk(ip);
   const payload = {
     user_id: u.id, username: u.username, name: u.name, role: u.role,
+    tenant_id: req.tenant.id,  // bind session to this tenant — auth middleware verifies match
     division_id: u.division_id || null,
     section_id:  u.section_id  || null,
     position_id: u.position_id || null,
@@ -374,16 +509,16 @@ app.post('/api/login', (req, res) => {
     exp: Date.now() + 7*24*3600*1000,
   };
   const token = signToken(payload);
-  res.setHeader('Set-Cookie', `auth=${token}; Path=/; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=${7*24*3600}`);
+  res.setHeader('Set-Cookie', `auth=${token}; Path=${req.tbase}; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=${7*24*3600}`);
   res.json({ ok: true, role: u.role, name: u.name });
 });
 
-app.post('/api/logout', (req, res) => {
-  res.setHeader('Set-Cookie', `auth=; Path=/; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=0`);
+tenantRouter.post('/api/logout', (req, res) => {
+  res.setHeader('Set-Cookie', `auth=; Path=${req.tbase}; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=0`);
   res.json({ ok: true });
 });
 
-app.get('/api/me', (req, res) => {
+tenantRouter.get('/api/me', (req, res) => {
   const s = req.session;
   if (s.role === 'admin') {
     return res.json({ role: 'admin', username: 'admin', name: 'ผู้ดูแลระบบ' });
@@ -401,8 +536,8 @@ app.get('/api/me', (req, res) => {
 });
 
 // ---------- Company ----------
-app.get('/api/company', (req, res) => res.json(load.company()));
-app.put('/api/company', requireAdmin, (req, res) => {
+tenantRouter.get('/api/company', (req, res) => res.json(load.company()));
+tenantRouter.put('/api/company', requireAdmin, (req, res) => {
   const { name, name_en } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'กรอกชื่อบริษัท' });
   const obj = {
@@ -415,13 +550,13 @@ app.put('/api/company', requireAdmin, (req, res) => {
 });
 
 // ---------- Divisions ----------
-app.get('/api/divisions', (req, res) => {
+tenantRouter.get('/api/divisions', (req, res) => {
   const divs = load.divisions();
   const s = req.session;
   if (s.role === 'admin' || s.role === 'executive') return res.json(divs);
   res.json(divs.filter(d => canView(s, { division_id: d.id })));
 });
-app.post('/api/divisions', requireAdmin, (req, res) => {
+tenantRouter.post('/api/divisions', requireAdmin, (req, res) => {
   const { name, name_en, icon, color } = req.body || {};
   if (!name) return res.status(400).json({ error: 'ต้องใส่ชื่อฝ่าย' });
   const list = load.divisions();
@@ -438,7 +573,7 @@ app.post('/api/divisions', requireAdmin, (req, res) => {
   save.divisions(list);
   res.json(div);
 });
-app.put('/api/divisions/:id', (req, res) => {
+tenantRouter.put('/api/divisions/:id', (req, res) => {
   const list = load.divisions();
   const d = list.find(x => x.id === req.params.id);
   if (!d) return res.status(404).json({ error: 'not found' });
@@ -457,7 +592,7 @@ app.put('/api/divisions/:id', (req, res) => {
   save.divisions(list);
   res.json(d);
 });
-app.delete('/api/divisions/:id', requireAdmin, (req, res) => {
+tenantRouter.delete('/api/divisions/:id', requireAdmin, (req, res) => {
   const list = load.divisions();
   const idx = list.findIndex(d => d.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'not found' });
@@ -470,7 +605,7 @@ app.delete('/api/divisions/:id', requireAdmin, (req, res) => {
 });
 
 // ---------- Sections ----------
-app.get('/api/sections', (req, res) => {
+tenantRouter.get('/api/sections', (req, res) => {
   let list = load.sections();
   const { division_id } = req.query;
   if (division_id) list = list.filter(s => s.division_id === division_id);
@@ -480,7 +615,7 @@ app.get('/api/sections', (req, res) => {
   }
   res.json(list);
 });
-app.post('/api/sections', requireAdmin, (req, res) => {
+tenantRouter.post('/api/sections', requireAdmin, (req, res) => {
   const { name, name_en, division_id } = req.body || {};
   if (!name || !division_id) return res.status(400).json({ error: 'ต้องใส่ชื่อแผนกและเลือกฝ่าย' });
   if (!load.divisions().some(d => d.id === division_id)) return res.status(400).json({ error: 'ไม่พบฝ่าย' });
@@ -499,7 +634,7 @@ app.post('/api/sections', requireAdmin, (req, res) => {
   save.sections(list);
   res.json(sec);
 });
-app.put('/api/sections/:id', (req, res) => {
+tenantRouter.put('/api/sections/:id', (req, res) => {
   const list = load.sections();
   const sec = list.find(x => x.id === req.params.id);
   if (!sec) return res.status(404).json({ error: 'not found' });
@@ -524,7 +659,7 @@ app.put('/api/sections/:id', (req, res) => {
   save.sections(list);
   res.json(sec);
 });
-app.delete('/api/sections/:id', requireAdmin, (req, res) => {
+tenantRouter.delete('/api/sections/:id', requireAdmin, (req, res) => {
   const list = load.sections();
   const idx = list.findIndex(x => x.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'not found' });
@@ -537,7 +672,7 @@ app.delete('/api/sections/:id', requireAdmin, (req, res) => {
 });
 
 // ---------- Positions ----------
-app.get('/api/positions', (req, res) => {
+tenantRouter.get('/api/positions', (req, res) => {
   let list = load.positions();
   const { section_id, division_id } = req.query;
   if (section_id) list = list.filter(p => p.section_id === section_id);
@@ -555,7 +690,7 @@ app.get('/api/positions', (req, res) => {
   }
   res.json(list);
 });
-app.post('/api/positions', requireAdmin, (req, res) => {
+tenantRouter.post('/api/positions', requireAdmin, (req, res) => {
   const { name, name_en, section_id } = req.body || {};
   if (!name || !section_id) return res.status(400).json({ error: 'ต้องใส่ชื่อตำแหน่งและเลือกแผนก' });
   if (!load.sections().some(s => s.id === section_id)) return res.status(400).json({ error: 'ไม่พบแผนก' });
@@ -574,7 +709,7 @@ app.post('/api/positions', requireAdmin, (req, res) => {
   save.positions(list);
   res.json(pos);
 });
-app.put('/api/positions/:id', (req, res) => {
+tenantRouter.put('/api/positions/:id', (req, res) => {
   const list = load.positions();
   const p = list.find(x => x.id === req.params.id);
   if (!p) return res.status(404).json({ error: 'not found' });
@@ -599,7 +734,7 @@ app.put('/api/positions/:id', (req, res) => {
   save.positions(list);
   res.json(p);
 });
-app.delete('/api/positions/:id', requireAdmin, (req, res) => {
+tenantRouter.delete('/api/positions/:id', requireAdmin, (req, res) => {
   const list = load.positions();
   const idx = list.findIndex(x => x.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'not found' });
@@ -617,7 +752,7 @@ app.delete('/api/positions/:id', requireAdmin, (req, res) => {
 });
 
 // History view per position — all emp records (active + archived) for this position.
-app.get('/api/positions/:id/history', (req, res) => {
+tenantRouter.get('/api/positions/:id/history', (req, res) => {
   const pos = load.positions().find(p => p.id === req.params.id);
   if (!pos) return res.status(404).json({ error: 'not found' });
   const sec = load.sections().find(s => s.id === pos.section_id);
@@ -635,7 +770,7 @@ app.get('/api/positions/:id/history', (req, res) => {
 const ROLES = ['executive', 'manager', 'division_head', 'section_head', 'officer'];
 const stripSecret = ({ password_hash, password_salt, ...rest }) => rest;
 
-app.get('/api/users', requireAdmin, (req, res) => {
+tenantRouter.get('/api/users', requireAdmin, (req, res) => {
   res.json(load.users().map(stripSecret));
 });
 
@@ -659,7 +794,7 @@ function validateScope(role, { division_id, section_id, position_id }, divs, sec
   return null;
 }
 
-app.post('/api/users', requireAdmin, (req, res) => {
+tenantRouter.post('/api/users', requireAdmin, (req, res) => {
   const { username, password, name, role,
           division_id, section_id, position_id,
           work_start, work_end, break_start, break_end,
@@ -703,7 +838,7 @@ app.post('/api/users', requireAdmin, (req, res) => {
   res.json(stripSecret(user));
 });
 
-app.put('/api/users/:id', requireAdmin, (req, res) => {
+tenantRouter.put('/api/users/:id', requireAdmin, (req, res) => {
   const list = load.users();
   const u = list.find(x => x.id === req.params.id);
   if (!u) return res.status(404).json({ error: 'not found' });
@@ -755,7 +890,7 @@ app.put('/api/users/:id', requireAdmin, (req, res) => {
   res.json(stripSecret(u));
 });
 
-app.delete('/api/users/:id', requireAdmin, (req, res) => {
+tenantRouter.delete('/api/users/:id', requireAdmin, (req, res) => {
   const list = load.users();
   const idx = list.findIndex(u => u.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'not found' });
@@ -768,7 +903,7 @@ app.delete('/api/users/:id', requireAdmin, (req, res) => {
 });
 
 // Self profile
-app.get('/api/me/profile', (req, res) => {
+tenantRouter.get('/api/me/profile', (req, res) => {
   if (req.session.role === 'admin') return res.json(null);
   const u = load.users().find(x => x.id === req.session.user_id);
   if (!u) return res.status(404).json({ error: 'not found' });
@@ -778,7 +913,7 @@ app.get('/api/me/profile', (req, res) => {
 // Self profile update — user edits own work times + own password.
 // Cannot change role / scope / division / section / position (admin only).
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
-app.put('/api/me/profile', (req, res) => {
+tenantRouter.put('/api/me/profile', (req, res) => {
   if (req.session.role === 'admin') return res.status(400).json({ error: 'admin ไม่มีโปรไฟล์ส่วนตัว' });
   const list = load.users();
   const u = list.find(x => x.id === req.session.user_id);
@@ -815,7 +950,7 @@ function userVisibleTo(session, user) {
 
 // Users visible to the current session (officer = self only; head/manager/exec/admin per scope).
 // Returns users WITHOUT password fields.
-app.get('/api/reports/users', (req, res) => {
+tenantRouter.get('/api/reports/users', (req, res) => {
   const s = req.session;
   const all = load.users().map(stripSecret);
   let visible;
@@ -839,7 +974,7 @@ app.get('/api/reports/users', (req, res) => {
 });
 
 // Summary counts (users by role, by division), scope-filtered
-app.get('/api/reports/summary', (req, res) => {
+tenantRouter.get('/api/reports/summary', (req, res) => {
   const s = req.session;
   let users = load.users();
   if (s.role === 'officer') {
@@ -870,21 +1005,21 @@ app.get('/api/reports/summary', (req, res) => {
 
 // ---------- Master password (status check + change) ----------
 // Hash is never returned — only confirm whether one is set.
-app.get('/api/admin/auth', requireAdmin, (req, res) => {
+tenantRouter.get('/api/admin/auth', requireAdmin, (req, res) => {
   const a = load.auth();
   res.json({ master_set: !!(a.master_hash || a.master), updated_at: a.migrated_at || a.updated_at || null });
 });
-app.put('/api/admin/auth', requireAdmin, (req, res) => {
+tenantRouter.put('/api/admin/auth', requireAdmin, (req, res) => {
   const { master } = req.body || {};
   if (!master || String(master).length < 6) return res.status(400).json({ error: 'master ต้องยาวอย่างน้อย 6 ตัวอักษร' });
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = crypto.scryptSync(String(master), salt, 64).toString('hex');
-  writeJson(F.auth, { master_salt: salt, master_hash: hash, updated_at: new Date().toISOString() });
+  ctxDb().saveAuth({ master_salt: salt, master_hash: hash, updated_at: new Date().toISOString() });
   res.json({ ok: true });
 });
 
 // ---------- Language preference ----------
-app.post('/api/lang', (req, res) => {
+tenantRouter.post('/api/lang', (req, res) => {
   const lang = String((req.body && req.body.lang) || '').toLowerCase();
   if (!['th', 'en', 'cn'].includes(lang)) return res.status(400).json({ error: 'invalid lang' });
   res.setHeader('Set-Cookie', `lang=${lang}; Path=/; SameSite=Lax; Max-Age=${180*24*3600}`);
@@ -892,9 +1027,9 @@ app.post('/api/lang', (req, res) => {
 });
 
 // ---------- Interview workflow (employee interviews -> JD/KPI/Optimization docs) ----------
-function interviewPath(id) { return path.join(INTERVIEW_DIR, `${id}.json`); }
-function loadInterview(id) { return readJson(interviewPath(id), null); }
-function saveInterview(iv) { writeJson(interviewPath(iv.id), iv); }
+function interviewPath(id) { return ctxDb().interviewPath(id); }
+function loadInterview(id) { return ctxDb().loadInterview(id); }
+function saveInterview(iv) { ctxDb().saveInterview(iv); }
 function genEmpId() { return 'emp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
 // Read access — hierarchy can view subordinates' records within scope.
@@ -918,7 +1053,7 @@ function canInterviewEmployee(session, emp) {
 
 // List employees visible to the current session.
 // Default: active only (archived=false). Pass ?include_archived=true to also see history.
-app.get('/api/employees', (req, res) => {
+tenantRouter.get('/api/employees', (req, res) => {
   const { division_id, include_archived } = req.query;
   const s = req.session;
   let list = load.employees();
@@ -937,7 +1072,7 @@ app.get('/api/employees', (req, res) => {
 });
 
 // "My active employee record" — for the user's own interview entry point.
-app.get('/api/me/employee', (req, res) => {
+tenantRouter.get('/api/me/employee', (req, res) => {
   if (req.session.role === 'admin') return res.json(null);
   const emp = load.employees().find(e => e.user_id === req.session.user_id && !e.archived);
   res.json(emp || null);
@@ -945,7 +1080,7 @@ app.get('/api/me/employee', (req, res) => {
 
 // Manual create — admin-only escape hatch for data fix.
 // Normal flow: emp records are auto-created when admin creates a user (position-anchored model).
-app.post('/api/employees', requireAdmin, (req, res) => {
+tenantRouter.post('/api/employees', requireAdmin, (req, res) => {
   const body = req.body || {};
   const { name, role, division_id, section_id, position_id, primary_duty, email, user_id } = body;
   if (!name || !position_id) return res.status(400).json({ error: 'ต้องใส่ชื่อและ position_id (admin manual create)' });
@@ -981,7 +1116,7 @@ app.post('/api/employees', requireAdmin, (req, res) => {
 });
 
 // Schedules (for interview UI — anyone logged in can read)
-app.get('/api/schedules', (req, res) => {
+tenantRouter.get('/api/schedules', (req, res) => {
   const lang = String(req.query.lang || parseCookie(req, 'lang') || 'th');
   res.json(ai.listSchedules(lang));
 });
@@ -998,7 +1133,7 @@ function backdateIso(input, hour) {
 }
 
 // Start interview / fetch next question
-app.post('/api/interview/:id/start', (req, res) => {
+tenantRouter.post('/api/interview/:id/start', (req, res) => {
   const emp = load.employees().find(e => e.id === req.params.id);
   if (!emp) return res.status(404).json({ error: 'not found' });
   if (!canInterviewEmployee(req.session, emp)) return res.status(403).json({ error: 'ไม่มีสิทธิ์สัมภาษณ์ของคนอื่น / หรือ record นี้ archived แล้ว' });
@@ -1052,7 +1187,7 @@ app.post('/api/interview/:id/start', (req, res) => {
 });
 
 // Submit answer
-app.post('/api/interview/:id/message', (req, res) => {
+tenantRouter.post('/api/interview/:id/message', (req, res) => {
   const iv = loadInterview(req.params.id);
   if (!iv) return res.status(404).json({ error: 'interview not started' });
   const liveEmp = load.employees().find(e => e.id === req.params.id);
@@ -1074,7 +1209,7 @@ app.post('/api/interview/:id/message', (req, res) => {
 });
 
 // Finish -> generate JD/KPI/Optimization docs
-app.post('/api/interview/:id/finish', (req, res) => {
+tenantRouter.post('/api/interview/:id/finish', (req, res) => {
   const iv = loadInterview(req.params.id);
   if (!iv) return res.status(404).json({ error: 'not found' });
   const liveEmp = load.employees().find(e => e.id === req.params.id);
@@ -1085,7 +1220,7 @@ app.post('/api/interview/:id/finish', (req, res) => {
     : new Date().toISOString();
   saveInterview(iv);
 
-  const outDir = path.join(OUTPUT_DIR, iv.id);
+  const outDir = path.join(ctxDb().outDir, iv.id);
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
   const docs = ai.generateDocuments(iv);
   const files = [];
@@ -1103,7 +1238,7 @@ app.post('/api/interview/:id/finish', (req, res) => {
 
 // Interview JSON — read access via canViewEmployee so hierarchy can inspect subordinates'
 // answers (including archived/historical records).
-app.get('/api/interview/:id', (req, res) => {
+tenantRouter.get('/api/interview/:id', (req, res) => {
   const iv = loadInterview(req.params.id);
   if (!iv) return res.status(404).json({ error: 'not found' });
   const liveEmp = load.employees().find(e => e.id === req.params.id) || iv.employee;
@@ -1112,10 +1247,10 @@ app.get('/api/interview/:id', (req, res) => {
 });
 
 // Delete employee + interview + outputs — ADMIN ONLY
-app.delete('/api/interview/:id', requireAdmin, (req, res) => {
+tenantRouter.delete('/api/interview/:id', requireAdmin, (req, res) => {
   const id = req.params.id;
   const ivFile = interviewPath(id);
-  const outDir = path.join(OUTPUT_DIR, id);
+  const outDir = path.join(ctxDb().outDir, id);
   if (fs.existsSync(ivFile)) fs.unlinkSync(ivFile);
   if (fs.existsSync(outDir)) fs.rmSync(outDir, { recursive: true, force: true });
 
@@ -1128,7 +1263,7 @@ app.delete('/api/interview/:id', requireAdmin, (req, res) => {
 });
 
 // History for calendar — scope-filtered
-app.get('/api/interviews/history', (req, res) => {
+tenantRouter.get('/api/interviews/history', (req, res) => {
   const s = req.session;
   const requested = String(req.query.scope || '').trim();
   let emps = load.employees();
@@ -1164,63 +1299,562 @@ app.get('/api/interviews/history', (req, res) => {
 });
 
 // Company-wide analysis — admin + executive + manager
-app.post('/api/company/analyze', requireRoles('admin', 'executive', 'manager'), (req, res) => {
+tenantRouter.post('/api/company/analyze', requireRoles('admin', 'executive', 'manager'), (req, res) => {
   const list = load.employees();
   const interviews = list
     .map(e => loadInterview(e.id))
     .filter(iv => iv && iv.finishedAt);
   const md = ai.analyzeCompany(interviews);
-  const outDir = path.join(OUTPUT_DIR, '_company');
+  const outDir = ctxDb().cmpOutDir;
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, 'optimization-report.md'), md);
   res.json({ ok: true, count: interviews.length, file: 'optimization-report.md' });
 });
 
 // Download company-wide report — admin + executive + manager
-app.get('/api/outputs/_company/:file', requireRoles('admin', 'executive', 'manager'), (req, res) => {
+tenantRouter.get('/api/outputs/_company/:file', requireRoles('admin', 'executive', 'manager'), (req, res) => {
   const file = req.params.file;
   if (file.includes('..') || file.includes('/') || file.includes('\\')) return res.status(400).send('bad filename');
-  const p = path.join(OUTPUT_DIR, '_company', file);
+  const p = path.join(ctxDb().cmpOutDir, file);
   if (!fs.existsSync(p)) return res.status(404).send('not found');
   res.sendFile(p);
 });
 
 // Download generated per-employee file — scope check (read access).
-app.get('/api/outputs/:id/:file', (req, res) => {
+tenantRouter.get('/api/outputs/:id/:file', (req, res) => {
   const { id, file } = req.params;
   if (file.includes('..') || file.includes('/') || file.includes('\\')) return res.status(400).send('bad filename');
   const emp = load.employees().find(e => e.id === id);
   if (!canViewEmployee(req.session, emp)) return res.status(403).send('forbidden');
   const safeId = id.replace(/[^a-zA-Z0-9_]/g, '');
-  const p = path.join(OUTPUT_DIR, safeId, file);
+  const p = path.join(ctxDb().outDir, safeId, file);
   if (!fs.existsSync(p)) return res.status(404).send('not found');
   res.sendFile(p);
 });
 
 // ---------- Static page routes ----------
-app.get('/',         (req, res) => res.sendFile(path.join(ROOT, 'public', 'index.html')));
-app.get('/login',    (req, res) => res.sendFile(path.join(ROOT, 'public', 'login.html')));
-app.get('/admin',    requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin.html')));
-app.get('/admin/users', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-users.html')));
-app.get('/admin/org',   requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-org.html')));
-app.get('/profile',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'profile.html')));
-app.get('/reports',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'reports.html')));
-app.get('/division', (req, res) => res.sendFile(path.join(ROOT, 'public', 'division.html')));
-app.get('/interview',(req, res) => res.sendFile(path.join(ROOT, 'public', 'interview.html')));
-app.get('/review',   (req, res) => res.sendFile(path.join(ROOT, 'public', 'review.html')));
-app.get('/examples', (req, res) => res.sendFile(path.join(ROOT, 'public', 'examples.html')));
-app.get('/dashboard',(req, res) => res.sendFile(path.join(ROOT, 'public', 'dashboard.html')));
+tenantRouter.get('/',         (req, res) => res.sendFile(path.join(ROOT, 'public', 'index.html')));
+tenantRouter.get('/login',    (req, res) => res.sendFile(path.join(ROOT, 'public', 'login.html')));
+tenantRouter.get('/admin',    requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin.html')));
+tenantRouter.get('/admin/users', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-users.html')));
+tenantRouter.get('/admin/org',   requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-org.html')));
+tenantRouter.get('/profile',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'profile.html')));
+tenantRouter.get('/reports',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'reports.html')));
+tenantRouter.get('/division', (req, res) => res.sendFile(path.join(ROOT, 'public', 'division.html')));
+tenantRouter.get('/interview',(req, res) => res.sendFile(path.join(ROOT, 'public', 'interview.html')));
+tenantRouter.get('/review',   (req, res) => res.sendFile(path.join(ROOT, 'public', 'review.html')));
+tenantRouter.get('/examples', (req, res) => res.sendFile(path.join(ROOT, 'public', 'examples.html')));
+tenantRouter.get('/dashboard',(req, res) => res.sendFile(path.join(ROOT, 'public', 'dashboard.html')));
+
+// ============================================================
+// Excel Import / Template Generation (admin only)
+// ============================================================
+function sendWorkbook(res, filename, wb) {
+  const buf = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(buf);
+}
+
+// Build a "ค่าที่ใช้ได้" reference sheet listing current org values so admins
+// can copy-paste exact names instead of guessing/typing them.
+function buildReferenceSheet({ includeRoles }) {
+  const divs = load.divisions();
+  const secs = load.sections();
+  const poss = load.positions();
+  const rows = [
+    ['📋 ค่าที่ใช้ได้ในระบบ — Reference'],
+    ['ใช้ค่าจากตารางนี้ในชีทหลัก เพื่อป้องกันการพิมพ์ผิด — ระบบจะตรวจชื่อให้ตรงกันแบบเป๊ะๆ'],
+    [''],
+  ];
+  if (includeRoles) {
+    rows.push(['Role ที่ใช้ได้ (ใส่ภาษาไทยหรืออังกฤษก็ได้):']);
+    rows.push(['ภาษาอังกฤษ', 'ภาษาไทย']);
+    rows.push(['executive', 'ผู้บริหาร']);
+    rows.push(['manager', 'ผู้จัดการ']);
+    rows.push(['division_head', 'หัวหน้าฝ่าย']);
+    rows.push(['section_head', 'หัวหน้าแผนก']);
+    rows.push(['officer', 'เจ้าหน้าที่']);
+    rows.push(['']);
+  }
+  rows.push([`ฝ่าย (${divs.length} ฝ่าย):`]);
+  if (divs.length === 0) rows.push(['(ยังไม่มีฝ่ายในระบบ — สร้างก่อนใน /admin/org)']);
+  else divs.forEach(d => rows.push([d.name]));
+  rows.push(['']);
+
+  rows.push([`แผนก (${secs.length} แผนก):`]);
+  rows.push(['ฝ่าย', 'แผนก']);
+  if (secs.length === 0) rows.push(['(ยังไม่มีแผนก)']);
+  else {
+    secs.forEach(s => {
+      const div = divs.find(d => d.id === s.division_id);
+      rows.push([div?.name || '?', s.name]);
+    });
+  }
+  rows.push(['']);
+
+  rows.push([`ตำแหน่ง (${poss.length} ตำแหน่ง):`]);
+  rows.push(['ฝ่าย', 'แผนก', 'ตำแหน่ง']);
+  if (poss.length === 0) rows.push(['(ยังไม่มีตำแหน่ง)']);
+  else {
+    poss.forEach(p => {
+      const sec = secs.find(x => x.id === p.section_id);
+      const div = sec ? divs.find(d => d.id === sec.division_id) : null;
+      rows.push([div?.name || '?', sec?.name || '?', p.name]);
+    });
+  }
+  const sheet = xlsx.utils.aoa_to_sheet(rows);
+  sheet['!cols'] = [{ wch: 28 }, { wch: 28 }, { wch: 28 }];
+  return sheet;
+}
+
+// Template downloads — main sheet first, reference sheet second
+tenantRouter.get('/api/admin/import/template/org', requireAdmin, (req, res) => {
+  const wb = xlsx.utils.book_new();
+  const main = xlsx.utils.aoa_to_sheet([
+    ['ฝ่าย', 'แผนก', 'ตำแหน่ง', 'EN (optional)'],
+    ['ฝ่ายขาย', 'แผนกขายส่ง', 'หัวหน้าทีมขายส่ง', 'Wholesale Lead'],
+    ['ฝ่ายขาย', 'แผนกขายส่ง', 'พนักงานขายส่ง', 'Wholesale Rep'],
+    ['ฝ่ายขาย', 'แผนกขายปลีก', 'แคชเชียร์', 'Cashier'],
+    ['ฝ่ายไอที', 'แผนก Support', 'Help Desk', ''],
+  ]);
+  main['!cols'] = [{ wch: 18 }, { wch: 22 }, { wch: 24 }, { wch: 20 }];
+  xlsx.utils.book_append_sheet(wb, main, 'Organization');
+  xlsx.utils.book_append_sheet(wb, buildReferenceSheet({ includeRoles: false }), 'ค่าที่ใช้ได้');
+  sendWorkbook(res, 'template-org.xlsx', wb);
+});
+
+tenantRouter.get('/api/admin/import/template/users', requireAdmin, (req, res) => {
+  const wb = xlsx.utils.book_new();
+  const main = xlsx.utils.aoa_to_sheet([
+    ['Username', 'ชื่อ-นามสกุล', 'Password', 'Role', 'ฝ่าย', 'แผนก', 'ตำแหน่ง', 'เข้างาน', 'ออกงาน', 'เริ่มพัก', 'เลิกพัก'],
+    ['somchai', 'สมชาย ใจดี', 'pw1234', 'officer', 'ฝ่ายขาย', 'แผนกขายส่ง', 'พนักงานขายส่ง', '09:00', '18:00', '12:00', '13:00'],
+    ['somsri', 'สมศรี ขายดี', 'pw1234', 'หัวหน้าแผนก', 'ฝ่ายขาย', 'แผนกขายปลีก', 'แคชเชียร์', '08:30', '17:30', '12:00', '13:00'],
+  ]);
+  main['!cols'] = [
+    { wch: 14 }, { wch: 22 }, { wch: 14 }, { wch: 16 },
+    { wch: 18 }, { wch: 22 }, { wch: 24 },
+    { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 },
+  ];
+  xlsx.utils.book_append_sheet(wb, main, 'Users');
+  xlsx.utils.book_append_sheet(wb, buildReferenceSheet({ includeRoles: true }), 'ค่าที่ใช้ได้');
+  sendWorkbook(res, 'template-users.xlsx', wb);
+});
+
+// Parse uploaded Excel: base64 in req.body.file → array of row objects (uses first sheet)
+function parseUploadedXlsx(req) {
+  const b64 = (req.body || {}).file;
+  if (!b64) throw new Error('ไม่พบไฟล์');
+  const buf = Buffer.from(b64, 'base64');
+  const wb = xlsx.read(buf, { type: 'buffer' });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  return xlsx.utils.sheet_to_json(sheet, { defval: '' });
+}
+
+// Import org structure (Add only — skip duplicates by name within parent)
+tenantRouter.post('/api/admin/import/org', requireAdmin, (req, res) => {
+  let rows;
+  try { rows = parseUploadedXlsx(req); }
+  catch (err) { return res.status(400).json({ error: 'อ่านไฟล์ไม่สำเร็จ: ' + err.message }); }
+
+  const divs = load.divisions();
+  const secs = load.sections();
+  const poss = load.positions();
+  let addedDiv = 0, addedSec = 0, addedPos = 0, skipped = 0;
+  const errors = [];
+
+  rows.forEach((row, idx) => {
+    const r = idx + 2;  // Excel row number (1 = header)
+    const divName = String(row['ฝ่าย'] || row.division || '').trim();
+    const secName = String(row['แผนก'] || row.section || '').trim();
+    const posName = String(row['ตำแหน่ง'] || row.position || '').trim();
+    const enName = String(row['EN (optional)'] || row['EN'] || row.name_en || '').trim();
+
+    if (!divName || !secName || !posName) {
+      errors.push({ row: r, error: 'ต้องมี ฝ่าย/แผนก/ตำแหน่ง ครบ 3 คอลัมน์' });
+      return;
+    }
+
+    let div = divs.find(d => d.name === divName);
+    if (!div) {
+      div = { id: genId('div'), name: divName, name_en: '', icon: '🏢', color: '#3b82f6', created_at: new Date().toISOString() };
+      divs.push(div);
+      addedDiv++;
+    }
+    let sec = secs.find(s => s.name === secName && s.division_id === div.id);
+    if (!sec) {
+      sec = { id: genId('sec'), division_id: div.id, name: secName, name_en: '', created_at: new Date().toISOString() };
+      secs.push(sec);
+      addedSec++;
+    }
+    let pos = poss.find(p => p.name === posName && p.section_id === sec.id);
+    if (!pos) {
+      poss.push({ id: genId('pos'), section_id: sec.id, name: posName, name_en: enName, created_at: new Date().toISOString() });
+      addedPos++;
+    } else {
+      skipped++;
+    }
+  });
+
+  save.divisions(divs);
+  save.sections(secs);
+  save.positions(poss);
+  res.json({ ok: true, addedDiv, addedSec, addedPos, skipped, errorCount: errors.length, errors: errors.slice(0, 20) });
+});
+
+// Import users (Add only — skip duplicate usernames; auto-create emp records)
+const ROLE_ALIASES = {
+  'executive': 'executive',     'ผู้บริหาร': 'executive',
+  'manager': 'manager',         'ผู้จัดการ': 'manager',
+  'division_head': 'division_head', 'หัวหน้าฝ่าย': 'division_head',
+  'section_head': 'section_head',   'หัวหน้าแผนก': 'section_head',
+  'officer': 'officer',         'เจ้าหน้าที่': 'officer',
+};
+tenantRouter.post('/api/admin/import/users', requireAdmin, (req, res) => {
+  let rows;
+  try { rows = parseUploadedXlsx(req); }
+  catch (err) { return res.status(400).json({ error: 'อ่านไฟล์ไม่สำเร็จ: ' + err.message }); }
+
+  const users = load.users();
+  const divs = load.divisions();
+  const secs = load.sections();
+  const poss = load.positions();
+  let added = 0, skipped = 0;
+  const errors = [];
+  const newUsers = [];
+
+  rows.forEach((row, idx) => {
+    const r = idx + 2;
+    const username = String(row['Username'] || row.username || '').trim();
+    const name = String(row['ชื่อ-นามสกุล'] || row['ชื่อ'] || row.name || '').trim();
+    const password = String(row['Password'] || row.password || '').trim();
+    const roleRaw = String(row['Role'] || row.role || '').trim();
+    const divName = String(row['ฝ่าย'] || row.division || '').trim();
+    const secName = String(row['แผนก'] || row.section || '').trim();
+    const posName = String(row['ตำแหน่ง'] || row.position || '').trim();
+    const ws = String(row['เข้างาน'] || row.work_start || '09:00').trim();
+    const we = String(row['ออกงาน'] || row.work_end || '18:00').trim();
+    const bs = String(row['เริ่มพัก'] || row.break_start || '12:00').trim();
+    const be = String(row['เลิกพัก'] || row.break_end || '13:00').trim();
+
+    if (!username || !name || !password || !roleRaw) {
+      errors.push({ row: r, error: 'ต้องใส่ username, ชื่อ, password, role' });
+      return;
+    }
+    if (username === 'admin') {
+      errors.push({ row: r, error: 'ห้ามใช้ username "admin"' });
+      return;
+    }
+    if (users.some(u => u.username === username)) {
+      skipped++;
+      return;
+    }
+    const role = ROLE_ALIASES[roleRaw.toLowerCase()] || ROLE_ALIASES[roleRaw];
+    if (!role) {
+      errors.push({ row: r, error: `role ไม่ถูกต้อง: "${roleRaw}"` });
+      return;
+    }
+    const div = divs.find(d => d.name === divName);
+    if (!div) { errors.push({ row: r, error: `ไม่พบฝ่าย "${divName}"` }); return; }
+    const sec = secs.find(s => s.name === secName && s.division_id === div.id);
+    if (!sec) { errors.push({ row: r, error: `ไม่พบแผนก "${secName}" ในฝ่าย "${divName}"` }); return; }
+    const pos = poss.find(p => p.name === posName && p.section_id === sec.id);
+    if (!pos) { errors.push({ row: r, error: `ไม่พบตำแหน่ง "${posName}" ในแผนก "${secName}"` }); return; }
+
+    const salt = crypto.randomBytes(16).toString('hex');
+    const user = {
+      id: genId('usr'),
+      username, name,
+      password_salt: salt,
+      password_hash: hashPassword(password, salt),
+      role,
+      division_id: div.id, section_id: sec.id, position_id: pos.id,
+      work_start: ws, work_end: we, break_start: bs, break_end: be,
+      scope_override: null,
+      created_at: new Date().toISOString(),
+    };
+    users.push(user);
+    newUsers.push(user);
+    added++;
+  });
+
+  save.users(users);
+  // Auto-create anchor emp records for newly added users
+  for (const u of newUsers) autoCreateEmployeeForUser(u);
+
+  res.json({ ok: true, added, skipped, errorCount: errors.length, errors: errors.slice(0, 20) });
+});
+
+// ============================================================
+// Danger Zone — wipe actions (admin only, requires confirm: "DELETE")
+// ============================================================
+function requireConfirmDelete(req, res, next) {
+  if ((req.body || {}).confirm !== 'DELETE') {
+    return res.status(400).json({ error: 'ต้องส่ง body { "confirm": "DELETE" } เพื่อยืนยัน' });
+  }
+  next();
+}
+function wipeInterviewsFolder() {
+  const dir = ctxDb().intDir;
+  if (!fs.existsSync(dir)) return;
+  for (const f of fs.readdirSync(dir)) {
+    if (f === '.gitkeep') continue;
+    fs.unlinkSync(path.join(dir, f));
+  }
+}
+function wipeOutputsFolder() {
+  const dir = ctxDb().outDir;
+  if (!fs.existsSync(dir)) return;
+  for (const f of fs.readdirSync(dir)) {
+    if (f === '_company') continue;
+    fs.rmSync(path.join(dir, f), { recursive: true, force: true });
+  }
+}
+
+// 1) Wipe all users (archive their emp records — keep org tree + interview history)
+tenantRouter.post('/api/admin/wipe/users', requireAdmin, requireConfirmDelete, (req, res) => {
+  save.users([]);
+  const emps = load.employees();
+  for (const e of emps) {
+    if (!e.archived) {
+      e.archived = true;
+      e.vacated_at = new Date().toISOString();
+      e.vacated_reason = 'mass_user_delete';
+      e.user_id = null;
+    }
+  }
+  save.employees(emps);
+  res.json({ ok: true, message: 'ลบ user ทั้งหมด · emp records ถูก archive ไว้เป็นประวัติ' });
+});
+
+// 2) Wipe org tree (cascade users + emp + interviews)
+tenantRouter.post('/api/admin/wipe/org', requireAdmin, requireConfirmDelete, (req, res) => {
+  save.divisions([]);
+  save.sections([]);
+  save.positions([]);
+  save.users([]);
+  save.employees([]);
+  wipeInterviewsFolder();
+  wipeOutputsFolder();
+  res.json({ ok: true, message: 'ลบโครงสร้างองค์กร + users + emp + interviews · เก็บ admin + ชื่อบริษัท' });
+});
+
+// 3) Wipe interview answers + generated docs (keep users + org + emp records)
+tenantRouter.post('/api/admin/wipe/interviews', requireAdmin, requireConfirmDelete, (req, res) => {
+  wipeInterviewsFolder();
+  wipeOutputsFolder();
+  const emps = load.employees();
+  for (const e of emps) {
+    if (!e.archived) {
+      e.interviewStatus = 'not_started';
+      delete e.completedAt;
+    }
+  }
+  save.employees(emps);
+  res.json({ ok: true, message: 'ลบคำตอบ interview + เอกสาร JD/KPI · reset สถานะเป็น not_started' });
+});
+
+// 4) Wipe everything (factory reset — keep admin password + .secret)
+tenantRouter.post('/api/admin/wipe/all', requireAdmin, requireConfirmDelete, (req, res) => {
+  save.divisions([]);
+  save.sections([]);
+  save.positions([]);
+  save.users([]);
+  save.employees([]);
+  wipeInterviewsFolder();
+  wipeOutputsFolder();
+  save.company({ name: 'บริษัทตัวอย่าง จำกัด', name_en: 'Sample Company Ltd.', updated_at: new Date().toISOString() });
+  res.json({ ok: true, message: 'Factory reset เรียบร้อย · เก็บแค่ admin password' });
+});
+
+// ============================================================
+// Mount tenant subrouter — all /t/:tenantId/* requests now flow through it
+// ============================================================
+app.use('/t/:tenantId', tenantRouter);
+
+// ============================================================
+// Super-admin layer (root-level, NOT scoped to a tenant)
+// ============================================================
+function readSuperAuth() { return readJson(SUPER_AUTH_FILE, { master: '' }); }
+function writeSuperAuth(o) { writeJson(SUPER_AUTH_FILE, o); }
+
+function parseSuperSession(req) {
+  const token = parseCookie(req, 'super_auth');
+  const s = verifyToken(token);
+  return s?.role === 'super' ? s : null;
+}
+function requireSuperAdmin(req, res, next) {
+  const s = parseSuperSession(req);
+  if (!s) {
+    if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'super admin only' });
+    return res.redirect('/super/login');
+  }
+  req.superSession = s;
+  next();
+}
+
+app.post('/api/super/login', (req, res) => {
+  const ip = req.ip || 'unknown';
+  const gate = rlCheck(ip);
+  if (!gate.allowed) {
+    res.setHeader('Retry-After', String(gate.retryAfter));
+    return res.status(429).json({ error: `เข้าสู่ระบบล้มเหลวบ่อยเกินไป — ลองใหม่อีก ${gate.retryAfter} วินาที` });
+  }
+  const { password } = req.body || {};
+  if (!password) return res.status(400).json({ error: 'กรอกรหัสผ่าน' });
+  const auth = readSuperAuth();
+  let ok = false;
+  if (auth.master_hash && auth.master_salt) {
+    ok = verifyPassword(password, auth.master_salt, auth.master_hash);
+  } else if (auth.master) {
+    ok = password === auth.master;
+  }
+  if (!ok) { rlFail(ip); return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' }); }
+  rlOk(ip);
+  const token = signToken({ role: 'super', exp: Date.now() + 7*24*3600*1000 });
+  res.setHeader('Set-Cookie', `super_auth=${token}; Path=/; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=${7*24*3600}`);
+  res.json({ ok: true });
+});
+
+app.post('/api/super/logout', (req, res) => {
+  res.setHeader('Set-Cookie', `super_auth=; Path=/; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=0`);
+  res.json({ ok: true });
+});
+
+app.get('/api/super/me', requireSuperAdmin, (req, res) => res.json({ role: 'super' }));
+
+// List tenants — enriched with user count
+app.get('/api/super/tenants', requireSuperAdmin, (req, res) => {
+  const tenants = loadTenants();
+  const enriched = tenants.map(t => {
+    let userCount = 0;
+    try { userCount = tenantDb(t.id).users().length; } catch {}
+    return { ...t, user_count: userCount };
+  });
+  res.json(enriched);
+});
+
+// Create tenant
+app.post('/api/super/tenants', requireSuperAdmin, (req, res) => {
+  const { id, name, admin_password } = req.body || {};
+  const cleanId = String(id || '').trim().toLowerCase();
+  if (!cleanId || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(cleanId)) {
+    return res.status(400).json({ error: 'tenant id ต้องเป็น a-z, 0-9, ขีดกลาง 1-32 ตัวอักษร เริ่มด้วยตัวอักษร/ตัวเลข' });
+  }
+  if (!name || !String(name).trim()) return res.status(400).json({ error: 'ต้องใส่ชื่อบริษัท' });
+  const tenants = loadTenants();
+  if (tenants.some(t => t.id === cleanId)) return res.status(400).json({ error: 'มี tenant id นี้แล้ว' });
+  const newTenant = { id: cleanId, name: String(name).trim(), created_at: new Date().toISOString() };
+  tenants.push(newTenant);
+  saveTenants(tenants);
+  initTenantFolder(cleanId, admin_password || 'WWN2026!Init');
+  res.json({ ...newTenant, url_path: '/t/' + cleanId });
+});
+
+// Rename tenant
+app.put('/api/super/tenants/:id', requireSuperAdmin, (req, res) => {
+  const tenants = loadTenants();
+  const t = tenants.find(x => x.id === req.params.id);
+  if (!t) return res.status(404).json({ error: 'not found' });
+  if (req.body.name !== undefined) t.name = String(req.body.name).trim();
+  t.updated_at = new Date().toISOString();
+  saveTenants(tenants);
+  res.json(t);
+});
+
+// Delete tenant + all its data (irreversible)
+app.delete('/api/super/tenants/:id', requireSuperAdmin, (req, res) => {
+  if ((req.body || {}).confirm !== 'DELETE') {
+    return res.status(400).json({ error: 'ต้องส่ง confirm: "DELETE"' });
+  }
+  const tenants = loadTenants();
+  const idx = tenants.findIndex(x => x.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  tenants.splice(idx, 1);
+  saveTenants(tenants);
+  const dir = path.join(TENANT_DATA_DIR, req.params.id);
+  if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+  const out = path.join(TENANT_OUTPUT_DIR, req.params.id);
+  if (fs.existsSync(out)) fs.rmSync(out, { recursive: true, force: true });
+  res.json({ ok: true });
+});
+
+// Rename tenant URL ID (the slug, e.g. companya → wanwanach)
+// Moves data/tenants/<old>/ → data/tenants/<new>/ and outputs likewise.
+app.post('/api/super/tenants/:id/rename-id', requireSuperAdmin, (req, res) => {
+  const oldId = req.params.id;
+  const cleanNew = String((req.body || {}).new_id || '').trim().toLowerCase();
+  if (!cleanNew || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(cleanNew)) {
+    return res.status(400).json({ error: 'URL ID ต้องเป็น a-z, 0-9, ขีดกลาง 1-32 ตัวอักษร เริ่มด้วยตัวอักษร/ตัวเลข' });
+  }
+  if (cleanNew === oldId) return res.status(400).json({ error: 'URL ID ใหม่เหมือนเดิม' });
+  const tenants = loadTenants();
+  if (tenants.some(t => t.id === cleanNew)) return res.status(400).json({ error: 'มี URL ID นี้แล้ว' });
+  const t = tenants.find(x => x.id === oldId);
+  if (!t) return res.status(404).json({ error: 'not found' });
+
+  const oldDir = path.join(TENANT_DATA_DIR, oldId);
+  const newDir = path.join(TENANT_DATA_DIR, cleanNew);
+  const oldOut = path.join(TENANT_OUTPUT_DIR, oldId);
+  const newOut = path.join(TENANT_OUTPUT_DIR, cleanNew);
+  try {
+    if (fs.existsSync(oldDir)) fs.renameSync(oldDir, newDir);
+    if (fs.existsSync(oldOut)) fs.renameSync(oldOut, newOut);
+  } catch (err) {
+    return res.status(500).json({ error: 'ย้ายโฟลเดอร์ไม่สำเร็จ: ' + err.message });
+  }
+  t.id = cleanNew;
+  t.previous_id = oldId;
+  t.renamed_at = new Date().toISOString();
+  saveTenants(tenants);
+  // All existing tenant cookies become invalid (Path mismatch + tenant_id mismatch
+  // in the signed payload) — users will be sent back to login on the new URL.
+  res.json({ ok: true, old_id: oldId, new_id: cleanNew, new_url: '/t/' + cleanNew });
+});
+
+// Reset tenant admin password
+app.post('/api/super/tenants/:id/reset-admin-password', requireSuperAdmin, (req, res) => {
+  const t = findTenant(req.params.id);
+  if (!t) return res.status(404).json({ error: 'not found' });
+  const { password } = req.body || {};
+  if (!password || password.length < 6) return res.status(400).json({ error: 'รหัสใหม่ต้องยาวอย่างน้อย 6 ตัว' });
+  const db = tenantDb(req.params.id);
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = hashPassword(password, salt);
+  db.saveAuth({ master_salt: salt, master_hash: hash, updated_at: new Date().toISOString() });
+  res.json({ ok: true });
+});
+
+// Change super-admin password
+app.put('/api/super/password', requireSuperAdmin, (req, res) => {
+  const { password } = req.body || {};
+  if (!password || password.length < 6) return res.status(400).json({ error: 'รหัสใหม่ต้องยาวอย่างน้อย 6 ตัว' });
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = hashPassword(password, salt);
+  writeSuperAuth({ master_salt: salt, master_hash: hash, updated_at: new Date().toISOString() });
+  res.json({ ok: true });
+});
+
+// Super-admin pages
+app.get('/super/login',   (req, res) => res.sendFile(path.join(ROOT, 'public', 'super-login.html')));
+app.get('/super',         requireSuperAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'super-tenants.html')));
+app.get('/super/tenants', requireSuperAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'super-tenants.html')));
+
+// Root → super-admin
+app.get('/', (req, res) => {
+  if (parseSuperSession(req)) return res.redirect('/super');
+  return res.redirect('/super/login');
+});
 
 app.listen(PORT, () => {
-  console.log(`\n🚀 HR-WWN running at http://localhost:${PORT}\n`);
-  console.log(`   master admin login → username: admin / password: (see data/auth.json)\n`);
+  console.log(`\n🚀 HR-Interview (multi-tenant) running at http://localhost:${PORT}\n`);
+  console.log(`   super-admin login → http://localhost:${PORT}/super/login`);
+  console.log(`   default password   → super!2026 (change after first login)\n`);
 
-  // Optional: open the default browser to the app on startup.
-  // Set AUTO_OPEN_BROWSER=true (2-START.bat does this). More reliable than
-  // doing it from cmd because Node can exec the OS-native command directly.
+  // Optional: open the default browser to the super-admin login on startup.
   if (process.env.AUTO_OPEN_BROWSER === 'true') {
     setTimeout(() => {
-      const url = `http://localhost:${PORT}`;
+      const url = `http://localhost:${PORT}/super/login`;
       const cmd = process.platform === 'win32' ? `start "" "${url}"`
                 : process.platform === 'darwin' ? `open "${url}"`
                 : `xdg-open "${url}"`;

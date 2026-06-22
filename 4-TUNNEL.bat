@@ -1,11 +1,11 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-title HR-WWN - Online Tunnel
+title HR-Interview - Online Tunnel
 
 echo.
 echo =========================================================
-echo   HR-WWN  -  เปิดให้คนนอกใช้งานผ่าน Internet
+echo   HR-Interview  -  เปิดให้คนนอกใช้งานผ่าน Internet
 echo =========================================================
 echo.
 
@@ -32,7 +32,7 @@ echo กำลังตรวจสอบเซิร์ฟเวอร์ที
 curl -s -o nul -w "%%{http_code}" http://localhost:3000/login >nul 2>nul
 if errorlevel 1 (
     echo.
-    echo [!] เซิร์ฟเวอร์ HR-WWN ยังไม่ได้รัน
+    echo [!] เซิร์ฟเวอร์ HR-Interview ยังไม่ได้รัน
     echo     เปิด  2-START.bat  ก่อน แล้วค่อยมาเปิด 4-TUNNEL.bat
     echo.
     pause

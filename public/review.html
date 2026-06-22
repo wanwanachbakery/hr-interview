@@ -3,19 +3,91 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>ผลลัพธ์ | HR-WWN</title>
+  <title>ผลลัพธ์ | HR-Interview</title>
   <link rel="stylesheet" href="/styles.css"/>
   <link rel="icon" type="image/png" href="/logo.png"/>
   <script src="/i18n.js"></script>
+<script>
+  // Multi-tenant: derive /t/{tenantId} prefix from URL and apply to <a href="/...">
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  // Date helpers — Christian Era (ค.ศ.), DD/MM/YYYY, 24-hour HH:MM
+  window.formatDate = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear();
+  };
+  window.formatTime = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getHours()) + ':' + p(d.getMinutes());
+  };
+  window.formatDateTime = (iso) => {
+    if (!iso) return '';
+    const d = window.formatDate(iso), t = window.formatTime(iso);
+    return d && t ? d + ' ' + t : (d || t);
+  };
+  function shouldPrefix(href) {
+    return href && href.startsWith('/')
+      && !href.startsWith('/t/') && !href.startsWith('/super')
+      && !href.startsWith('/styles') && !href.startsWith('/logo')
+      && !href.startsWith('/i18n') && !href.startsWith('/favicon');
+  }
+  function rewriteLinks(root) {
+    if (!window.TBASE || !root) return;
+    // Self — handles addedNodes that ARE the <a> (e.g. innerHTML="<a>...</a>").
+    // Only Element nodes have tagName; Document (nodeType 9) doesn't but still has querySelectorAll.
+    if (root.nodeType === 1 && root.tagName === 'A' && shouldPrefix(root.getAttribute('href'))) {
+      root.setAttribute('href', window.TBASE + root.getAttribute('href'));
+    }
+    // Descendants — both Document and Element expose querySelectorAll
+    if (typeof root.querySelectorAll === 'function') {
+      root.querySelectorAll('a[href^="/"]').forEach(a => {
+        const h = a.getAttribute('href');
+        if (shouldPrefix(h)) a.setAttribute('href', window.TBASE + h);
+      });
+    }
+  }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    // Catch links inserted later via innerHTML/appendChild
+    new MutationObserver(muts => {
+      for (const m of muts) {
+        // m.target is the element whose children changed — re-scan its subtree
+        rewriteLinks(m.target);
+        // m.addedNodes are the new direct children — also scan each (handles self-A case)
+        for (const node of m.addedNodes) rewriteLinks(node);
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+    // Show tenant company name in topbar (next to the HR-Interview brand)
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span');
+      span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      span.textContent = '...';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => {
+        span.textContent = c && c.name ? c.name : '';
+        if (!c || !c.name) span.style.display = 'none';
+      }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
 </head>
 <body>
 <div class="container">
   <div class="topbar">
-    <div class="logo"><span>HR-WWN</span></div>
+    <div class="logo"><span>HR-Interview</span></div>
     <nav>
       <a href="/" data-i18n="nav_home">หน้าแรก</a>
       <a href="/examples" data-i18n="nav_examples">📘 ตัวอย่าง</a>
-      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;" data-i18n="nav_logout">ออกจากระบบ</a>
+      <a href="/dashboard">📋 Dashboard</a>
+      <a href="#" onclick="(async()=>{await fetch(TBASE + '/api/logout',{method:'POST'});location.href = TBASE + '/login';})();return false;" data-i18n="nav_logout">ออกจากระบบ</a>
     </nav>
   </div>
 
@@ -52,18 +124,19 @@
 <script>
 const qs = new URLSearchParams(location.search);
 const id = qs.get('id');
-if (!id) location.href = '/';
+if (!id) location.href = TBASE + '/';
 
 const T = (k, v) => (window.I18N ? window.I18N.t(k, v) : k);
 function esc(s){return String(s||'').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
 
 ['workflow.md','workflow.csv','workflow-diagram.md','job-description.md','kpi.md','optimization.md']
-  .forEach((f,i) => document.getElementById('f'+(i+1)).href = `/api/outputs/${id}/${f}`);
+  .forEach((f,i) => document.getElementById('f'+(i+1)).href = `${TBASE}/api/outputs/${id}/${f}`);
 
-fetch(`/api/interview/${id}`).then(r=>r.json()).then(iv => {
+fetch(`${TBASE}/api/interview/${id}`).then(r=>r.json()).then(iv => {
   const e = iv.employee;
   document.getElementById('title').textContent = T('rv_heading_tpl', { name: e.name });
-  document.getElementById('sub').textContent = `${e.role} · ${e.department || ''} · ${new Date(iv.finishedAt || iv.startedAt).toLocaleString()}`;
+  // DD/MM/YYYY HH:MM (ค.ศ., 24h) via the global formatDateTime helper
+  document.getElementById('sub').textContent = `${e.role} · ${e.department || ''} · ${formatDateTime(iv.finishedAt || iv.startedAt)}`;
 
   const rows = iv.answers.map(a => `
     <div style="padding:10px 0; border-bottom:1px solid #e2e8f0;">

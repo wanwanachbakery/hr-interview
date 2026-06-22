@@ -1,11 +1,11 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-title HR-WWN - Server
+title HR-Interview - Server
 
 echo.
 echo =========================================================
-echo   HR-WWN  -  เริ่มใช้งานระบบ
+echo   HR-Interview  -  เริ่มใช้งานระบบ
 echo =========================================================
 echo.
 

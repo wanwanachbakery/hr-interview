@@ -33,7 +33,7 @@ async function expectFail(method, path, body, label, expectStatus) {
 
 (async () => {
   console.log('\n[1] Admin login');
-  await expectOk('POST', '/api/login', { username: 'admin', password: 'JC2026!Init' }, 'login admin');
+  await expectOk('POST', '/api/login', { username: 'admin', password: 'WWN2026!Init' }, 'login admin');
 
   console.log('\n[2] Verify migrated emp records');
   const emps = await expectOk('GET', '/api/employees', null, 'list employees');
@@ -76,7 +76,7 @@ async function expectFail(method, path, body, label, expectStatus) {
   // Find another emp by listing as admin (separate session)
   let othersCookie = cookie;
   cookie = '';
-  await expectOk('POST', '/api/login', { username: 'admin', password: 'JC2026!Init' }, 'login admin');
+  await expectOk('POST', '/api/login', { username: 'admin', password: 'WWN2026!Init' }, 'login admin');
   const allEmps = await expectOk('GET', '/api/employees', null, 'admin list emps');
   const maliEmp = allEmps.find(e => e.name.includes('มะลิ'));
   cookie = othersCookie;  // back to testuser1
@@ -88,7 +88,7 @@ async function expectFail(method, path, body, label, expectStatus) {
 
   console.log('\n[7] Admin moves testuser1 to a different position → archive + new emp');
   cookie = '';
-  await expectOk('POST', '/api/login', { username: 'admin', password: 'JC2026!Init' }, 'login admin');
+  await expectOk('POST', '/api/login', { username: 'admin', password: 'WWN2026!Init' }, 'login admin');
   const otherPos = poss.find(p => p.section_id === candySec.id && p.id !== candyPos.id);
   if (otherPos) {
     await expectOk('PUT', `/api/users/${newUser.id}`, {

@@ -15,6 +15,14 @@
 
 const pad = (n) => String(n).padStart(2, '0');
 
+// Format a date as DD/MM/YYYY HH:MM in Christian Era (ค.ศ.), not Buddhist Era.
+// Used in generated document headers so dates match the rest of the app.
+function fmtDateTime(input) {
+  const d = input ? new Date(input) : new Date();
+  if (isNaN(d.getTime())) return '';
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 // ============================================================
 // 0) Schedules
 // ============================================================
@@ -489,7 +497,7 @@ ${t.hours.length
 
   return `# Workflow: ${e.name}
 
-> สร้างจากการอินเทอร์วิวอัตโนมัติเมื่อ ${new Date(interview.finishedAt || Date.now()).toLocaleString('th-TH')}
+> สร้างจากการอินเทอร์วิวอัตโนมัติเมื่อ ${fmtDateTime(interview.finishedAt)}
 
 ## ข้อมูลพนักงาน
 - **ชื่อ:** ${e.name}
@@ -889,7 +897,7 @@ function analyzeCompany(interviews) {
 
   return `# รายงานวิเคราะห์ภาพรวมบริษัท — Optimization
 
-> รวบรวมจากอินเทอร์วิว ${total} คน · สร้างเมื่อ ${new Date().toLocaleString('th-TH')}
+> รวบรวมจากอินเทอร์วิว ${total} คน · สร้างเมื่อ ${fmtDateTime()}
 
 ## ความครอบคลุมรายฝ่าย
 ${divSection || '(ไม่มีข้อมูล)'}

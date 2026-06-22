@@ -1,11 +1,11 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-title HR-WWN - Named Tunnel Setup (one-time)
+title HR-Interview - Named Tunnel Setup (one-time)
 
 echo.
 echo =========================================================
-echo   HR-WWN  -  ตั้งค่า Tunnel แบบ URL ถาวร (ทำครั้งเดียว)
+echo   HR-Interview  -  ตั้งค่า Tunnel แบบ URL ถาวร (ทำครั้งเดียว)
 echo =========================================================
 echo.
 echo สิ่งที่ต้องมีก่อนเริ่ม:

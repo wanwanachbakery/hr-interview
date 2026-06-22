@@ -24,7 +24,7 @@ async function api(method, p, body) {
   // Login as pim — set custom hours first, then start interview
   console.log('1) Login as admin, set pim hours to 08:30-17:00, break 12-13');
   cookie = '';
-  await api('POST', '/api/login', { username: 'admin', password: 'JC2026!Init' });
+  await api('POST', '/api/login', { username: 'admin', password: 'WWN2026!Init' });
   const users = await api('GET', '/api/users');
   const pim = users.find(u => u.username === 'pim');
   if (!pim) throw new Error('pim not found');

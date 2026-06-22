@@ -1,11 +1,11 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-title HR-WWN - Build Distribution Package
+title HR-Interview - Build Distribution Package
 
 echo.
 echo =========================================================
-echo   HR-WWN  -  Build Distribution Package
+echo   HR-Interview  -  Build Distribution Package
 echo =========================================================
 echo.
 echo This script copies the project to a fresh folder, removes
@@ -23,7 +23,7 @@ if "%DT%"=="" (
 ) else (
     set TIMESTAMP=%DT:~0,4%-%DT:~4,2%-%DT:~6,2%
 )
-set OUT=..\HR-WWN-Package_%TIMESTAMP%
+set OUT=..\HR-Interview-Package_%TIMESTAMP%
 
 echo Output folder:  %OUT%
 echo.

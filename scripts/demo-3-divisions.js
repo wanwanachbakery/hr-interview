@@ -102,7 +102,7 @@ const USERS = [
   console.log('  ✓ company / divisions / sections / positions / users / employees / interviews / outputs cleared');
 
   line('Step 2: login admin');
-  await login('admin', 'JC2026!Init');
+  await login('admin', 'WWN2026!Init');
 
   line('Step 3: set company');
   await api('PUT', '/api/company', ORG.company);
@@ -198,7 +198,7 @@ const USERS = [
   console.log(`  ✓ noi ตอบ ${nn} คำถามแล้ว (in_progress)`);
 
   line('Step 9: final state (admin view)');
-  await login('admin', 'JC2026!Init');
+  await login('admin', 'WWN2026!Init');
   const finalEmps = await api('GET', '/api/employees');
   console.log(`  Total active emp: ${finalEmps.length}`);
   for (const e of finalEmps) {
@@ -212,7 +212,7 @@ const USERS = [
 
   console.log('\n🎉 DEMO SETUP COMPLETE');
   console.log('\nLogins to try in the browser at http://localhost:3000:');
-  console.log('  admin   / JC2026!Init   → /admin');
+  console.log('  admin   / WWN2026!Init   → /admin');
   console.log('  somsak  / pw1234        → manager ฝ่ายขาย');
   console.log('  thida   / pw1234        → officer (interview เสร็จแล้ว → ดูเอกสารได้)');
   console.log('  arnon   / pw1234        → manager ฝ่ายไอที');

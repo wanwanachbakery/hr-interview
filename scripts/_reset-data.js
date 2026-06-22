@@ -25,7 +25,7 @@ fs.writeFileSync(path.join(d, 'users.json'), '[]\n');
 fs.writeFileSync(path.join(d, 'employees.json'), '[]\n');
 fs.writeFileSync(
   path.join(d, 'auth.json'),
-  JSON.stringify({ master: 'JC2026!Init' }, null, 2) + '\n'
+  JSON.stringify({ master: 'WWN2026!Init' }, null, 2) + '\n'
 );
 
 const iv = path.join(d, 'interviews');

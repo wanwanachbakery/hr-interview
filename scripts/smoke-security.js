@@ -14,7 +14,7 @@ async function loginRaw(username, password) {
 
 (async () => {
   console.log('\n[1] Login with hashed master password — should still work');
-  const ok = await loginRaw('admin', 'JC2026!Init');
+  const ok = await loginRaw('admin', 'WWN2026!Init');
   console.log(`  status: ${ok.status}`);
   if (ok.status !== 200) throw new Error('login should succeed after hash migration');
   const setCookie = ok.headers.get('set-cookie') || '';
@@ -31,7 +31,7 @@ async function loginRaw(username, password) {
   if (r6.status !== 429) throw new Error(`expected 429, got ${r6.status}`);
 
   console.log('\n[3] Even correct password is rate-limited during block');
-  const blocked = await loginRaw('admin', 'JC2026!Init');
+  const blocked = await loginRaw('admin', 'WWN2026!Init');
   console.log(`  status: ${blocked.status}`);
   if (blocked.status !== 429) throw new Error(`expected 429 during block, got ${blocked.status}`);
 

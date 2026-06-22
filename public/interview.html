@@ -3,19 +3,91 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>อินเทอร์วิว | HR-WWN</title>
+  <title>อินเทอร์วิว | HR-Interview</title>
   <link rel="stylesheet" href="/styles.css"/>
   <link rel="icon" type="image/png" href="/logo.png"/>
   <script src="/i18n.js"></script>
+<script>
+  // Multi-tenant: derive /t/{tenantId} prefix from URL and apply to <a href="/...">
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  // Date helpers — Christian Era (ค.ศ.), DD/MM/YYYY, 24-hour HH:MM
+  window.formatDate = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear();
+  };
+  window.formatTime = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getHours()) + ':' + p(d.getMinutes());
+  };
+  window.formatDateTime = (iso) => {
+    if (!iso) return '';
+    const d = window.formatDate(iso), t = window.formatTime(iso);
+    return d && t ? d + ' ' + t : (d || t);
+  };
+  function shouldPrefix(href) {
+    return href && href.startsWith('/')
+      && !href.startsWith('/t/') && !href.startsWith('/super')
+      && !href.startsWith('/styles') && !href.startsWith('/logo')
+      && !href.startsWith('/i18n') && !href.startsWith('/favicon');
+  }
+  function rewriteLinks(root) {
+    if (!window.TBASE || !root) return;
+    // Self — handles addedNodes that ARE the <a> (e.g. innerHTML="<a>...</a>").
+    // Only Element nodes have tagName; Document (nodeType 9) doesn't but still has querySelectorAll.
+    if (root.nodeType === 1 && root.tagName === 'A' && shouldPrefix(root.getAttribute('href'))) {
+      root.setAttribute('href', window.TBASE + root.getAttribute('href'));
+    }
+    // Descendants — both Document and Element expose querySelectorAll
+    if (typeof root.querySelectorAll === 'function') {
+      root.querySelectorAll('a[href^="/"]').forEach(a => {
+        const h = a.getAttribute('href');
+        if (shouldPrefix(h)) a.setAttribute('href', window.TBASE + h);
+      });
+    }
+  }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    // Catch links inserted later via innerHTML/appendChild
+    new MutationObserver(muts => {
+      for (const m of muts) {
+        // m.target is the element whose children changed — re-scan its subtree
+        rewriteLinks(m.target);
+        // m.addedNodes are the new direct children — also scan each (handles self-A case)
+        for (const node of m.addedNodes) rewriteLinks(node);
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+    // Show tenant company name in topbar (next to the HR-Interview brand)
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span');
+      span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      span.textContent = '...';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => {
+        span.textContent = c && c.name ? c.name : '';
+        if (!c || !c.name) span.style.display = 'none';
+      }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
 </head>
 <body>
 <div class="container">
   <div class="topbar">
-    <div class="logo"><span>HR-WWN</span></div>
+    <div class="logo"><span>HR-Interview</span></div>
     <nav>
       <a href="/" data-i18n="nav_home">หน้าแรก</a>
       <a href="/examples" target="_blank" data-i18n="nav_examples">📘 ตัวอย่าง</a>
-      <a href="#" onclick="(async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login';})();return false;" data-i18n="nav_logout">ออกจากระบบ</a>
+      <a href="/dashboard">📋 Dashboard</a>
+      <a href="#" onclick="(async()=>{await fetch(TBASE + '/api/logout',{method:'POST'});location.href = TBASE + '/login';})();return false;" data-i18n="nav_logout">ออกจากระบบ</a>
     </nav>
   </div>
 
@@ -69,7 +141,7 @@
 <script>
 const qs = new URLSearchParams(location.search);
 const empId = qs.get('id');
-if (!empId) { location.href = '/'; }
+if (!empId) { location.href = TBASE + '/'; }
 
 const T = (k, v) => (window.I18N ? window.I18N.t(k, v) : k);
 
@@ -107,7 +179,7 @@ function updateProgress() {
 async function renderMyHours() {
   const box = document.getElementById('my-hours-box');
   try {
-    const me = await fetch('/api/me/profile').then(r => r.json());
+    const me = await fetch(TBASE + '/api/me/profile').then(r => r.json());
     if (!me || !me.work_start) {
       box.innerHTML = '<span style="color:#b91c1c;">ไม่พบเวลาทำงานในโปรไฟล์ — ติดต่อ admin</span>';
       return;
@@ -126,7 +198,7 @@ async function renderMyHours() {
 
 // ---------- Start flow ----------
 async function fetchInterview(body) {
-  const r = await fetch(`/api/interview/${empId}/start`, {
+  const r = await fetch(`${TBASE}/api/interview/${empId}/start`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
@@ -221,7 +293,7 @@ document.getElementById('skip-btn').addEventListener('click', async () => {
 async function sendAnswer(value, skipProbe) {
   addMsg('user', value);
   answerEl.value = '';
-  const r = await fetch(`/api/interview/${empId}/message`, {
+  const r = await fetch(`${TBASE}/api/interview/${empId}/message`, {
     method: 'POST',
     headers: {'content-type':'application/json'},
     body: JSON.stringify({ key: currentKey, value, skipProbe }),
@@ -248,8 +320,8 @@ answerEl.addEventListener('keydown', (e) => {
 document.getElementById('finish-btn').addEventListener('click', async () => {
   const btn = document.getElementById('finish-btn');
   btn.disabled = true; btn.textContent = T('iv_done_generating');
-  const r = await fetch(`/api/interview/${empId}/finish`, { method: 'POST' });
-  if (r.ok) location.href = `/review?id=${empId}`;
+  const r = await fetch(`${TBASE}/api/interview/${empId}/finish`, { method: 'POST' });
+  if (r.ok) location.href = `${TBASE}/review?id=${empId}`;
   else { alert(T('iv_error')); btn.disabled = false; btn.textContent = T('iv_done_btn'); }
 });
 

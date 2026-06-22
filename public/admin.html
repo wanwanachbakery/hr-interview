@@ -3,15 +3,86 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Admin | HR-WWN</title>
+  <title>Admin | HR-Interview</title>
   <link rel="stylesheet" href="/styles.css"/>
   <link rel="icon" type="image/png" href="/logo.png"/>
+<script>
+  // Multi-tenant: derive /t/{tenantId} prefix from URL and apply to <a href="/...">
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  // Date helpers — Christian Era (ค.ศ.), DD/MM/YYYY, 24-hour HH:MM
+  window.formatDate = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear();
+  };
+  window.formatTime = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getHours()) + ':' + p(d.getMinutes());
+  };
+  window.formatDateTime = (iso) => {
+    if (!iso) return '';
+    const d = window.formatDate(iso), t = window.formatTime(iso);
+    return d && t ? d + ' ' + t : (d || t);
+  };
+  function shouldPrefix(href) {
+    return href && href.startsWith('/')
+      && !href.startsWith('/t/') && !href.startsWith('/super')
+      && !href.startsWith('/styles') && !href.startsWith('/logo')
+      && !href.startsWith('/i18n') && !href.startsWith('/favicon');
+  }
+  function rewriteLinks(root) {
+    if (!window.TBASE || !root) return;
+    // Self — handles addedNodes that ARE the <a> (e.g. innerHTML="<a>...</a>").
+    // Only Element nodes have tagName; Document (nodeType 9) doesn't but still has querySelectorAll.
+    if (root.nodeType === 1 && root.tagName === 'A' && shouldPrefix(root.getAttribute('href'))) {
+      root.setAttribute('href', window.TBASE + root.getAttribute('href'));
+    }
+    // Descendants — both Document and Element expose querySelectorAll
+    if (typeof root.querySelectorAll === 'function') {
+      root.querySelectorAll('a[href^="/"]').forEach(a => {
+        const h = a.getAttribute('href');
+        if (shouldPrefix(h)) a.setAttribute('href', window.TBASE + h);
+      });
+    }
+  }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    // Catch links inserted later via innerHTML/appendChild
+    new MutationObserver(muts => {
+      for (const m of muts) {
+        // m.target is the element whose children changed — re-scan its subtree
+        rewriteLinks(m.target);
+        // m.addedNodes are the new direct children — also scan each (handles self-A case)
+        for (const node of m.addedNodes) rewriteLinks(node);
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+    // Show tenant company name in topbar (next to the HR-Interview brand)
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span');
+      span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      span.textContent = '...';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => {
+        span.textContent = c && c.name ? c.name : '';
+        if (!c || !c.name) span.style.display = 'none';
+      }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
 </head>
 <body>
 <div class="container">
   <div class="topbar">
     <div class="logo">
-      <span>HR-WWN</span>
+      <span>HR-Interview</span>
       <span class="pill blue" style="font-size:11px;">ADMIN</span>
     </div>
     <nav>
@@ -19,6 +90,7 @@
       <a href="/admin/org">🏢 องค์กร</a>
       <a href="/admin/users">👥 ผู้ใช้</a>
       <a href="/reports">📊 รายงาน</a>
+      <a href="/dashboard">📋 Dashboard</a>
       <a href="#" onclick="logout();return false;">ออกจากระบบ</a>
     </nav>
   </div>
@@ -38,9 +110,9 @@
       <div class="meta">เพิ่ม / แก้ไข / ลบ user · กำหนดสิทธิ์</div>
     </a>
     <a href="/dashboard" class="div-card" style="border-top-color:#ec4899;">
-      <div class="icon">🎤</div>
-      <div class="name">อินเทอร์วิว + JD/KPI</div>
-      <div class="meta">เพิ่มพนักงาน · สัมภาษณ์ · วิเคราะห์รวมบริษัท</div>
+      <div class="icon">📋</div>
+      <div class="name">Dashboard</div>
+      <div class="meta">ดูสถานะ interview · จัดการพนักงาน</div>
     </a>
     <a href="/reports" class="div-card" style="border-top-color:#8b5cf6;">
       <div class="icon">📊</div>
@@ -52,6 +124,34 @@
       <div class="name">รหัส Master Admin</div>
       <div class="meta">ดู / เปลี่ยนรหัสผ่านผู้ดูแลระบบ</div>
     </a>
+  </div>
+
+  <!-- Danger Zone -->
+  <div class="card" style="margin-top:24px; background:#fef2f2; border-color:#fecaca;">
+    <h2 style="margin-top:0; color:#991b1b;">🛑 Danger Zone — ลบข้อมูล</h2>
+    <p class="sub">แต่ละปุ่มจะถามยืนยันก่อนลบ · ลบแล้วกู้ไม่ได้ (ใช้ <code>3-BACKUP.bat</code> สำรองข้อมูลก่อน)</p>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:12px; margin-top:8px;">
+      <div style="background:#fff; border:1px solid #fecaca; border-radius:8px; padding:14px;">
+        <div style="font-weight:600; margin-bottom:4px;">1️⃣ ลบ User ทั้งหมด</div>
+        <div class="sub" style="font-size:13px; margin-bottom:8px;">เคลียร์ user รายคน · emp records ถูก archive · เก็บ ฝ่าย/แผนก/ตำแหน่ง + ประวัติ interview</div>
+        <button class="ghost" style="color:#991b1b; border-color:#fca5a5;" onclick="wipe('users', 'User ทั้งหมด')">🗑 ลบ User</button>
+      </div>
+      <div style="background:#fff; border:1px solid #fecaca; border-radius:8px; padding:14px;">
+        <div style="font-weight:600; margin-bottom:4px;">2️⃣ ลบ ฝ่าย/แผนก/ตำแหน่ง</div>
+        <div class="sub" style="font-size:13px; margin-bottom:8px;">เคลียร์โครงสร้างองค์กร + cascade ลบ user + emp + interviews ด้วย (เพราะอ้างอิงกัน)</div>
+        <button class="ghost" style="color:#991b1b; border-color:#fca5a5;" onclick="wipe('org', 'ฝ่าย/แผนก/ตำแหน่ง (และ user/emp/interview ทั้งหมด)')">🗑 ลบโครงสร้างองค์กร</button>
+      </div>
+      <div style="background:#fff; border:1px solid #fecaca; border-radius:8px; padding:14px;">
+        <div style="font-weight:600; margin-bottom:4px;">3️⃣ ลบข้อมูลที่ User กรอก</div>
+        <div class="sub" style="font-size:13px; margin-bottom:8px;">เคลียร์เฉพาะคำตอบ interview + เอกสาร JD/KPI · reset emp status เป็น not_started · เก็บ user + org</div>
+        <button class="ghost" style="color:#991b1b; border-color:#fca5a5;" onclick="wipe('interviews', 'คำตอบ interview + เอกสาร JD/KPI ทั้งหมด')">🗑 ลบ Interview Answers</button>
+      </div>
+      <div style="background:#fff; border:1px solid #fecaca; border-radius:8px; padding:14px;">
+        <div style="font-weight:600; margin-bottom:4px;">4️⃣ ลบข้อมูลทั้งหมด</div>
+        <div class="sub" style="font-size:13px; margin-bottom:8px;">Factory reset · เคลียร์ทุกอย่าง · เก็บแค่ admin password</div>
+        <button class="ghost" style="color:#991b1b; border-color:#fca5a5;" onclick="wipe('all', 'ทุกอย่าง (Factory Reset)')">🗑 ลบทั้งหมด</button>
+      </div>
+    </div>
   </div>
 
   <div class="card" style="margin-top:24px;">
@@ -68,15 +168,15 @@
 
 <script>
 async function logout() {
-  await fetch('/api/logout', { method: 'POST' });
-  location.href = '/login';
+  await fetch(TBASE + '/api/logout', { method: 'POST' });
+  location.href = TBASE + '/login';
 }
 
 async function changeMaster() {
   const pw = prompt('กรอกรหัสผ่าน master ใหม่ (อย่างน้อย 6 ตัวอักษร):\n\nหมายเหตุ: รหัสปัจจุบันถูก hash ไว้ (ดูไม่ได้) — ลืมรหัสต้องแก้ data/auth.json โดยตรง');
   if (!pw) return;
   if (pw.length < 6) { alert('รหัสต้องยาวอย่างน้อย 6 ตัวอักษร'); return; }
-  const r = await fetch('/api/admin/auth', {
+  const r = await fetch(TBASE + '/api/admin/auth', {
     method: 'PUT', headers: {'content-type':'application/json'},
     body: JSON.stringify({ master: pw }),
   });
@@ -88,13 +188,31 @@ async function changeMaster() {
   alert('เปลี่ยนรหัสสำเร็จ — ครั้งหน้าใช้รหัสใหม่ login');
 }
 
+async function wipe(kind, label) {
+  if (!confirm(`คุณกำลังจะลบ: ${label}\n\nลบแล้วกู้ไม่ได้! ดำเนินการต่อ?`)) return;
+  const typed = prompt(`พิมพ์คำว่า DELETE (ตัวพิมพ์ใหญ่) เพื่อยืนยันการลบ:`);
+  if (typed !== 'DELETE') { alert('ยกเลิก'); return; }
+  try {
+    const r = await fetch(TBASE + '/api/admin/wipe/' + kind, {
+      method: 'POST', headers: {'content-type':'application/json'},
+      body: JSON.stringify({ confirm: 'DELETE' }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'unknown');
+    alert('✓ ' + data.message);
+    location.reload();
+  } catch (err) {
+    alert('✗ ผิดพลาด: ' + err.message);
+  }
+}
+
 (async function summary() {
   const [co, divs, secs, poss, usrs] = await Promise.all([
-    fetch('/api/company').then(r => r.json()),
-    fetch('/api/divisions').then(r => r.json()),
-    fetch('/api/sections').then(r => r.json()),
-    fetch('/api/positions').then(r => r.json()),
-    fetch('/api/users').then(r => r.json()),
+    fetch(TBASE + '/api/company').then(r => r.json()),
+    fetch(TBASE + '/api/divisions').then(r => r.json()),
+    fetch(TBASE + '/api/sections').then(r => r.json()),
+    fetch(TBASE + '/api/positions').then(r => r.json()),
+    fetch(TBASE + '/api/users').then(r => r.json()),
   ]);
   document.getElementById('s-co').textContent = co.name || '(ยังไม่ตั้งค่า)';
   document.getElementById('s-div').textContent = divs.length;

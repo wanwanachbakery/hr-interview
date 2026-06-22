@@ -1,6 +1,6 @@
-# คู่มือ Deploy HR-WWN ผ่าน Cloudflare Tunnel
+# คู่มือ Deploy HR-Interview ผ่าน Cloudflare Tunnel
 
-ขึ้น HR-WWN ออนไลน์ฟรี โดยให้ลูกค้าเข้าใช้ผ่าน internet ขณะที่ server ยังรันอยู่บน PC ของคุณ
+ขึ้น HR-Interview ออนไลน์ฟรี โดยให้ลูกค้าเข้าใช้ผ่าน internet ขณะที่ server ยังรันอยู่บน PC ของคุณ
 
 ---
 
@@ -32,7 +32,7 @@ cloudflared --version
 
 ---
 
-## ขั้นตอนที่ 2: เริ่ม server HR-WWN ในโหมด production
+## ขั้นตอนที่ 2: เริ่ม server HR-Interview ในโหมด production
 
 ใน PowerShell ที่โฟลเดอร์โปรเจกต์:
 ```powershell
@@ -157,7 +157,7 @@ cloudflared service install
 - [x] Rate limit บน /api/login (5 ครั้ง/5 นาที → block 15 นาที)
 - [x] Cookie มี Secure flag (เมื่อ `SECURE_COOKIES=true`)
 - [x] HTTPS ผ่าน Cloudflare Tunnel (ออโตเมติก)
-- [ ] **เปลี่ยน master password** จากค่า default `JC2026!Init` → ตั้งของตัวเอง
+- [ ] **เปลี่ยน master password** จากค่า default `WWN2026!Init` → ตั้งของตัวเอง
 - [ ] **Backup `data/` folder** สม่ำเสมอ (ทุกอย่างอยู่ในนี้)
 - [ ] PC firewall: เปิดเฉพาะ outbound — Cloudflare Tunnel เป็น outbound connection ไม่ต้องเปิด port
 
