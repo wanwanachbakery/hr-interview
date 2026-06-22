@@ -422,10 +422,12 @@ tenantRouter.use((req, res, next) => {
 tenantRouter.use(authMiddleware);
 
 // ---------- Login rate limit (in-memory; resets on restart) ----------
-// 5 failed attempts in 5 minutes → block that IP for 15 minutes.
+// 10 failed attempts in 5 minutes → block that IP for 2 minutes.
+// (Kept lenient on purpose: legit users mistype; the block is short so a real
+// person isn't stuck. Still stops automated brute-force.)
 const RL_WINDOW = 5 * 60 * 1000;
-const RL_MAX = 5;
-const RL_BLOCK = 15 * 60 * 1000;
+const RL_MAX = 10;
+const RL_BLOCK = 2 * 60 * 1000;
 const rlMap = new Map();
 // Skip rate-limiting for loopback addresses: on a local/demo machine every user
 // shares 127.0.0.1, so per-IP limiting would wrongly lock everyone out together.
