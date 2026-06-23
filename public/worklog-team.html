@@ -184,15 +184,16 @@ function renderDetail(data) {
     return `<tr>
       <td class="tw-time">${esc(e.label)}</td>
       <td>${has ? esc(e.task) : '<span style="color:#94a3b8;">— ยังไม่บันทึก —</span>'}</td>
-      <td style="color:#64748b;">${esc(e.tools || '—')}</td>
+      <td style="color:#64748b;">${esc(e.category || '—')}</td>
+      <td style="text-align:center; color:#0369a1;">${e.recurring ? '<span title="งานประจำ">⟳</span>' : ''}</td>
       <td style="text-align:center; color:${has ? '#16a34a' : '#d97706'};">${has ? '✓' : '🕒'}</td>
     </tr>`;
   }).join('');
   document.getElementById('tw-detail-body').innerHTML = `
     <p class="sub" style="margin:0 0 8px;">บันทึกแล้ว ${data.filled}/${data.total} ชั่วโมง</p>
     <table class="tw-table">
-      <thead><tr><th style="width:90px;">เวลา</th><th>งานที่ทำ</th><th style="width:28%;">เครื่องมือ</th><th style="width:46px; text-align:center;">สถานะ</th></tr></thead>
-      <tbody>${rows || '<tr class="tw-empty"><td colspan="4" style="padding:12px;">ไม่มีข้อมูล</td></tr>'}</tbody>
+      <thead><tr><th style="width:84px;">เวลา</th><th>งานที่ทำ</th><th style="width:22%;">หมวดหมู่</th><th style="width:52px; text-align:center;">ประจำ</th><th style="width:44px; text-align:center;">สถานะ</th></tr></thead>
+      <tbody>${rows || '<tr class="tw-empty"><td colspan="5" style="padding:12px;">ไม่มีข้อมูล</td></tr>'}</tbody>
     </table>`;
 }
 

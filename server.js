@@ -110,6 +110,7 @@ function tenantDb(tenantId) {
     positions: path.join(dir, 'positions.json'),
     users:     path.join(dir, 'users.json'),
     company:   path.join(dir, 'company.json'),
+    categories: path.join(dir, 'categories.json'),
     auth:      path.join(dir, 'auth.json'),
   };
   return {
@@ -122,6 +123,7 @@ function tenantDb(tenantId) {
     positions:    () => readJson(F.positions, []),
     users:        () => readJson(F.users, []),
     company:      () => readJson(F.company, { name: '', name_en: '' }),
+    categories:   () => readJson(F.categories, []),
     auth:         () => readJson(F.auth, { master: '' }),
     saveEmployees: (l) => writeJson(F.employees, l),
     saveDivisions: (l) => writeJson(F.divisions, l),
@@ -129,6 +131,7 @@ function tenantDb(tenantId) {
     savePositions: (l) => writeJson(F.positions, l),
     saveUsers:     (l) => writeJson(F.users, l),
     saveCompany:   (o) => writeJson(F.company, o),
+    saveCategories:(l) => writeJson(F.categories, l),
     saveAuth:      (o) => writeJson(F.auth, o),
     interviewPath: (id) => path.join(intDir, `${id}.json`),
     loadInterview: (id) => readJson(path.join(intDir, `${id}.json`), null),
@@ -143,6 +146,10 @@ function tenantDb(tenantId) {
   };
 }
 
+// Default work-log categories seeded for each new tenant (admin's starter set;
+// employees can add their own via the daily-log dropdown).
+const DEFAULT_WORKLOG_CATEGORIES = ['บริการลูกค้า', 'ขาย', 'คีย์ข้อมูล/เอกสาร', 'จัดของ/สต็อก', 'ประชุม/ประสานงาน', 'รายงาน', 'อื่นๆ'];
+
 function initTenantFolder(tenantId, initialAdminPassword, companyName) {
   const db = tenantDb(tenantId);
   for (const d of [db.dir, db.intDir, db.outDir, db.cmpOutDir]) {
@@ -156,6 +163,7 @@ function initTenantFolder(tenantId, initialAdminPassword, companyName) {
   // Seed the company display name from the name entered at tenant creation
   // (falls back to the placeholder only if none was provided).
   ensure(db.files.company, JSON.stringify({ name: (companyName && String(companyName).trim()) || 'บริษัทตัวอย่าง จำกัด', name_en: 'Sample Company Ltd.' }, null, 2));
+  ensure(db.files.categories, JSON.stringify(DEFAULT_WORKLOG_CATEGORIES, null, 2));
   if (!fs.existsSync(db.files.auth)) {
     const pw = initialAdminPassword || 'WWN2026!Init';
     const salt = crypto.randomBytes(16).toString('hex');
@@ -1311,7 +1319,7 @@ function buildWorklogForUser(db, user, date) {
   const pad = (n) => String(n).padStart(2, '0');
   const entries = hours.map(h => {
     const e = byHour[h] || {};
-    return { hour: h, label: `${pad(h)}:00–${pad(h + 1)}:00`, task: e.task || '', tools: e.tools || '' };
+    return { hour: h, label: `${pad(h)}:00–${pad(h + 1)}:00`, task: e.task || '', tools: e.tools || '', category: e.category || '', recurring: !!e.recurring };
   });
   const filled = entries.filter(e => e.task && e.task.trim()).length;
   return { date, total: entries.length, filled, entries, updated_at: saved ? saved.updated_at : null };
@@ -1342,6 +1350,8 @@ tenantRouter.put('/api/worklog', (req, res) => {
     hour: Number(e.hour),
     task: String(e.task || '').slice(0, 1000),
     tools: String(e.tools || '').slice(0, 300),
+    category: String(e.category || '').slice(0, 80),
+    recurring: !!e.recurring,
   })).filter(e => Number.isInteger(e.hour)) : [];
   ctxDb().saveWorklog(user.id, date, { user_id: user.id, date, entries: clean, updated_at: new Date().toISOString() });
   res.json({ ok: true });
@@ -1354,6 +1364,50 @@ tenantRouter.get('/api/worklog/status', (req, res) => {
   if (!user || !calcUserHours(user)) return res.json({ applicable: false });
   const wl = buildWorklogForUser(ctxDb(), user, todayLocal());
   res.json({ applicable: true, date: wl.date, total: wl.total, filled: wl.filled, complete: wl.total > 0 && wl.filled >= wl.total });
+});
+
+// ---- Work categories (admin seeds a starter set; any user can add new) ----
+tenantRouter.get('/api/worklog/categories', (req, res) => {
+  const list = ctxDb().categories();
+  res.json({ categories: list.length ? list : DEFAULT_WORKLOG_CATEGORIES });
+});
+tenantRouter.post('/api/worklog/categories', (req, res) => {
+  const name = String((req.body || {}).name || '').trim();
+  if (!name) return res.status(400).json({ error: 'ต้องใส่ชื่อหมวดหมู่' });
+  if (name.length > 80) return res.status(400).json({ error: 'ชื่อหมวดหมู่ยาวเกินไป' });
+  const db = ctxDb();
+  let list = db.categories();
+  if (!list.length) list = DEFAULT_WORKLOG_CATEGORIES.slice(); // first add also persists the defaults
+  if (!list.some(c => c.toLowerCase() === name.toLowerCase())) { list.push(name); db.saveCategories(list); }
+  res.json({ ok: true, categories: db.categories() });
+});
+
+// Copy "งานประจำ" (recurring) entries from the most recent prior day with any
+tenantRouter.get('/api/worklog/copy-recurring', (req, res) => {
+  if (req.session.role === 'admin') return res.json({ from: null, entries: [] });
+  const user = load.users().find(u => u.id === req.session.user_id);
+  if (!user) return res.status(404).json({ error: 'not found' });
+  let date = String(req.query.date || '').trim();
+  const today = todayLocal();
+  if (!WORKLOG_DATE_RE.test(date)) date = today;
+  if (date > today) date = today;
+  const db = ctxDb();
+  const pad = (n) => String(n).padStart(2, '0');
+  const [yy, mm, dd] = date.split('-').map(Number);
+  const base = new Date(yy, mm - 1, dd);
+  for (let i = 1; i <= 30; i++) {
+    const d = new Date(base);
+    d.setDate(d.getDate() - i);
+    const ds = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const wl = db.loadWorklog(user.id, ds);
+    if (wl && Array.isArray(wl.entries)) {
+      const rec = wl.entries.filter(e => e.recurring && e.task && String(e.task).trim());
+      if (rec.length) {
+        return res.json({ from: ds, entries: rec.map(e => ({ hour: e.hour, task: e.task, tools: e.tools || '', category: e.category || '', recurring: true })) });
+      }
+    }
+  }
+  res.json({ from: null, entries: [] });
 });
 
 // ---- Team view: supervisors/admin can read subordinates' logs (read-only) ----
