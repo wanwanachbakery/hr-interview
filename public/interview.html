@@ -87,6 +87,7 @@
       <a href="/" data-i18n="nav_home">หน้าแรก</a>
       <a href="/examples" target="_blank" data-i18n="nav_examples">📘 ตัวอย่าง</a>
       <a href="/dashboard">📋 Dashboard</a>
+      <a href="/worklog">📝 บันทึกงาน</a>
       <a href="#" onclick="(async()=>{await fetch(TBASE + '/api/logout',{method:'POST'});location.href = TBASE + '/login';})();return false;" data-i18n="nav_logout">ออกจากระบบ</a>
     </nav>
   </div>
@@ -137,6 +138,21 @@
     </div>
   </div>
 </div>
+
+<!-- Doc-generation popup (works for every tenant — shared page) -->
+<div id="gen-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:9999; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:16px; padding:32px 28px; max-width:380px; width:90%; text-align:center; box-shadow:0 20px 50px rgba(0,0,0,.3);">
+    <div id="gen-spinner" style="width:48px; height:48px; margin:0 auto 18px; border:4px solid #e0f2fe; border-top-color:#0284c7; border-radius:50%; animation:gen-spin .9s linear infinite;"></div>
+    <div id="gen-icon" style="display:none; font-size:46px; line-height:1; margin-bottom:10px;"></div>
+    <h2 id="gen-title" style="margin:0 0 8px; font-size:20px; color:#0f172a;">กำลังวิเคราะห์...</h2>
+    <p id="gen-sub" style="margin:0; color:#64748b; font-size:14px; line-height:1.6;">AI กำลังสร้างเอกสารจากคำตอบ<br>กรุณาอย่าปิดหน้านี้</p>
+    <div id="gen-actions" style="display:none; margin-top:18px; gap:8px; justify-content:center;">
+      <button type="button" id="gen-retry">ลองใหม่</button>
+      <button type="button" class="ghost" id="gen-close">ปิด</button>
+    </div>
+  </div>
+</div>
+<style>@keyframes gen-spin{to{transform:rotate(360deg)}}</style>
 
 <script>
 const qs = new URLSearchParams(location.search);
@@ -317,12 +333,65 @@ answerEl.addEventListener('keydown', (e) => {
   }
 });
 
-document.getElementById('finish-btn').addEventListener('click', async () => {
-  const btn = document.getElementById('finish-btn');
-  btn.disabled = true; btn.textContent = T('iv_done_generating');
-  const r = await fetch(`${TBASE}/api/interview/${empId}/finish`, { method: 'POST' });
-  if (r.ok) location.href = `${TBASE}/review?id=${empId}`;
-  else { alert(T('iv_error')); btn.disabled = false; btn.textContent = T('iv_done_btn'); }
+const genModal = document.getElementById('gen-modal');
+function showGen(state, msg) {
+  genModal.style.display = 'flex';
+  const sp = document.getElementById('gen-spinner');
+  const ic = document.getElementById('gen-icon');
+  const title = document.getElementById('gen-title');
+  const sub = document.getElementById('gen-sub');
+  const actions = document.getElementById('gen-actions');
+  if (state === 'analyzing') {
+    sp.style.display = 'block'; ic.style.display = 'none'; actions.style.display = 'none';
+    title.textContent = 'กำลังวิเคราะห์...'; title.style.color = '#0f172a';
+    sub.innerHTML = 'AI กำลังสร้างเอกสารจากคำตอบ<br>กรุณาอย่าปิดหน้านี้';
+  } else if (state === 'success') {
+    sp.style.display = 'none'; ic.style.display = 'block'; ic.textContent = '✅'; actions.style.display = 'none';
+    title.textContent = 'วิเคราะห์สำเร็จ!'; title.style.color = '#15803d';
+    sub.innerHTML = 'กำลังพาไปหน้าเอกสาร...';
+  } else { // error
+    sp.style.display = 'none'; ic.style.display = 'block'; ic.textContent = '⚠️'; actions.style.display = 'flex';
+    title.textContent = 'เกิดข้อผิดพลาด'; title.style.color = '#b91c1c';
+    sub.innerHTML = msg || 'สร้างเอกสารไม่สำเร็จ ลองใหม่อีกครั้ง';
+  }
+}
+
+async function runFinish() {
+  showGen('analyzing');
+  try {
+    const r = await fetch(`${TBASE}/api/interview/${empId}/finish`, { method: 'POST' });
+    if (!r.ok) { showGen('error', 'เริ่มสร้างเอกสารไม่สำเร็จ — ลองใหม่อีกครั้ง'); return; }
+  } catch (err) { showGen('error', 'เชื่อมต่อไม่สำเร็จ — ตรวจอินเทอร์เน็ตแล้วลองใหม่'); return; }
+
+  let tries = 0;
+  const maxTries = 80; // ~4 นาที ที่ 3 วิ/ครั้ง (เผื่อ AI คิดนาน)
+  const poll = async () => {
+    tries++;
+    let status = 'processing';
+    try {
+      const s = await fetch(`${TBASE}/api/interview/${empId}/finish-status`).then(x => x.json());
+      status = (s && s.status) || 'processing';
+    } catch (err) { /* network hiccup — keep polling */ }
+    if (status === 'done') {
+      showGen('success');
+      setTimeout(() => { location.href = `${TBASE}/review?id=${empId}`; }, 1200);
+      return;
+    }
+    if (status === 'error') { showGen('error', 'สร้างเอกสารไม่สำเร็จ — ลองใหม่อีกครั้ง'); return; }
+    if (tries >= maxTries) { showGen('error', 'ใช้เวลานานผิดปกติ — ลองเปิดหน้าเอกสารดูได้เลย'); return; }
+    setTimeout(poll, 3000);
+  };
+  setTimeout(poll, 1500);
+}
+
+document.getElementById('finish-btn').addEventListener('click', () => {
+  document.getElementById('finish-btn').disabled = true;
+  runFinish();
+});
+document.getElementById('gen-retry').addEventListener('click', runFinish);
+document.getElementById('gen-close').addEventListener('click', () => {
+  genModal.style.display = 'none';
+  document.getElementById('finish-btn').disabled = false;
 });
 
 start();

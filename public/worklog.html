@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>บันทึกงานประจำวัน | HR-Interview</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="icon" type="image/png" href="/logo.png"/>
+  <style>
+    .wl-table { width:100%; border-collapse:collapse; font-size:14px; margin-top:8px; }
+    .wl-table th { text-align:left; font-weight:600; color:#475569; padding:8px; border-bottom:2px solid #e2e8f0; font-size:13px; }
+    .wl-table td { padding:6px 8px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
+    .wl-table input { width:100%; padding:7px 9px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px; box-sizing:border-box; }
+    .wl-time { color:#64748b; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    .wl-lunch td { text-align:center; color:#94a3b8; font-size:13px; background:#f8fafc; }
+    .wl-prog-track { flex:1; height:8px; background:#e2e8f0; border-radius:999px; overflow:hidden; }
+    .wl-prog-fill { height:100%; background:#0284c7; width:0%; transition:width .25s; }
+    .wl-status-ok { color:#16a34a; }
+    .wl-status-wait { color:#d97706; }
+  </style>
+<script>
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  function shouldPrefix(href) {
+    return href && href.startsWith('/')
+      && !href.startsWith('/t/') && !href.startsWith('/super')
+      && !href.startsWith('/styles') && !href.startsWith('/logo')
+      && !href.startsWith('/i18n') && !href.startsWith('/favicon');
+  }
+  function rewriteLinks(root) {
+    if (!window.TBASE || !root) return;
+    if (root.nodeType === 1 && root.tagName === 'A' && shouldPrefix(root.getAttribute('href'))) {
+      root.setAttribute('href', window.TBASE + root.getAttribute('href'));
+    }
+    if (typeof root.querySelectorAll === 'function') {
+      root.querySelectorAll('a[href^="/"]').forEach(a => {
+        const h = a.getAttribute('href');
+        if (shouldPrefix(h)) a.setAttribute('href', window.TBASE + h);
+      });
+    }
+  }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    new MutationObserver(muts => {
+      for (const m of muts) { rewriteLinks(m.target); for (const node of m.addedNodes) rewriteLinks(node); }
+    }).observe(document.body, { childList: true, subtree: true });
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span');
+      span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      span.textContent = '...';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => {
+        span.textContent = c && c.name ? c.name : '';
+        if (!c || !c.name) span.style.display = 'none';
+      }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="logo"><span>HR-Interview</span></div>
+    <nav>
+      <a href="/">หน้าแรก</a>
+      <a href="/profile">👤 โปรไฟล์</a>
+      <a href="/worklog">📝 บันทึกงาน</a>
+      <a href="/dashboard">📋 Dashboard</a>
+      <a href="#" onclick="(async()=>{await fetch(TBASE + '/api/logout',{method:'POST'});location.href = TBASE + '/login';})();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin:0;">📝 บันทึกงานประจำวัน</h1>
+        <p class="sub" id="wl-emp" style="margin:4px 0 0;">–</p>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <label for="wl-date" style="font-size:14px; color:#475569;">วันที่</label>
+        <input type="date" id="wl-date" style="padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit;"/>
+      </div>
+    </div>
+
+    <div id="wl-remind-row" style="display:flex; align-items:center; gap:8px; margin-top:14px; font-size:14px; color:#475569;">
+      <input type="checkbox" id="wl-remind" style="width:16px; height:16px;"/>
+      <label for="wl-remind">🔔 เตือนฉันในแอปถ้ายังไม่ได้บันทึกงานวันนี้</label>
+    </div>
+
+    <div id="wl-progress-row" style="display:flex; align-items:center; gap:12px; margin-top:14px;">
+      <span id="wl-progress-text" class="sub" style="white-space:nowrap;">–</span>
+      <div class="wl-prog-track"><div class="wl-prog-fill" id="wl-progress-fill"></div></div>
+      <span id="wl-progress-pct" style="font-weight:600; color:#0284c7;">0%</span>
+    </div>
+
+    <div id="wl-body" style="margin-top:8px;">
+      <p class="sub">กำลังโหลด...</p>
+    </div>
+
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:18px; flex-wrap:wrap;">
+      <p class="hint" style="margin:0; max-width:420px;">💡 ข้อมูลที่บันทึกทุกวันจะถูกสะสมไว้ และนำไปวิเคราะห์ JD/KPI ได้แม่นยำกว่าการสัมภาษณ์ครั้งเดียว</p>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span id="wl-saved-msg" class="sub" style="color:#16a34a;"></span>
+        <button id="wl-save">💾 บันทึกงานวันนี้</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const dateEl = document.getElementById('wl-date');
+const bodyEl = document.getElementById('wl-body');
+const savedMsg = document.getElementById('wl-saved-msg');
+let isAdmin = false;
+
+function todayStr() { return new Date().toLocaleDateString('en-CA'); }
+
+function rowStatusIcon(filled) {
+  return filled
+    ? '<span class="wl-status-ok" title="บันทึกแล้ว">✓</span>'
+    : '<span class="wl-status-wait" title="ยังไม่บันทึก">🕒</span>';
+}
+
+function recomputeProgress() {
+  const tasks = bodyEl.querySelectorAll('input[data-field="task"]');
+  let total = 0, filled = 0;
+  tasks.forEach(inp => {
+    total++;
+    const tr = inp.closest('tr');
+    const has = inp.value.trim().length > 0;
+    if (has) filled++;
+    const st = tr.querySelector('.wl-st');
+    if (st) st.innerHTML = rowStatusIcon(has);
+  });
+  const pct = total ? Math.round((filled / total) * 100) : 0;
+  document.getElementById('wl-progress-text').textContent = `บันทึกแล้ว ${filled}/${total} ชั่วโมง`;
+  document.getElementById('wl-progress-fill').style.width = pct + '%';
+  document.getElementById('wl-progress-pct').textContent = pct + '%';
+}
+
+function renderTable(data) {
+  if (data.applicable === false) {
+    bodyEl.innerHTML = `<p class="sub" style="color:#b91c1c; padding:12px 0;">${esc(data.error || 'บัญชีนี้ไม่มีบันทึกงานส่วนตัว')}</p>`;
+    document.getElementById('wl-save').style.display = 'none';
+    document.getElementById('wl-progress-row').style.display = 'none';
+    document.getElementById('wl-remind-row').style.display = 'none';
+    return;
+  }
+  const rows = data.entries.map(e => `
+    <tr>
+      <td class="wl-time">${esc(e.label)}</td>
+      <td><input type="text" data-field="task" data-hour="${e.hour}" value="${esc(e.task)}" placeholder="ทำอะไรในช่วงนี้..."/></td>
+      <td><input type="text" data-field="tools" data-hour="${e.hour}" value="${esc(e.tools)}" placeholder="เครื่องมือ/ระบบ"/></td>
+      <td style="text-align:center; width:50px;"><span class="wl-st">${rowStatusIcon(!!(e.task && e.task.trim()))}</span></td>
+    </tr>`).join('');
+  bodyEl.innerHTML = `
+    <table class="wl-table">
+      <thead><tr>
+        <th style="width:120px;">เวลา</th><th>งานที่ทำ</th>
+        <th style="width:30%;">เครื่องมือ/ระบบ</th><th style="text-align:center; width:50px;">สถานะ</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  bodyEl.querySelectorAll('input[data-field="task"]').forEach(inp => inp.addEventListener('input', recomputeProgress));
+  recomputeProgress();
+}
+
+async function loadDay(date) {
+  savedMsg.textContent = '';
+  bodyEl.innerHTML = '<p class="sub">กำลังโหลด...</p>';
+  try {
+    const data = await fetch(`${TBASE}/api/worklog?date=${date}`).then(r => r.json());
+    renderTable(data);
+  } catch (e) {
+    bodyEl.innerHTML = '<p class="sub" style="color:#b91c1c;">โหลดข้อมูลไม่สำเร็จ</p>';
+  }
+}
+
+async function saveDay() {
+  const btn = document.getElementById('wl-save');
+  const byHour = {};
+  bodyEl.querySelectorAll('input[data-field]').forEach(inp => {
+    const h = inp.getAttribute('data-hour');
+    byHour[h] = byHour[h] || { hour: Number(h), task: '', tools: '' };
+    byHour[h][inp.getAttribute('data-field')] = inp.value;
+  });
+  const entries = Object.values(byHour);
+  btn.disabled = true; const old = btn.textContent; btn.textContent = 'กำลังบันทึก...';
+  try {
+    const r = await fetch(`${TBASE}/api/worklog`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ date: dateEl.value, entries }),
+    });
+    if (r.ok) { savedMsg.textContent = '✓ บันทึกแล้ว'; setTimeout(() => savedMsg.textContent = '', 3000); }
+    else { const d = await r.json().catch(() => ({})); savedMsg.style.color = '#b91c1c'; savedMsg.textContent = d.error || 'บันทึกไม่สำเร็จ'; }
+  } catch (e) { savedMsg.style.color = '#b91c1c'; savedMsg.textContent = 'เชื่อมต่อไม่สำเร็จ'; }
+  btn.disabled = false; btn.textContent = old;
+}
+
+// Reminder preference (in-app) — stored locally per browser
+const remindEl = document.getElementById('wl-remind');
+remindEl.checked = localStorage.getItem('worklog_remind') !== 'off';
+remindEl.addEventListener('change', () => {
+  localStorage.setItem('worklog_remind', remindEl.checked ? 'on' : 'off');
+});
+
+(async function init() {
+  const me = await fetch(TBASE + '/api/me').then(r => r.json()).catch(() => null);
+  if (me) {
+    document.getElementById('wl-emp').textContent =
+      (me.name || me.username || '') + (me.position_name ? ' · ' + me.position_name : '') + (me.division_name ? ' · ' + me.division_name : '');
+    isAdmin = me.role === 'admin';
+  }
+  const t = todayStr();
+  dateEl.value = t; dateEl.max = t;
+  dateEl.addEventListener('change', () => { if (dateEl.value > t) dateEl.value = t; loadDay(dateEl.value); });
+  document.getElementById('wl-save').addEventListener('click', saveDay);
+  loadDay(t);
+})();
+</script>
+</body>
+</html>

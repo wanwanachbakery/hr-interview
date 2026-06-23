@@ -133,10 +133,17 @@ function tenantDb(tenantId) {
     interviewPath: (id) => path.join(intDir, `${id}.json`),
     loadInterview: (id) => readJson(path.join(intDir, `${id}.json`), null),
     saveInterview: (iv) => writeJson(path.join(intDir, `${iv.id}.json`), iv),
+    // Daily hourly work log — one file per user per date: worklogs/<userId>/<YYYY-MM-DD>.json
+    loadWorklog: (uid, date) => readJson(path.join(dir, 'worklogs', uid, `${date}.json`), null),
+    saveWorklog: (uid, date, obj) => {
+      const wd = path.join(dir, 'worklogs', uid);
+      if (!fs.existsSync(wd)) fs.mkdirSync(wd, { recursive: true });
+      writeJson(path.join(wd, `${date}.json`), obj);
+    },
   };
 }
 
-function initTenantFolder(tenantId, initialAdminPassword) {
+function initTenantFolder(tenantId, initialAdminPassword, companyName) {
   const db = tenantDb(tenantId);
   for (const d of [db.dir, db.intDir, db.outDir, db.cmpOutDir]) {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
@@ -146,7 +153,9 @@ function initTenantFolder(tenantId, initialAdminPassword) {
   ensure(db.files.sections, '[]');
   ensure(db.files.positions, '[]');
   ensure(db.files.users, '[]');
-  ensure(db.files.company, JSON.stringify({ name: 'บริษัทตัวอย่าง จำกัด', name_en: 'Sample Company Ltd.' }, null, 2));
+  // Seed the company display name from the name entered at tenant creation
+  // (falls back to the placeholder only if none was provided).
+  ensure(db.files.company, JSON.stringify({ name: (companyName && String(companyName).trim()) || 'บริษัทตัวอย่าง จำกัด', name_en: 'Sample Company Ltd.' }, null, 2));
   if (!fs.existsSync(db.files.auth)) {
     const pw = initialAdminPassword || 'WWN2026!Init';
     const salt = crypto.randomBytes(16).toString('hex');
@@ -1233,8 +1242,11 @@ tenantRouter.post('/api/interview/:id/message', (req, res) => {
   res.json({ question: q });
 });
 
-// Finish -> generate JD/KPI/Optimization docs
-tenantRouter.post('/api/interview/:id/finish', async (req, res) => {
+// Finish -> generate JD/KPI/Optimization docs.
+// Generation can be slow (real Claude ~90s) — longer than the Cloudflare/browser
+// request limit. So we mark the employee "processing", respond immediately, then
+// generate in the BACKGROUND. The client polls /finish-status and shows a popup.
+tenantRouter.post('/api/interview/:id/finish', (req, res) => {
   const iv = loadInterview(req.params.id);
   if (!iv) return res.status(404).json({ error: 'not found' });
   const liveEmp = load.employees().find(e => e.id === req.params.id);
@@ -1245,20 +1257,103 @@ tenantRouter.post('/api/interview/:id/finish', async (req, res) => {
     : new Date().toISOString();
   saveInterview(iv);
 
-  const outDir = path.join(ctxDb().outDir, iv.id);
-  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-  const docs = await generateDocuments(iv);
-  const files = [];
-  for (const [name, content] of Object.entries(docs)) {
-    fs.writeFileSync(path.join(outDir, name), content);
-    files.push(name);
-  }
-
+  // Mark processing + respond now (still inside the request → ALS proxies are safe).
   const list = load.employees();
   const e = list.find(x => x.id === iv.id);
-  if (e) { e.interviewStatus = 'completed'; e.completedAt = iv.finishedAt; save.employees(list); }
+  if (e) { e.docStatus = 'processing'; save.employees(list); }
+  res.json({ ok: true, status: 'processing' });
 
-  res.json({ ok: true, files });
+  // Background generation. Capture the concrete tenant db NOW — after the response
+  // returns the AsyncLocalStorage context is gone, so we must not use the
+  // load/save/ctxDb proxies inside the async block below.
+  const db = ctxDb();
+  (async () => {
+    try {
+      const outDir = path.join(db.outDir, iv.id);
+      if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+      const docs = await generateDocuments(iv);
+      for (const [name, content] of Object.entries(docs)) {
+        fs.writeFileSync(path.join(outDir, name), content);
+      }
+      const l2 = db.employees();
+      const e2 = l2.find(x => x.id === iv.id);
+      if (e2) { e2.interviewStatus = 'completed'; e2.completedAt = iv.finishedAt; e2.docStatus = 'done'; db.saveEmployees(l2); }
+    } catch (err) {
+      console.error('[finish] doc generation failed for', iv.id, '-', err.message);
+      const l2 = db.employees();
+      const e2 = l2.find(x => x.id === iv.id);
+      if (e2) { e2.docStatus = 'error'; db.saveEmployees(l2); }
+    }
+  })();
+});
+
+// Poll generation status for the popup. Returns processing | done | error.
+tenantRouter.get('/api/interview/:id/finish-status', (req, res) => {
+  const liveEmp = load.employees().find(e => e.id === req.params.id);
+  if (!liveEmp) return res.status(404).json({ error: 'not found' });
+  if (!canViewEmployee(req.session, liveEmp)) return res.status(403).json({ error: 'forbidden' });
+  res.json({ status: liveEmp.docStatus || 'done' });
+});
+
+// ============================================================
+// Daily hourly work log (บันทึกงานประจำวัน) — self-service per user
+// ============================================================
+const WORKLOG_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const todayLocal = () => new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD
+
+// Build the full hour grid for a user on a date, overlaying any saved entries.
+function buildWorklogForUser(db, user, date) {
+  const uh = calcUserHours(user);
+  const hours = (uh && uh.hours.length) ? uh.hours : [9, 10, 11, 13, 14, 15, 16, 17];
+  const saved = db.loadWorklog(user.id, date);
+  const byHour = {};
+  if (saved && Array.isArray(saved.entries)) for (const e of saved.entries) byHour[e.hour] = e;
+  const pad = (n) => String(n).padStart(2, '0');
+  const entries = hours.map(h => {
+    const e = byHour[h] || {};
+    return { hour: h, label: `${pad(h)}:00–${pad(h + 1)}:00`, task: e.task || '', tools: e.tools || '' };
+  });
+  const filled = entries.filter(e => e.task && e.task.trim()).length;
+  return { date, total: entries.length, filled, entries, updated_at: saved ? saved.updated_at : null };
+}
+
+// Read current user's log for a date (default today)
+tenantRouter.get('/api/worklog', (req, res) => {
+  if (req.session.role === 'admin') return res.json({ applicable: false, error: 'admin ไม่มีบันทึกงานส่วนตัว', entries: [], total: 0, filled: 0 });
+  const user = load.users().find(u => u.id === req.session.user_id);
+  if (!user) return res.status(404).json({ error: 'not found' });
+  let date = String(req.query.date || '').trim();
+  const today = todayLocal();
+  if (!WORKLOG_DATE_RE.test(date)) date = today;
+  if (date > today) date = today; // never the future
+  res.json({ applicable: true, ...buildWorklogForUser(ctxDb(), user, date) });
+});
+
+// Save current user's log for a date
+tenantRouter.put('/api/worklog', (req, res) => {
+  if (req.session.role === 'admin') return res.status(400).json({ error: 'admin ไม่มีบันทึกงานส่วนตัว' });
+  const user = load.users().find(u => u.id === req.session.user_id);
+  if (!user) return res.status(404).json({ error: 'not found' });
+  const { date, entries } = req.body || {};
+  const today = todayLocal();
+  if (!WORKLOG_DATE_RE.test(String(date || ''))) return res.status(400).json({ error: 'รูปแบบวันที่ผิด (YYYY-MM-DD)' });
+  if (String(date) > today) return res.status(400).json({ error: 'บันทึกงานวันในอนาคตไม่ได้' });
+  const clean = Array.isArray(entries) ? entries.map(e => ({
+    hour: Number(e.hour),
+    task: String(e.task || '').slice(0, 1000),
+    tools: String(e.tools || '').slice(0, 300),
+  })).filter(e => Number.isInteger(e.hour)) : [];
+  ctxDb().saveWorklog(user.id, date, { user_id: user.id, date, entries: clean, updated_at: new Date().toISOString() });
+  res.json({ ok: true });
+});
+
+// Lightweight status for the in-app reminder banner (today only)
+tenantRouter.get('/api/worklog/status', (req, res) => {
+  if (req.session.role === 'admin') return res.json({ applicable: false });
+  const user = load.users().find(u => u.id === req.session.user_id);
+  if (!user || !calcUserHours(user)) return res.json({ applicable: false });
+  const wl = buildWorklogForUser(ctxDb(), user, todayLocal());
+  res.json({ applicable: true, date: wl.date, total: wl.total, filled: wl.filled, complete: wl.total > 0 && wl.filled >= wl.total });
 });
 
 // Interview JSON — read access via canViewEmployee so hierarchy can inspect subordinates'
@@ -1370,6 +1465,7 @@ tenantRouter.get('/interview',(req, res) => res.sendFile(path.join(ROOT, 'public
 tenantRouter.get('/review',   (req, res) => res.sendFile(path.join(ROOT, 'public', 'review.html')));
 tenantRouter.get('/examples', (req, res) => res.sendFile(path.join(ROOT, 'public', 'examples.html')));
 tenantRouter.get('/dashboard',(req, res) => res.sendFile(path.join(ROOT, 'public', 'dashboard.html')));
+tenantRouter.get('/worklog',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'worklog.html')));
 
 // ============================================================
 // Excel Import / Template Generation (admin only)
@@ -1688,7 +1784,9 @@ tenantRouter.post('/api/admin/wipe/all', requireAdmin, requireConfirmDelete, (re
   save.employees([]);
   wipeInterviewsFolder();
   wipeOutputsFolder();
-  save.company({ name: 'บริษัทตัวอย่าง จำกัด', name_en: 'Sample Company Ltd.', updated_at: new Date().toISOString() });
+  // Preserve the company name across a factory reset (don't revert to placeholder).
+  const keepCompany = load.company();
+  save.company({ name: keepCompany.name || 'บริษัทตัวอย่าง จำกัด', name_en: keepCompany.name_en || 'Sample Company Ltd.', updated_at: new Date().toISOString() });
   res.json({ ok: true, message: 'Factory reset เรียบร้อย · เก็บแค่ admin password' });
 });
 
@@ -1772,7 +1870,7 @@ app.post('/api/super/tenants', requireSuperAdmin, (req, res) => {
   const newTenant = { id: cleanId, name: String(name).trim(), created_at: new Date().toISOString() };
   tenants.push(newTenant);
   saveTenants(tenants);
-  initTenantFolder(cleanId, admin_password || 'WWN2026!Init');
+  initTenantFolder(cleanId, admin_password || 'WWN2026!Init', newTenant.name);
   res.json({ ...newTenant, url_path: '/t/' + cleanId });
 });
 
@@ -1781,7 +1879,18 @@ app.put('/api/super/tenants/:id', requireSuperAdmin, (req, res) => {
   const tenants = loadTenants();
   const t = tenants.find(x => x.id === req.params.id);
   if (!t) return res.status(404).json({ error: 'not found' });
-  if (req.body.name !== undefined) t.name = String(req.body.name).trim();
+  if (req.body.name !== undefined) {
+    t.name = String(req.body.name).trim();
+    // Keep the tenant's own company.json display name in sync with the super-admin label,
+    // so renaming here also fixes the name shown inside the tenant (incl. existing tenants).
+    try {
+      const cdb = tenantDb(t.id);
+      const c = cdb.company();
+      c.name = t.name;
+      c.updated_at = new Date().toISOString();
+      cdb.saveCompany(c);
+    } catch (e) { console.error('[rename] company.json sync failed:', e.message); }
+  }
   t.updated_at = new Date().toISOString();
   saveTenants(tenants);
   res.json(t);
