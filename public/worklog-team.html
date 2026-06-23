@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>บันทึกงานของทีม | HR-Interview</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="icon" type="image/png" href="/logo.png"/>
+  <style>
+    .tw-controls { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px; margin-bottom:10px; }
+    .tw-controls select, .tw-controls input { padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px; box-sizing:border-box; width:100%; }
+    .tw-search { position:relative; margin-bottom:8px; }
+    .tw-search input { width:100%; padding:9px 12px 9px 34px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px; box-sizing:border-box; }
+    .tw-search .ic { position:absolute; left:11px; top:50%; transform:translateY(-50%); color:#94a3b8; }
+    .tw-list { border:1px solid #e2e8f0; border-radius:10px; overflow:hidden; margin-bottom:18px; max-height:280px; overflow-y:auto; }
+    .tw-row { display:flex; align-items:center; gap:10px; padding:9px 12px; border-top:1px solid #f1f5f9; cursor:pointer; }
+    .tw-row:first-child { border-top:none; }
+    .tw-row:hover { background:#f8fafc; }
+    .tw-row.sel { background:#e0f2fe; }
+    .tw-chip { font-size:12px; padding:3px 10px; border-radius:8px; white-space:nowrap; }
+    .tw-c-complete { background:#dcfce7; color:#166534; }
+    .tw-c-partial  { background:#fef9c3; color:#854d0e; }
+    .tw-c-none     { background:#fee2e2; color:#991b1b; }
+    .tw-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:13px; }
+    .tw-table th { text-align:left; font-weight:600; color:#475569; padding:6px 8px; border-bottom:2px solid #e2e8f0; font-size:13px; }
+    .tw-table td { padding:7px 8px; border-bottom:1px solid #f1f5f9; }
+    .tw-time { color:#64748b; white-space:nowrap; }
+    .tw-empty td { text-align:center; color:#94a3b8; background:#f8fafc; }
+  </style>
+<script>
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  function shouldPrefix(href) {
+    return href && href.startsWith('/')
+      && !href.startsWith('/t/') && !href.startsWith('/super')
+      && !href.startsWith('/styles') && !href.startsWith('/logo')
+      && !href.startsWith('/i18n') && !href.startsWith('/favicon');
+  }
+  function rewriteLinks(root) {
+    if (!window.TBASE || !root) return;
+    if (root.nodeType === 1 && root.tagName === 'A' && shouldPrefix(root.getAttribute('href'))) {
+      root.setAttribute('href', window.TBASE + root.getAttribute('href'));
+    }
+    if (typeof root.querySelectorAll === 'function') {
+      root.querySelectorAll('a[href^="/"]').forEach(a => {
+        const h = a.getAttribute('href');
+        if (shouldPrefix(h)) a.setAttribute('href', window.TBASE + h);
+      });
+    }
+  }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    new MutationObserver(muts => {
+      for (const m of muts) { rewriteLinks(m.target); for (const node of m.addedNodes) rewriteLinks(node); }
+    }).observe(document.body, { childList: true, subtree: true });
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span');
+      span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      span.textContent = '...';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => {
+        span.textContent = c && c.name ? c.name : '';
+        if (!c || !c.name) span.style.display = 'none';
+      }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="logo"><span>HR-Interview</span></div>
+    <nav>
+      <a href="/">หน้าแรก</a>
+      <a href="/worklog">📝 บันทึกงาน</a>
+      <a href="/worklog-team">👥 บันทึกงานทีม</a>
+      <a href="/dashboard">📋 Dashboard</a>
+      <a href="#" onclick="(async()=>{await fetch(TBASE + '/api/logout',{method:'POST'});location.href = TBASE + '/login';})();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <div class="card">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+      <span style="font-size:24px;">👥</span>
+      <div>
+        <h1 style="margin:0;">บันทึกงานของทีม</h1>
+        <p class="sub" id="tw-scope" style="margin:2px 0 0;">เห็นเฉพาะคนในขอบเขตของคุณ</p>
+      </div>
+    </div>
+
+    <div id="tw-main">
+      <div class="tw-controls">
+        <select id="f-div"><option value="">ทุกฝ่าย</option></select>
+        <select id="f-sec"><option value="">ทุกแผนก</option></select>
+        <select id="f-status">
+          <option value="">สถานะ: ทั้งหมด</option>
+          <option value="complete">ครบแล้ว</option>
+          <option value="partial">ยังไม่ครบ</option>
+          <option value="none">ยังไม่บันทึก</option>
+        </select>
+        <input type="date" id="f-date"/>
+      </div>
+
+      <div class="tw-search">
+        <span class="ic">🔍</span>
+        <input type="text" id="f-search" placeholder="ค้นหาชื่อพนักงาน..."/>
+      </div>
+
+      <div class="tw-list" id="tw-list"><div style="padding:14px; color:#94a3b8;">กำลังโหลด...</div></div>
+
+      <div id="tw-detail" style="display:none;">
+        <div style="display:flex; align-items:center; gap:8px; padding-top:6px; margin-bottom:10px; border-top:1px solid #e2e8f0;">
+          <span style="font-size:16px;">👁️</span>
+          <span style="font-weight:600;" id="tw-detail-title">–</span>
+          <span style="font-size:12px; color:#94a3b8;">(อ่านอย่างเดียว)</span>
+        </div>
+        <div id="tw-detail-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const today = new Date().toLocaleDateString('en-CA');
+let members = [];
+let selectedId = null;
+
+const elList = document.getElementById('tw-list');
+const elDate = document.getElementById('f-date');
+const elDiv = document.getElementById('f-div');
+const elSec = document.getElementById('f-sec');
+const elStatus = document.getElementById('f-status');
+const elSearch = document.getElementById('f-search');
+const STATUS_LABEL = { complete: 'ครบ', partial: 'ไม่ครบ', none: 'ยังไม่บันทึก' };
+
+function chip(m) {
+  if (m.status === 'complete') return `<span class="tw-chip tw-c-complete">ครบ ${m.filled}/${m.total}</span>`;
+  if (m.status === 'partial')  return `<span class="tw-chip tw-c-partial">${m.filled}/${m.total}</span>`;
+  return `<span class="tw-chip tw-c-none">ยังไม่บันทึก</span>`;
+}
+
+function fillSelect(sel, values) {
+  const keep = sel.value;
+  const opts = [`<option value="">${sel.id === 'f-div' ? 'ทุกฝ่าย' : 'ทุกแผนก'}</option>`]
+    .concat([...new Set(values.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'th')).map(v => `<option value="${esc(v)}">${esc(v)}</option>`));
+  sel.innerHTML = opts.join('');
+  sel.value = keep;
+}
+
+function renderList() {
+  const q = elSearch.value.trim().toLowerCase();
+  const fd = elDiv.value, fs = elSec.value, fst = elStatus.value;
+  const filtered = members.filter(m =>
+    (!q || m.name.toLowerCase().includes(q)) &&
+    (!fd || m.division_name === fd) &&
+    (!fs || m.section_name === fs) &&
+    (!fst || m.status === fst));
+  if (!filtered.length) {
+    elList.innerHTML = '<div style="padding:14px; color:#94a3b8;">ไม่พบพนักงานตามเงื่อนไข</div>';
+    return;
+  }
+  elList.innerHTML = filtered.map(m => `
+    <div class="tw-row${m.user_id === selectedId ? ' sel' : ''}" data-id="${esc(m.user_id)}">
+      <span style="font-size:16px; color:#64748b;">👤</span>
+      <span style="flex:1;"><span style="font-weight:500;">${esc(m.name)}</span> <span style="color:#64748b; font-size:13px;">· ${esc(m.position_name || '-')}${m.section_name ? ' · ' + esc(m.section_name) : ''}</span></span>
+      ${chip(m)}
+    </div>`).join('');
+  elList.querySelectorAll('.tw-row').forEach(row =>
+    row.addEventListener('click', () => selectMember(row.getAttribute('data-id'))));
+}
+
+function renderDetail(data) {
+  const detail = document.getElementById('tw-detail');
+  detail.style.display = 'block';
+  document.getElementById('tw-detail-title').textContent =
+    `${data.member.name} — ${formatThaiDate(elDate.value)}`;
+  const rows = data.entries.map(e => {
+    const has = e.task && e.task.trim();
+    return `<tr>
+      <td class="tw-time">${esc(e.label)}</td>
+      <td>${has ? esc(e.task) : '<span style="color:#94a3b8;">— ยังไม่บันทึก —</span>'}</td>
+      <td style="color:#64748b;">${esc(e.tools || '—')}</td>
+      <td style="text-align:center; color:${has ? '#16a34a' : '#d97706'};">${has ? '✓' : '🕒'}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('tw-detail-body').innerHTML = `
+    <p class="sub" style="margin:0 0 8px;">บันทึกแล้ว ${data.filled}/${data.total} ชั่วโมง</p>
+    <table class="tw-table">
+      <thead><tr><th style="width:90px;">เวลา</th><th>งานที่ทำ</th><th style="width:28%;">เครื่องมือ</th><th style="width:46px; text-align:center;">สถานะ</th></tr></thead>
+      <tbody>${rows || '<tr class="tw-empty"><td colspan="4" style="padding:12px;">ไม่มีข้อมูล</td></tr>'}</tbody>
+    </table>`;
+}
+
+function formatThaiDate(d) {
+  if (!d) return '';
+  const [y, m, day] = d.split('-');
+  return `${day}/${m}/${y}`;
+}
+
+async function selectMember(userId) {
+  selectedId = userId;
+  renderList();
+  document.getElementById('tw-detail').style.display = 'block';
+  document.getElementById('tw-detail-body').innerHTML = '<p class="sub">กำลังโหลด...</p>';
+  try {
+    const data = await fetch(`${TBASE}/api/worklog/view/${encodeURIComponent(userId)}?date=${elDate.value}`).then(r => r.json());
+    if (data.error) { document.getElementById('tw-detail-body').innerHTML = `<p class="sub" style="color:#b91c1c;">${esc(data.error)}</p>`; return; }
+    renderDetail(data);
+  } catch (e) {
+    document.getElementById('tw-detail-body').innerHTML = '<p class="sub" style="color:#b91c1c;">โหลดข้อมูลไม่สำเร็จ</p>';
+  }
+}
+
+async function loadTeam() {
+  elList.innerHTML = '<div style="padding:14px; color:#94a3b8;">กำลังโหลด...</div>';
+  try {
+    const data = await fetch(`${TBASE}/api/worklog/team?date=${elDate.value}`).then(r => r.json());
+    if (data.applicable === false) {
+      document.getElementById('tw-main').innerHTML =
+        '<p class="sub" style="padding:16px 0;">เมนูนี้สำหรับหัวหน้า/ผู้ดูแลระบบ — เจ้าหน้าที่ทั่วไปดูได้เฉพาะบันทึกของตัวเองที่เมนู <a href="/worklog">📝 บันทึกงาน</a></p>';
+      return;
+    }
+    members = data.members || [];
+    fillSelect(elDiv, members.map(m => m.division_name));
+    fillSelect(elSec, members.map(m => m.section_name));
+    renderList();
+    if (selectedId && members.some(m => m.user_id === selectedId)) selectMember(selectedId);
+  } catch (e) {
+    elList.innerHTML = '<div style="padding:14px; color:#b91c1c;">โหลดรายชื่อทีมไม่สำเร็จ</div>';
+  }
+}
+
+elDate.value = today; elDate.max = today;
+elDate.addEventListener('change', () => { if (elDate.value > today) elDate.value = today; loadTeam(); });
+elDiv.addEventListener('change', renderList);
+elSec.addEventListener('change', renderList);
+elStatus.addEventListener('change', renderList);
+elSearch.addEventListener('input', renderList);
+loadTeam();
+</script>
+</body>
+</html>

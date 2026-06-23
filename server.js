@@ -1356,6 +1356,66 @@ tenantRouter.get('/api/worklog/status', (req, res) => {
   res.json({ applicable: true, date: wl.date, total: wl.total, filled: wl.filled, complete: wl.total > 0 && wl.filled >= wl.total });
 });
 
+// ---- Team view: supervisors/admin can read subordinates' logs (read-only) ----
+// Whose worklog may this session view? Reuses the existing canView scope; officers
+// see only their own (handled by the self endpoints), so they get no team here.
+function canViewUserWorklog(session, u) {
+  if (!u) return false;
+  if (session.role === 'officer') return false;
+  if (session.role === 'admin' || session.role === 'executive') return true;
+  return canView(session, { division_id: u.division_id, section_id: u.section_id || null, position_id: u.position_id || null });
+}
+
+// Team roster + each member's status for a date (powers the searchable dropdown + filters)
+tenantRouter.get('/api/worklog/team', (req, res) => {
+  if (req.session.role === 'officer') return res.json({ applicable: false, members: [] });
+  let date = String(req.query.date || '').trim();
+  const today = todayLocal();
+  if (!WORKLOG_DATE_RE.test(date)) date = today;
+  if (date > today) date = today;
+  const db = ctxDb();
+  const divMap = Object.fromEntries(load.divisions().map(d => [d.id, d.name]));
+  const secMap = Object.fromEntries(load.sections().map(s => [s.id, s.name]));
+  const posMap = Object.fromEntries(load.positions().map(p => [p.id, p.name]));
+  const members = load.users()
+    .filter(u => u.id !== req.session.user_id && canViewUserWorklog(req.session, u))
+    .map(u => {
+      const wl = buildWorklogForUser(db, u, date);
+      return {
+        user_id: u.id, name: u.name, username: u.username,
+        division_id: u.division_id || null, division_name: divMap[u.division_id] || '',
+        section_id: u.section_id || null, section_name: secMap[u.section_id] || '',
+        position_name: posMap[u.position_id] || '',
+        total: wl.total, filled: wl.filled,
+        status: wl.filled === 0 ? 'none' : (wl.filled >= wl.total ? 'complete' : 'partial'),
+      };
+    })
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'th'));
+  res.json({ applicable: true, date, members });
+});
+
+// One member's worklog for a date — read-only, permission-checked
+tenantRouter.get('/api/worklog/view/:userId', (req, res) => {
+  const target = load.users().find(u => u.id === req.params.userId);
+  if (!target) return res.status(404).json({ error: 'not found' });
+  if (!canViewUserWorklog(req.session, target)) return res.status(403).json({ error: 'ไม่มีสิทธิ์ดูบันทึกของผู้ใช้นี้' });
+  let date = String(req.query.date || '').trim();
+  const today = todayLocal();
+  if (!WORKLOG_DATE_RE.test(date)) date = today;
+  if (date > today) date = today;
+  const db = ctxDb();
+  const divMap = Object.fromEntries(load.divisions().map(d => [d.id, d.name]));
+  const secMap = Object.fromEntries(load.sections().map(s => [s.id, s.name]));
+  const posMap = Object.fromEntries(load.positions().map(p => [p.id, p.name]));
+  res.json({
+    ...buildWorklogForUser(db, target, date),
+    member: {
+      name: target.name, position_name: posMap[target.position_id] || '',
+      division_name: divMap[target.division_id] || '', section_name: secMap[target.section_id] || '',
+    },
+  });
+});
+
 // Interview JSON — read access via canViewEmployee so hierarchy can inspect subordinates'
 // answers (including archived/historical records).
 tenantRouter.get('/api/interview/:id', (req, res) => {
@@ -1466,6 +1526,7 @@ tenantRouter.get('/review',   (req, res) => res.sendFile(path.join(ROOT, 'public
 tenantRouter.get('/examples', (req, res) => res.sendFile(path.join(ROOT, 'public', 'examples.html')));
 tenantRouter.get('/dashboard',(req, res) => res.sendFile(path.join(ROOT, 'public', 'dashboard.html')));
 tenantRouter.get('/worklog',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'worklog.html')));
+tenantRouter.get('/worklog-team', (req, res) => res.sendFile(path.join(ROOT, 'public', 'worklog-team.html')));
 
 // ============================================================
 // Excel Import / Template Generation (admin only)
