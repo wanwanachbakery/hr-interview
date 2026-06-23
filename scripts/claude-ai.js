@@ -181,6 +181,12 @@ function buildEmployeeContext(interview) {
     for (const a of divAns) lines.push(`- ${a.value}`);
   }
 
+  if (interview.worklogSummary) {
+    lines.push('');
+    lines.push('— ข้อมูลจากบันทึกงานประจำวันจริง (สำคัญ: ใช้ประกอบการวิเคราะห์ โดยเฉพาะ KPI และ Optimization — งานที่ทำซ้ำบ่อยคือเป้าหมายการลดงาน/ใช้ AI) —');
+    lines.push(interview.worklogSummary);
+  }
+
   return lines.join('\n');
 }
 

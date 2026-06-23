@@ -136,6 +136,16 @@
     <div id="done-box" style="display:none; text-align:center; padding:24px;">
       <h2 data-i18n="iv_done_h2">🎉 อินเทอร์วิวเสร็จสิ้น</h2>
       <p class="sub" data-i18n="iv_done_sub">กดปุ่มด้านล่างเพื่อสร้างเอกสาร</p>
+      <div style="margin:0 auto 16px; max-width:340px; text-align:left;">
+        <label for="wl-window" style="font-size:14px; color:#475569; display:block; margin-bottom:6px;">ใช้ข้อมูลบันทึกงานประจำวันย้อนหลัง:</label>
+        <select id="wl-window" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px;">
+          <option value="30">1 เดือน</option>
+          <option value="60" selected>2 เดือน</option>
+          <option value="90">3 เดือน</option>
+          <option value="0">ไม่ใช้ (จากบทสัมภาษณ์อย่างเดียว)</option>
+        </select>
+        <p class="hint" style="margin:6px 0 0;">ยิ่งมีบันทึกงานจริงมาก เอกสาร KPI/Optimization ยิ่งแม่น (โดยเฉพาะการชี้งานซ้ำ)</p>
+      </div>
       <button id="finish-btn" data-i18n="iv_done_btn">สร้างเอกสาร →</button>
     </div>
   </div>
@@ -360,8 +370,13 @@ function showGen(state, msg) {
 
 async function runFinish() {
   showGen('analyzing');
+  const wlSel = document.getElementById('wl-window');
+  const worklogDays = wlSel ? Number(wlSel.value) : 0;
   try {
-    const r = await fetch(`${TBASE}/api/interview/${empId}/finish`, { method: 'POST' });
+    const r = await fetch(`${TBASE}/api/interview/${empId}/finish`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ worklogDays }),
+    });
     if (!r.ok) { showGen('error', 'เริ่มสร้างเอกสารไม่สำเร็จ — ลองใหม่อีกครั้ง'); return; }
   } catch (err) { showGen('error', 'เชื่อมต่อไม่สำเร็จ — ตรวจอินเทอร์เน็ตแล้วลองใหม่'); return; }
 

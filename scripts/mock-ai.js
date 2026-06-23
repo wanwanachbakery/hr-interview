@@ -777,6 +777,9 @@ function buildOptimizationMd(interview) {
   const e = interview.employee;
   const all = interview.answers.map(a => a.value).join('\n');
   const findings = [];
+  const worklogBlock = interview.worklogSummary
+    ? `\n## ข้อมูลจากบันทึกงานจริง\n${interview.worklogSummary}\n`
+    : '';
 
   for (const k of AI_REPLACEABLE_KEYWORDS) {
     if (k.match.test(all)) {
@@ -837,7 +840,7 @@ ${rows}
 
 ## ประมาณการเวลาที่อาจประหยัดได้
 หากทำตามข้อเสนอทั้งหมด ประมาณ **${findings.length * 2}–${findings.length * 4} ชั่วโมง/สัปดาห์** (ตัวเลขหยาบ ควร baseline ก่อนวัดจริง)
-`;
+${worklogBlock}`;
 }
 
 function generateDocuments(interview) {

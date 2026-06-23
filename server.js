@@ -1250,6 +1250,52 @@ tenantRouter.post('/api/interview/:id/message', (req, res) => {
   res.json({ question: q });
 });
 
+// Summarise a user's recent daily worklog into a short Thai block for the AI
+// (top recurring tasks, category mix, recurring %) over the chosen window.
+function summarizeUserWorklog(db, userId, endDate, days) {
+  if (!userId || !days) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  const [yy, mm, dd] = String(endDate).split('-').map(Number);
+  if (!yy) return null;
+  const base = new Date(yy, mm - 1, dd);
+  const catHours = {}, taskDays = {};
+  let totalFilled = 0, daysLogged = 0, recurringFilled = 0;
+  for (let i = 0; i < days; i++) {
+    const d = new Date(base); d.setDate(d.getDate() - i);
+    const ds = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const wl = db.loadWorklog(userId, ds);
+    if (!wl || !Array.isArray(wl.entries)) continue;
+    const f = wl.entries.filter(e => e.task && String(e.task).trim());
+    if (!f.length) continue;
+    daysLogged++;
+    const seen = new Set();
+    for (const e of f) {
+      totalFilled++;
+      const cat = e.category && String(e.category).trim() ? e.category : 'ไม่ระบุ';
+      catHours[cat] = (catHours[cat] || 0) + 1;
+      if (e.recurring) recurringFilled++;
+      const key = String(e.task).trim().toLowerCase().slice(0, 60);
+      if (!seen.has(key)) {
+        seen.add(key);
+        taskDays[key] = taskDays[key] || { label: String(e.task).trim().slice(0, 80), days: 0, recurring: false };
+        taskDays[key].days++;
+        if (e.recurring) taskDays[key].recurring = true;
+      }
+    }
+  }
+  if (!daysLogged) return null;
+  const cats = Object.entries(catHours).sort((a, b) => b[1] - a[1])
+    .map(([c, h]) => `${c} ${Math.round((h / totalFilled) * 100)}%`);
+  const topTasks = Object.values(taskDays).sort((a, b) => b.days - a.days).slice(0, 8);
+  const lines = [
+    `สรุปบันทึกงานจริงของพนักงาน (ย้อนหลัง ${days} วัน · มีบันทึก ${daysLogged} วัน · รวม ${totalFilled} ชม.):`,
+    `- เวลาแยกตามหมวดหมู่: ${cats.join(', ')}`,
+    `- งานซ้ำ ${Math.round((recurringFilled / totalFilled) * 100)}% ของเวลาทั้งหมด`,
+    `- งานที่ทำบ่อย: ${topTasks.map(t => `${t.label} (${t.days} วัน${t.recurring ? ', งานประจำ' : ''})`).join('; ')}`,
+  ];
+  return { text: lines.join('\n'), daysLogged, totalFilled };
+}
+
 // Finish -> generate JD/KPI/Optimization docs.
 // Generation can be slow (real Claude ~90s) — longer than the Cloudflare/browser
 // request limit. So we mark the employee "processing", respond immediately, then
@@ -1259,6 +1305,8 @@ tenantRouter.post('/api/interview/:id/finish', (req, res) => {
   if (!iv) return res.status(404).json({ error: 'not found' });
   const liveEmp = load.employees().find(e => e.id === req.params.id);
   if (!canInterviewEmployee(req.session, liveEmp)) return res.status(403).json({ error: 'ไม่มีสิทธิ์ปิด interview ของคนอื่น' });
+  // How many days of the employee's daily worklog to feed the AI (chosen in the UI).
+  const worklogDays = [30, 60, 90].includes(Number((req.body || {}).worklogDays)) ? Number(req.body.worklogDays) : 0;
 
   iv.finishedAt = iv.interviewDate
     ? (backdateIso(iv.interviewDate, 10) || new Date().toISOString())
@@ -1277,6 +1325,11 @@ tenantRouter.post('/api/interview/:id/finish', (req, res) => {
   const db = ctxDb();
   (async () => {
     try {
+      // Enrich with the employee's recent daily worklog (window chosen in the UI).
+      if (worklogDays && liveEmp && liveEmp.user_id) {
+        const s = summarizeUserWorklog(db, liveEmp.user_id, String(iv.finishedAt || new Date().toISOString()).slice(0, 10), worklogDays);
+        if (s) iv.worklogSummary = s.text;
+      }
       const outDir = path.join(db.outDir, iv.id);
       if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
       const docs = await generateDocuments(iv);
