@@ -206,8 +206,8 @@ async function load() {
                 : (e.user_id === ME.user_id
                     ? `<a href="/interview?id=${esc(e.id)}" style="font-size:12px; margin-left:8px;">▶ ตอบของฉัน</a>`
                     : '');
-              const delBtn = ME.role === 'admin'
-                ? `<button class="ghost del-btn" style="font-size:12px; padding:2px 8px; margin-left:8px;" data-id="${esc(e.id)}" data-name="${esc(e.name)}">🗑</button>`
+              const delBtn = (ME.role === 'admin' && statusKey !== 'not_started')
+                ? `<button class="ghost del-btn" style="font-size:12px; padding:2px 8px; margin-left:8px;" data-id="${esc(e.id)}" data-name="${esc(e.name)}" title="ล้างคำตอบและเอกสาร กลับเป็นยังไม่ตอบ">↺ รีเซ็ต</button>`
                 : '';
               return `<div class="pos-row">
                 <div class="pos-label">👤 ${esc(p.name)} <span style="color:#475569;">→ ${esc(e.name)}</span></div>
@@ -220,14 +220,14 @@ async function load() {
     </div>`;
   }).join('');
 
-  // Wire delete buttons (admin only)
+  // Wire reset buttons (admin only) — clears answers + docs, keeps the employee
   document.querySelectorAll('.del-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.id;
-      if (!confirm(`ลบ "${btn.dataset.name}" และ interview ทั้งหมด?`)) return;
+      if (!confirm(`รีเซ็ตอินเทอร์วิวของ "${btn.dataset.name}"?\n\nคำตอบและเอกสาร (JD/KPI/Optimization) ทั้งหมดจะถูกล้าง กลับเป็น "ยังไม่ตอบ"\nพนักงานยังอยู่ในระบบและกรอกใหม่ได้`)) return;
       btn.disabled = true;
       const r = await fetch(TBASE + '/api/interview/' + encodeURIComponent(id), { method: 'DELETE' });
-      if (!r.ok) { const d = await r.json().catch(() => ({})); alert('ลบไม่ได้: ' + (d.error || 'unknown')); btn.disabled = false; return; }
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert('รีเซ็ตไม่ได้: ' + (d.error || 'unknown')); btn.disabled = false; return; }
       await load();
     });
   });

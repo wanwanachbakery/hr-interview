@@ -1116,7 +1116,13 @@ tenantRouter.get('/api/employees', (req, res) => {
 // "My active employee record" — for the user's own interview entry point.
 tenantRouter.get('/api/me/employee', (req, res) => {
   if (req.session.role === 'admin') return res.json(null);
-  const emp = load.employees().find(e => e.user_id === req.session.user_id && !e.archived);
+  let emp = load.employees().find(e => e.user_id === req.session.user_id && !e.archived);
+  // Self-heal: if the record is missing (e.g. was reset/removed) but the user has a
+  // complete position, recreate it as 'not_started' so they can interview again.
+  if (!emp) {
+    const user = load.users().find(u => u.id === req.session.user_id);
+    if (user && user.position_id) emp = autoCreateEmployeeForUser(user);
+  }
   res.json(emp || null);
 });
 
@@ -1622,7 +1628,9 @@ tenantRouter.get('/api/interview/:id', (req, res) => {
   res.json(iv);
 });
 
-// Delete employee + interview + outputs — ADMIN ONLY
+// Reset interview — clears the answers + generated documents and sets status back
+// to "not_started". KEEPS the employee record so they can interview again.
+// (To remove a person entirely, delete their user account instead.) ADMIN ONLY.
 tenantRouter.delete('/api/interview/:id', requireAdmin, (req, res) => {
   const id = req.params.id;
   const ivFile = interviewPath(id);
@@ -1631,11 +1639,13 @@ tenantRouter.delete('/api/interview/:id', requireAdmin, (req, res) => {
   if (fs.existsSync(outDir)) fs.rmSync(outDir, { recursive: true, force: true });
 
   const list = load.employees();
-  const idx = list.findIndex(x => x.id === id);
-  if (idx === -1) return res.status(404).json({ error: 'employee not found' });
-  list.splice(idx, 1);
+  const e = list.find(x => x.id === id);
+  if (!e) return res.status(404).json({ error: 'employee not found' });
+  e.interviewStatus = 'not_started';
+  delete e.completedAt;
+  delete e.docStatus;
   save.employees(list);
-  res.json({ ok: true });
+  res.json({ ok: true, reset: true });
 });
 
 // History for calendar — scope-filtered
