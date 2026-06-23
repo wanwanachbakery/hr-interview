@@ -1470,6 +1470,95 @@ tenantRouter.get('/api/worklog/view/:userId', (req, res) => {
   });
 });
 
+// Inclusive list of YYYY-MM-DD strings from..to (guarded)
+function worklogDateRange(from, to) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const out = [];
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  let d = new Date(fy, fm - 1, fd);
+  const end = new Date(ty, tm - 1, td);
+  let guard = 0;
+  while (d <= end && guard < 400) {
+    out.push(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+    d.setDate(d.getDate() + 1); guard++;
+  }
+  return out;
+}
+
+// Aggregated worklog report over a date range for the viewer's team
+tenantRouter.get('/api/worklog/report', (req, res) => {
+  if (req.session.role === 'officer') return res.json({ applicable: false });
+  const today = todayLocal();
+  let to = String(req.query.to || '').trim();
+  let from = String(req.query.from || '').trim();
+  if (!WORKLOG_DATE_RE.test(to) || to > today) to = today;
+  if (!WORKLOG_DATE_RE.test(from)) from = today.slice(0, 8) + '01'; // default: 1st of this month
+  if (from > to) from = to;
+  let dates = worklogDateRange(from, to);
+  if (dates.length > 92) dates = dates.slice(-92); // cap ~3 months of file reads
+
+  const fDiv = String(req.query.division_id || '').trim();
+  const fSec = String(req.query.section_id || '').trim();
+  const db = ctxDb();
+  const divMap = Object.fromEntries(load.divisions().map(d => [d.id, d.name]));
+  const secMap = Object.fromEntries(load.sections().map(s => [s.id, s.name]));
+  const posMap = Object.fromEntries(load.positions().map(p => [p.id, p.name]));
+
+  const users = load.users().filter(u =>
+    u.id !== req.session.user_id && canViewUserWorklog(req.session, u) &&
+    (!fDiv || u.division_id === fDiv) && (!fSec || u.section_id === fSec));
+
+  const byCategory = {};
+  let totFilled = 0, totRecurring = 0, peopleLogged = 0, sumAvg = 0;
+
+  const members = users.map(u => {
+    const uh = calcUserHours(u);
+    const perDay = (uh && uh.hours.length) ? uh.hours.length : 8;
+    let filled = 0, recurring = 0, daysLogged = 0, sumComplete = 0;
+    for (const ds of dates) {
+      const wl = db.loadWorklog(u.id, ds);
+      if (!wl || !Array.isArray(wl.entries)) continue;
+      const f = wl.entries.filter(e => e.task && String(e.task).trim());
+      if (!f.length) continue;
+      daysLogged++;
+      filled += f.length;
+      sumComplete += Math.min(1, f.length / perDay);
+      for (const e of f) {
+        const cat = e.category && String(e.category).trim() ? e.category : 'ไม่ระบุ';
+        byCategory[cat] = (byCategory[cat] || 0) + 1;
+        if (e.recurring) recurring++;
+      }
+    }
+    const avg = daysLogged ? Math.round((sumComplete / daysLogged) * 100) : 0;
+    totFilled += filled; totRecurring += recurring;
+    if (daysLogged) { peopleLogged++; sumAvg += avg; }
+    return {
+      user_id: u.id, name: u.name,
+      position_name: posMap[u.position_id] || '', division_name: divMap[u.division_id] || '', section_name: secMap[u.section_id] || '',
+      filledHours: filled, daysLogged, avgCompleteness: avg,
+      status: daysLogged === 0 ? 'none' : (avg >= 90 ? 'good' : (avg >= 60 ? 'ok' : 'low')),
+    };
+  }).sort((a, b) => b.filledHours - a.filledHours);
+
+  const byCat = Object.entries(byCategory)
+    .map(([category, hours]) => ({ category, hours, pct: totFilled ? Math.round((hours / totFilled) * 100) : 0 }))
+    .sort((a, b) => b.hours - a.hours);
+
+  res.json({
+    applicable: true, from, to, dayCount: dates.length,
+    totals: {
+      filledHours: totFilled,
+      recurringHours: totRecurring,
+      recurringPct: totFilled ? Math.round((totRecurring / totFilled) * 100) : 0,
+      peopleLogged, peopleTotal: members.length,
+      avgCompleteness: peopleLogged ? Math.round(sumAvg / peopleLogged) : 0,
+    },
+    byCategory: byCat,
+    members,
+  });
+});
+
 // Interview JSON — read access via canViewEmployee so hierarchy can inspect subordinates'
 // answers (including archived/historical records).
 tenantRouter.get('/api/interview/:id', (req, res) => {
@@ -1581,6 +1670,7 @@ tenantRouter.get('/examples', (req, res) => res.sendFile(path.join(ROOT, 'public
 tenantRouter.get('/dashboard',(req, res) => res.sendFile(path.join(ROOT, 'public', 'dashboard.html')));
 tenantRouter.get('/worklog',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'worklog.html')));
 tenantRouter.get('/worklog-team', (req, res) => res.sendFile(path.join(ROOT, 'public', 'worklog-team.html')));
+tenantRouter.get('/worklog-report', (req, res) => res.sendFile(path.join(ROOT, 'public', 'worklog-report.html')));
 
 // ============================================================
 // Excel Import / Template Generation (admin only)
