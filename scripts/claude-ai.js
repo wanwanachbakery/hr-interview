@@ -33,6 +33,32 @@ const mock = require('./mock-ai');
 const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
 
 // ------------------------------------------------------------------
+// Pricing — USD per 1,000,000 tokens, by model. Used only to *estimate*
+// the cost shown to admins (Anthropic bills in USD). cache_write is the
+// 5-min ephemeral write rate (1.25x base input); cache_read is 0.1x.
+// ------------------------------------------------------------------
+const PRICING = {
+  'claude-sonnet-4-6': { input: 3,  output: 15, cache_write: 3.75, cache_read: 0.30 },
+  'claude-opus-4-8':   { input: 5,  output: 25, cache_write: 6.25, cache_read: 0.50 },
+  'claude-haiku-4-5':  { input: 1,  output: 5,  cache_write: 1.25, cache_read: 0.10 },
+};
+// Rough THB conversion for display only (override with env USD_TO_THB).
+const USD_TO_THB = Number(process.env.USD_TO_THB) || 36;
+
+function priceFor(model) { return PRICING[model] || PRICING['claude-sonnet-4-6']; }
+
+// Turn a raw Anthropic usage object into a flat record with an estimated cost.
+function usageRecord(usage) {
+  const p = priceFor(MODEL);
+  const input = usage.input_tokens || 0;
+  const output = usage.output_tokens || 0;
+  const cw = usage.cache_creation_input_tokens || 0;
+  const cr = usage.cache_read_input_tokens || 0;
+  const usd = (input * p.input + output * p.output + cw * p.cache_write + cr * p.cache_read) / 1e6;
+  return { model: MODEL, input, output, cache_write: cw, cache_read: cr, cost_usd: usd, cost_thb: usd * USD_TO_THB };
+}
+
+// ------------------------------------------------------------------
 // Lazy SDK / client init — requiring this file must never throw, even
 // if @anthropic-ai/sdk isn't installed yet or the key is missing.
 // ------------------------------------------------------------------
@@ -108,7 +134,7 @@ async function runClaude({ system, user, maxTokens = 8000 }) {
     .trim();
 
   if (!text) throw new Error('claude returned empty text');
-  return text;
+  return { text, usage: msg.usage || null };
 }
 
 // ------------------------------------------------------------------
@@ -252,7 +278,7 @@ function splitDocs(text) {
   return { jd, kpi, opt };
 }
 
-async function generateDocuments(interview) {
+async function generateDocuments(interview, opts = {}) {
   // Always start from the mock output: this gives us the 3 mechanical docs for
   // free AND a complete safe fallback for the 3 analytical docs.
   const docs = mock.generateDocuments(interview);
@@ -260,11 +286,15 @@ async function generateDocuments(interview) {
   if (!isEnabled()) return docs;
 
   try {
-    const text = await runClaude({
+    const { text, usage } = await runClaude({
       system: SYS_DOCS,
       user: buildEmployeeContext(interview),
       maxTokens: 8000,
     });
+    // Report token usage/cost even if parsing later fails — the tokens were spent.
+    if (usage && typeof opts.onUsage === 'function') {
+      try { opts.onUsage(usageRecord(usage)); } catch (_) {}
+    }
     const parsed = splitDocs(text);
     if (parsed) {
       docs['job-description.md'] = parsed.jd;
@@ -329,17 +359,21 @@ function buildCompanyContext(interviews) {
   return lines.join('\n');
 }
 
-async function analyzeCompany(interviews) {
+async function analyzeCompany(interviews, opts = {}) {
   const list = interviews || [];
   if (!list.length) return mock.analyzeCompany(list);
   if (!isEnabled()) return mock.analyzeCompany(list);
 
   try {
-    return await runClaude({
+    const { text, usage } = await runClaude({
       system: SYS_COMPANY,
       user: buildCompanyContext(list),
       maxTokens: 8000,
     });
+    if (usage && typeof opts.onUsage === 'function') {
+      try { opts.onUsage(usageRecord(usage)); } catch (_) {}
+    }
+    return text;
   } catch (e) {
     console.error('[claude-ai] analyzeCompany failed — using mock report: ' + e.message);
     return mock.analyzeCompany(list);
@@ -350,6 +384,9 @@ module.exports = {
   isEnabled,
   generateDocuments,
   analyzeCompany,
+  PRICING,
+  USD_TO_THB,
+  priceFor,
   // re-export the mock-only helpers so callers can use one module if they want
   getNextQuestion: mock.getNextQuestion,
   shouldProbe: mock.shouldProbe,

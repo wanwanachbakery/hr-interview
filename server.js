@@ -19,23 +19,58 @@ const ai = require('./scripts/mock-ai');
 // interview questions/probes stay on mock-ai (cheaper, deterministic).
 const claude = require('./scripts/claude-ai');
 
-// Pick Claude when a key is configured, otherwise mock. Both wrappers are async
-// and never throw — claude-ai already falls back to mock internally.
-async function generateDocuments(interview) {
-  if (claude.isEnabled()) {
-    try { return await claude.generateDocuments(interview); }
-    catch (e) { console.error('[ai] generateDocuments fell back to mock:', e.message); }
+// Use Claude when a key is configured on the server AND this tenant has the
+// switch turned on (admin console); otherwise mock. Both wrappers are async and
+// never throw. When Claude runs, token usage + estimated cost are recorded per
+// tenant in claude-usage.json so admins can see what each analysis cost.
+function claudeOnForTenant(db) {
+  if (!claude.isEnabled()) return false;                       // no ANTHROPIC_API_KEY on server
+  try { return db.claudeSettings().enabled !== false; }        // default ON once a key exists
+  catch { return false; }
+}
+function recordClaudeUsage(db, rec) {
+  try {
+    const u = normalizeClaudeUsage(db.claudeUsage());
+    const t = u.totals;
+    t.runs += 1;
+    t.input += rec.input || 0;
+    t.output += rec.output || 0;
+    t.cache_write += rec.cache_write || 0;
+    t.cache_read += rec.cache_read || 0;
+    t.cost_usd += rec.cost_usd || 0;
+    t.cost_thb += rec.cost_thb || 0;
+    u.runs.unshift({
+      at: new Date().toISOString(),
+      kind: rec.kind || '', label: rec.label || '', model: rec.model || '',
+      input: rec.input || 0, output: rec.output || 0,
+      cache_write: rec.cache_write || 0, cache_read: rec.cache_read || 0,
+      cost_usd: rec.cost_usd || 0, cost_thb: rec.cost_thb || 0,
+    });
+    if (u.runs.length > 200) u.runs.length = 200;               // keep the file bounded
+    db.saveClaudeUsage(u);
+  } catch (e) { console.error('[claude-usage] record failed:', e.message); }
+}
+async function generateDocuments(interview, db) {
+  if (db && claudeOnForTenant(db)) {
+    try {
+      return await claude.generateDocuments(interview, {
+        onUsage: (rec) => recordClaudeUsage(db, { kind: 'documents', label: (interview.employee && interview.employee.name) || '', ...rec }),
+      });
+    } catch (e) { console.error('[ai] generateDocuments fell back to mock:', e.message); }
   }
   return ai.generateDocuments(interview);
 }
-async function analyzeCompany(interviews) {
-  if (claude.isEnabled()) {
-    try { return await claude.analyzeCompany(interviews); }
-    catch (e) { console.error('[ai] analyzeCompany fell back to mock:', e.message); }
+async function analyzeCompany(interviews, db) {
+  if (db && claudeOnForTenant(db)) {
+    try {
+      return await claude.analyzeCompany(interviews, {
+        onUsage: (rec) => recordClaudeUsage(db, { kind: 'company', label: `รายงานภาพรวม (${(interviews || []).length} คน)`, ...rec }),
+      });
+    } catch (e) { console.error('[ai] analyzeCompany fell back to mock:', e.message); }
   }
   return ai.analyzeCompany(interviews);
 }
-console.log('[ai] document engine:', claude.isEnabled() ? ('Claude (' + claude.MODEL + ')') : 'mock-ai (set ANTHROPIC_API_KEY to enable Claude)');
+console.log('[ai] document engine:', claude.isEnabled() ? ('Claude available (' + claude.MODEL + ') — per-tenant toggle') : 'mock-ai (set ANTHROPIC_API_KEY to enable Claude)');
 
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
@@ -80,6 +115,18 @@ function genId(prefix) {
   return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
+// Claude usage ledger: ensure the {totals,runs} shape exists (handles old/empty files).
+function emptyClaudeUsage() {
+  return { totals: { runs: 0, input: 0, output: 0, cache_write: 0, cache_read: 0, cost_usd: 0, cost_thb: 0 }, runs: [] };
+}
+function normalizeClaudeUsage(u) {
+  const base = emptyClaudeUsage();
+  if (!u || typeof u !== 'object') return base;
+  u.totals = Object.assign(base.totals, u.totals || {});
+  if (!Array.isArray(u.runs)) u.runs = [];
+  return u;
+}
+
 // Migrate super-admin password from plain to hashed (idempotent — runs once).
 (function migrateSuperAuth() {
   const raw = readJson(SUPER_AUTH_FILE, null);
@@ -112,6 +159,8 @@ function tenantDb(tenantId) {
     company:   path.join(dir, 'company.json'),
     categories: path.join(dir, 'categories.json'),
     auth:      path.join(dir, 'auth.json'),
+    claudeSettings: path.join(dir, 'claude.json'),
+    claudeUsage:    path.join(dir, 'claude-usage.json'),
   };
   return {
     id: tenantId,
@@ -125,6 +174,8 @@ function tenantDb(tenantId) {
     company:      () => readJson(F.company, { name: '', name_en: '' }),
     categories:   () => readJson(F.categories, []),
     auth:         () => readJson(F.auth, { master: '' }),
+    claudeSettings: () => readJson(F.claudeSettings, { enabled: true }),
+    claudeUsage:    () => readJson(F.claudeUsage, { totals: { runs: 0, input: 0, output: 0, cache_write: 0, cache_read: 0, cost_usd: 0, cost_thb: 0 }, runs: [] }),
     saveEmployees: (l) => writeJson(F.employees, l),
     saveDivisions: (l) => writeJson(F.divisions, l),
     saveSections:  (l) => writeJson(F.sections, l),
@@ -133,6 +184,8 @@ function tenantDb(tenantId) {
     saveCompany:   (o) => writeJson(F.company, o),
     saveCategories:(l) => writeJson(F.categories, l),
     saveAuth:      (o) => writeJson(F.auth, o),
+    saveClaudeSettings: (o) => writeJson(F.claudeSettings, o),
+    saveClaudeUsage:    (o) => writeJson(F.claudeUsage, o),
     interviewPath: (id) => path.join(intDir, `${id}.json`),
     loadInterview: (id) => readJson(path.join(intDir, `${id}.json`), null),
     saveInterview: (iv) => writeJson(path.join(intDir, `${iv.id}.json`), iv),
@@ -1060,6 +1113,35 @@ tenantRouter.put('/api/admin/auth', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Claude AI settings + usage (admin) ----------
+// Per-tenant on/off switch for Claude document generation, plus a token/cost
+// ledger. The API key itself stays a server env var (never stored per tenant).
+tenantRouter.get('/api/admin/claude', requireAdmin, (req, res) => {
+  const db = ctxDb();
+  const usage = normalizeClaudeUsage(db.claudeUsage());
+  const enabled = db.claudeSettings().enabled !== false;
+  const keyConfigured = claude.isEnabled();
+  res.json({
+    keyConfigured,                       // is ANTHROPIC_API_KEY set on the server?
+    enabled,                             // tenant toggle
+    active: keyConfigured && enabled,    // effectively using Claude right now?
+    model: claude.MODEL,
+    price: claude.priceFor(claude.MODEL),  // USD per 1M tokens
+    usd_to_thb: claude.USD_TO_THB,
+    usage,
+  });
+});
+tenantRouter.put('/api/admin/claude', requireAdmin, (req, res) => {
+  const enabled = !!(req.body && req.body.enabled);
+  const cur = ctxDb().claudeSettings();
+  ctxDb().saveClaudeSettings(Object.assign({}, cur, { enabled, updated_at: new Date().toISOString() }));
+  res.json({ ok: true, enabled, active: claude.isEnabled() && enabled });
+});
+tenantRouter.post('/api/admin/claude/usage/reset', requireAdmin, (req, res) => {
+  ctxDb().saveClaudeUsage(emptyClaudeUsage());
+  res.json({ ok: true });
+});
+
 // ---------- Language preference ----------
 tenantRouter.post('/api/lang', (req, res) => {
   const lang = String((req.body && req.body.lang) || '').toLowerCase();
@@ -1338,7 +1420,7 @@ tenantRouter.post('/api/interview/:id/finish', (req, res) => {
       }
       const outDir = path.join(db.outDir, iv.id);
       if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-      const docs = await generateDocuments(iv);
+      const docs = await generateDocuments(iv, db);
       for (const [name, content] of Object.entries(docs)) {
         fs.writeFileSync(path.join(outDir, name), content);
       }
@@ -1696,7 +1778,7 @@ tenantRouter.post('/api/company/analyze', requireRoles('admin', 'executive', 'ma
   const interviews = list
     .map(e => loadInterview(e.id))
     .filter(iv => iv && iv.finishedAt);
-  const md = await analyzeCompany(interviews);
+  const md = await analyzeCompany(interviews, ctxDb());
   const outDir = ctxDb().cmpOutDir;
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, 'optimization-report.md'), md);

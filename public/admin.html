@@ -130,6 +130,66 @@
     </a>
   </div>
 
+  <!-- Claude AI settings + usage -->
+  <style>
+    #claude-card .switch{position:relative;display:inline-block;width:56px;height:30px;flex:none;}
+    #claude-card .switch input{opacity:0;width:0;height:0;}
+    #claude-card .switch .slider{position:absolute;inset:0;cursor:pointer;background:#cbd5e1;border-radius:30px;transition:.2s;}
+    #claude-card .switch .slider:before{content:"";position:absolute;height:22px;width:22px;left:4px;top:4px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.3);}
+    #claude-card .switch input:checked + .slider{background:#7c3aed;}
+    #claude-card .switch input:checked + .slider:before{transform:translateX(26px);}
+    #claude-card .stat{background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;padding:10px 12px;}
+    #claude-card .stat .big{font-size:20px;font-weight:700;color:#6d28d9;margin-top:2px;}
+    #claude-card table th,#claude-card table td{padding:7px 8px;border-bottom:1px solid #eee;vertical-align:top;}
+  </style>
+  <div class="card" id="claude-card" style="margin-top:24px; border-top:4px solid #7c3aed;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h2 style="margin:0;">🤖 Claude AI — สร้างเอกสาร JD / KPI / Optimization</h2>
+        <p class="sub" style="margin:4px 0 0;">เปิด = ให้ AI วิเคราะห์ตอนกด “เสร็จสิ้นสัมภาษณ์” และ “วิเคราะห์ภาพรวมองค์กร” · ปิด = ใช้เทมเพลตสำเร็จรูป (ฟรี ไม่มีค่าใช้จ่าย)</p>
+      </div>
+      <label class="switch" title="เปิด/ปิด Claude">
+        <input type="checkbox" id="cl-toggle" onchange="setClaude(this.checked)"/>
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="row" style="margin-top:14px; gap:24px; flex-wrap:wrap;">
+      <div><span class="sub">API Key บนเซิร์ฟเวอร์:</span> <strong id="cl-key">–</strong></div>
+      <div><span class="sub">โมเดล:</span> <strong id="cl-model">–</strong></div>
+      <div><span class="sub">กำลังใช้งานจริง:</span> <strong id="cl-active">–</strong></div>
+    </div>
+    <div id="cl-keyhint" class="sub" style="display:none; margin-top:10px; color:#b45309; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 12px;">
+      ⚠️ ยังไม่ได้ตั้งค่า <code>ANTHROPIC_API_KEY</code> บนเซิร์ฟเวอร์ — เปิดสวิตช์ไว้ได้ แต่ระบบจะยังใช้เทมเพลต (Mock) จนกว่าจะตั้งค่า key บนเซิร์ฟเวอร์ก่อน
+    </div>
+
+    <h3 style="margin:20px 0 8px;">💰 การใช้งานสะสม (เฉพาะบริษัทนี้)</h3>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px;">
+      <div class="stat"><div class="sub">จำนวนครั้งที่วิเคราะห์</div><div class="big" id="cl-runs">0</div></div>
+      <div class="stat"><div class="sub">Token เข้า (input)</div><div class="big" id="cl-in">0</div></div>
+      <div class="stat"><div class="sub">Token ออก (output)</div><div class="big" id="cl-out">0</div></div>
+      <div class="stat"><div class="sub">ค่าใช้จ่ายรวม (ประมาณ)</div><div class="big" id="cl-cost">฿0.00</div><div class="sub" id="cl-cost-usd">$0.0000</div></div>
+    </div>
+    <p class="sub" style="margin:8px 0 0;">* ค่าใช้จ่ายเป็นการประมาณจากราคา <span id="cl-price">–</span> · เงินบาทคำนวณที่ ~<span id="cl-rate">36</span> บาท/ดอลลาร์</p>
+
+    <h3 style="margin:20px 0 8px;">📋 ประวัติการวิเคราะห์ล่าสุด</h3>
+    <div style="overflow:auto;">
+      <table id="cl-table" style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead><tr style="background:#f8fafc;">
+          <th style="text-align:left;">เวลา</th>
+          <th style="text-align:left;">ประเภท</th>
+          <th style="text-align:left;">รายการ</th>
+          <th style="text-align:right;">Token (เข้า / ออก)</th>
+          <th style="text-align:right;">ค่าใช้จ่าย</th>
+        </tr></thead>
+        <tbody id="cl-rows"><tr><td colspan="5" class="sub">ยังไม่มีข้อมูล</td></tr></tbody>
+      </table>
+    </div>
+    <div style="margin-top:12px;">
+      <button class="ghost" onclick="resetClaude()">↺ ล้างตัวนับการใช้งาน</button>
+    </div>
+  </div>
+
   <!-- Danger Zone -->
   <div class="card" style="margin-top:24px; background:#fef2f2; border-color:#fecaca;">
     <h2 style="margin-top:0; color:#991b1b;">🛑 Danger Zone — ลบข้อมูล</h2>
@@ -224,6 +284,67 @@ async function wipe(kind, label) {
   document.getElementById('s-pos').textContent = poss.length;
   document.getElementById('s-usr').textContent = usrs.length;
 })();
+
+// ---------- Claude AI settings + usage ----------
+const nf = (n) => (Number(n) || 0).toLocaleString('en-US');
+const kindLabel = (k) => k === 'company' ? '📊 รายงานภาพรวม' : '👤 เอกสารพนักงาน';
+const esc = (s) => String(s || '').replace(/[&<>]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c]));
+
+async function loadClaude() {
+  let d;
+  try { const r = await fetch(TBASE + '/api/admin/claude'); if (!r.ok) return; d = await r.json(); }
+  catch { return; }
+
+  document.getElementById('cl-toggle').checked = !!d.enabled;
+  const key = document.getElementById('cl-key');
+  key.textContent = d.keyConfigured ? '✓ ตั้งค่าแล้ว' : '✗ ยังไม่ได้ตั้งค่า';
+  key.style.color = d.keyConfigured ? '#16a34a' : '#dc2626';
+  document.getElementById('cl-model').textContent = d.model || '–';
+  const act = document.getElementById('cl-active');
+  act.textContent = d.active ? '✅ Claude' : '◻️ เทมเพลต (Mock)';
+  act.style.color = d.active ? '#7c3aed' : '#64748b';
+  document.getElementById('cl-keyhint').style.display = d.keyConfigured ? 'none' : 'block';
+
+  if (d.price) document.getElementById('cl-price').textContent =
+    `input $${d.price.input}/1M · output $${d.price.output}/1M`;
+  if (d.usd_to_thb) document.getElementById('cl-rate').textContent = d.usd_to_thb;
+
+  const t = (d.usage && d.usage.totals) || {};
+  document.getElementById('cl-runs').textContent = nf(t.runs);
+  document.getElementById('cl-in').textContent = nf(t.input);
+  document.getElementById('cl-out').textContent = nf(t.output);
+  document.getElementById('cl-cost').textContent = '฿' + (Number(t.cost_thb) || 0).toFixed(2);
+  document.getElementById('cl-cost-usd').textContent = '$' + (Number(t.cost_usd) || 0).toFixed(4);
+
+  const rows = (d.usage && d.usage.runs) || [];
+  const tb = document.getElementById('cl-rows');
+  tb.innerHTML = rows.length ? rows.map(x => `<tr>
+      <td>${formatDateTime(x.at)}</td>
+      <td>${kindLabel(x.kind)}</td>
+      <td>${esc(x.label)}</td>
+      <td style="text-align:right;">${nf(x.input)} / ${nf(x.output)}</td>
+      <td style="text-align:right;">฿${(Number(x.cost_thb)||0).toFixed(2)}<br><span class="sub">$${(Number(x.cost_usd)||0).toFixed(4)}</span></td>
+    </tr>`).join('') : '<tr><td colspan="5" class="sub">ยังไม่มีข้อมูล</td></tr>';
+}
+
+async function setClaude(on) {
+  try {
+    const r = await fetch(TBASE + '/api/admin/claude', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: on }),
+    });
+    if (!r.ok) throw new Error();
+  } catch { alert('บันทึกการตั้งค่าไม่สำเร็จ'); }
+  loadClaude();
+}
+
+async function resetClaude() {
+  if (!confirm('ล้างตัวนับ token และค่าใช้จ่ายทั้งหมดของบริษัทนี้?\n(ประวัติการวิเคราะห์จะถูกลบ — กู้คืนไม่ได้)')) return;
+  try { await fetch(TBASE + '/api/admin/claude/usage/reset', { method: 'POST' }); } catch {}
+  loadClaude();
+}
+
+loadClaude();
 </script>
 </body>
 </html>
