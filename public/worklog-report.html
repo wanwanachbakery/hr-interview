@@ -173,7 +173,7 @@ async function loadReport() {
     const [label, cls] = STATUS[m.status] || STATUS.none;
     const wd = (m.expectedDays != null)
       ? `${m.loggedDays}/${m.expectedDays}` +
-        (m.leaveDays ? ` <span style="color:#0d9488; font-size:12px;">(ลา ${m.leaveDays})</span>` : '') +
+        (m.leaveDays ? ` <span style="color:#0d9488; font-size:12px;">(ลา/หยุด ${m.leaveDays})</span>` : '') +
         (m.missingDays ? ` <span style="color:#b91c1c; font-size:12px;">ขาด ${m.missingDays}</span>` : '')
       : '–';
     return `<tr>
@@ -201,7 +201,7 @@ async function loadReport() {
 function fmt(d) { if (!d) return ''; const [y, m, day] = d.split('-'); return `${day}/${m}/${y}`; }
 
 function downloadCsv() {
-  const head = ['ชื่อ', 'ตำแหน่ง', 'ฝ่าย', 'แผนก', 'ชั่วโมงบันทึก', 'วันบันทึก', 'วันทำงานที่คาดหวัง', 'วันลา', 'วันขาด', 'ความครบเฉลี่ย%', 'สถานะ'];
+  const head = ['ชื่อ', 'ตำแหน่ง', 'ฝ่าย', 'แผนก', 'ชั่วโมงบันทึก', 'วันบันทึก', 'วันทำงานที่คาดหวัง', 'วันลา/หยุด', 'วันขาด', 'ความครบเฉลี่ย%', 'สถานะ'];
   const esc2 = s => { const v = String(s ?? ''); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
   const lines = [head.join(',')].concat(lastMembers.map(m =>
     [m.name, m.position_name, m.division_name, m.section_name, m.filledHours, (m.loggedDays != null ? m.loggedDays : m.daysLogged), (m.expectedDays != null ? m.expectedDays : ''), (m.leaveDays || 0), (m.missingDays || 0), m.avgCompleteness, (STATUS[m.status] || STATUS.none)[0]].map(esc2).join(',')));
