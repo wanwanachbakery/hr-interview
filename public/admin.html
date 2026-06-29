@@ -213,6 +213,36 @@
     <p class="sub" id="ra-note" style="margin:10px 0 0; color:#b45309;">⚠️ ถ้าเปิด Claude AI อยู่ การวิเคราะห์ใหม่จะมีค่าใช้จ่ายต่อคน (ดูยอดได้ที่การ์ด Claude AI ด้านบน) · ทำทีละคนจึงอาจใช้เวลาสักครู่ถ้าคนเยอะ</p>
   </div>
 
+  <!-- Company holiday calendar -->
+  <style>
+    #hol-card .dow { padding:7px 12px; border:1px solid var(--border); background:#fff; border-radius:999px; cursor:pointer; font-size:14px; color:#334155; user-select:none; }
+    #hol-card .dow.on { background:#10b981; color:#fff; border-color:#10b981; }
+    #hol-card .holchip { display:inline-flex; align-items:center; gap:6px; background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46; border-radius:999px; padding:5px 10px; font-size:13px; }
+    #hol-card .holchip button { background:none; border:0; color:#065f46; cursor:pointer; font-size:15px; line-height:1; padding:0; }
+  </style>
+  <div class="card" id="hol-card" style="margin-top:24px; border-top:4px solid #10b981;">
+    <h2 style="margin-top:0;">📅 วันหยุดของบริษัท</h2>
+    <p class="sub" style="margin:4px 0 0;">ตั้งวันหยุดเพื่อ <strong>ไม่ให้ระบบเตือน</strong> ในวันหยุด และ <strong>ไม่นับวันหยุดเป็น “วันขาด”</strong> ในรายงานบันทึกงาน</p>
+
+    <h3 style="margin:18px 0 8px;">วันหยุดประจำสัปดาห์</h3>
+    <p class="sub" style="margin:0 0 8px;">เลือกวันที่บริษัทหยุดทุกสัปดาห์ (ถ้าเปิดทุกวันก็ไม่ต้องเลือก)</p>
+    <div id="hol-weekly" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+
+    <h3 style="margin:20px 0 8px;">วันหยุดเฉพาะวัน</h3>
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <input type="date" id="hol-date" style="width:auto;"/>
+      <button class="ghost" onclick="addHolDate()">+ เพิ่มวันหยุด</button>
+      <button class="ghost" onclick="fillThai()">🇹🇭 เติมวันหยุดราชการไทย (ปีนี้)</button>
+    </div>
+    <p class="sub" style="margin:8px 0 0;">* วันหยุดราชการที่อิงจันทรคติ (มาฆบูชา/วิสาขบูชา/อาสาฬหบูชา/เข้าพรรษา) เปลี่ยนทุกปี — เพิ่มเองด้วยช่อง “เพิ่มวันหยุด”</p>
+    <div id="hol-list" style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;"><span class="sub">— ยังไม่มี —</span></div>
+
+    <div style="margin-top:18px;">
+      <button onclick="saveHolidays()">💾 บันทึกวันหยุด</button>
+      <span class="sub" id="hol-saved" style="margin-left:10px;"></span>
+    </div>
+  </div>
+
   <!-- Danger Zone -->
   <div class="card" style="margin-top:24px; background:#fef2f2; border-color:#fecaca;">
     <h2 style="margin-top:0; color:#991b1b;">🛑 Danger Zone — ลบข้อมูล</h2>
@@ -446,6 +476,65 @@ async function reanalyzeAll() {
   raPoll = setInterval(raStatus, 1500);
 }
 raStatus();   // resume display if a job is already running
+
+// ---------- Company holidays ----------
+const DOW_TH = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+const THAI_FIXED_MD = ['01-01','04-06','04-13','04-14','04-15','05-01','05-04','06-03','07-28','08-12','10-13','10-23','12-05','12-10','12-31'];
+let holWeekly = new Set();
+let holDates = [];
+
+function renderHolWeekly() {
+  document.getElementById('hol-weekly').innerHTML = DOW_TH.map((name, i) =>
+    `<span class="dow${holWeekly.has(i) ? ' on' : ''}" data-dow="${i}">${name}</span>`).join('');
+  document.querySelectorAll('#hol-weekly .dow').forEach(el => el.addEventListener('click', () => {
+    const d = Number(el.dataset.dow);
+    if (holWeekly.has(d)) holWeekly.delete(d); else holWeekly.add(d);
+    el.classList.toggle('on');
+  }));
+}
+function renderHolDates() {
+  const box = document.getElementById('hol-list');
+  if (!holDates.length) { box.innerHTML = '<span class="sub">— ยังไม่มี —</span>'; return; }
+  box.innerHTML = holDates.slice().sort().map(d =>
+    `<span class="holchip">${d} <button title="ลบ" data-d="${d}">✕</button></span>`).join('');
+  box.querySelectorAll('button[data-d]').forEach(b => b.addEventListener('click', () => {
+    holDates = holDates.filter(x => x !== b.dataset.d); renderHolDates();
+  }));
+}
+function addHolDate() {
+  const v = document.getElementById('hol-date').value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) { alert('เลือกวันที่ก่อน'); return; }
+  if (!holDates.includes(v)) holDates.push(v);
+  document.getElementById('hol-date').value = '';
+  renderHolDates();
+}
+function fillThai() {
+  const y = new Date().getFullYear();
+  let added = 0;
+  for (const md of THAI_FIXED_MD) { const d = y + '-' + md; if (!holDates.includes(d)) { holDates.push(d); added++; } }
+  renderHolDates();
+  document.getElementById('hol-saved').textContent = `เพิ่มวันหยุดราชการปี ${y} แล้ว ${added} วัน — อย่าลืมกดบันทึก`;
+}
+async function loadHolidays() {
+  try {
+    const h = await fetch(TBASE + '/api/holidays').then(r => r.json());
+    holWeekly = new Set((h.weekly || []).map(Number));
+    holDates = (h.dates || []).slice();
+  } catch {}
+  renderHolWeekly(); renderHolDates();
+}
+async function saveHolidays() {
+  try {
+    const r = await fetch(TBASE + '/api/admin/holidays', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ weekly: [...holWeekly], dates: holDates }),
+    });
+    if (!r.ok) throw new Error();
+    document.getElementById('hol-saved').textContent = '✓ บันทึกแล้ว';
+    setTimeout(() => { document.getElementById('hol-saved').textContent = ''; }, 2500);
+  } catch { alert('บันทึกวันหยุดไม่สำเร็จ'); }
+}
+loadHolidays();
 </script>
 </body>
 </html>

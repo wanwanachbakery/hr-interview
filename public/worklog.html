@@ -99,13 +99,18 @@
       <label for="wl-remind">🔔 เตือนฉันในแอปถ้ายังไม่ได้บันทึกงานวันนี้</label>
     </div>
 
+    <div id="wl-holiday" style="display:none; margin-top:14px; padding:11px 14px; border-radius:10px; background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; font-size:14px;"></div>
+
     <div id="wl-tools-row" style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:14px; flex-wrap:wrap;">
       <div id="wl-progress-row" style="display:flex; align-items:center; gap:12px; flex:1; min-width:240px;">
         <span id="wl-progress-text" class="sub" style="white-space:nowrap;">–</span>
         <div class="wl-prog-track"><div class="wl-prog-fill" id="wl-progress-fill"></div></div>
         <span id="wl-progress-pct" style="font-weight:600; color:#0284c7;">0%</span>
       </div>
-      <button class="ghost" id="wl-copy" style="font-size:13px;">📋 คัดลอกงานประจำจากเมื่อวาน</button>
+      <div style="display:flex; gap:8px;">
+        <button class="ghost" id="wl-leave" style="font-size:13px;">🌴 วันนี้ลา/หยุด</button>
+        <button class="ghost" id="wl-copy" style="font-size:13px;">📋 คัดลอกงานประจำจากเมื่อวาน</button>
+      </div>
     </div>
 
     <div id="wl-body" style="margin-top:8px;"><p class="sub">กำลังโหลด...</p></div>
@@ -175,11 +180,36 @@ function recomputeProgress() {
 function renderTable(data) {
   if (data.applicable === false) {
     bodyEl.innerHTML = `<p class="sub" style="color:#b91c1c; padding:12px 0;">${esc(data.error || 'บัญชีนี้ไม่มีบันทึกงานส่วนตัว')}</p>`;
-    ['wl-save', 'wl-copy'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    ['wl-save', 'wl-copy', 'wl-leave'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
     document.getElementById('wl-tools-row').style.display = 'none';
     document.getElementById('wl-remind-row').style.display = 'none';
     return;
   }
+
+  // Company holiday banner (informational — OT can still be logged)
+  const hb = document.getElementById('wl-holiday');
+  if (data.holiday) { hb.style.display = 'block'; hb.innerHTML = `📅 วันนี้เป็น<strong>${esc(data.holidayLabel || 'วันหยุด')}</strong> — ไม่ต้องบันทึกงาน (ถ้ามาทำ OT กรอกได้ตามปกติ)`; }
+  else hb.style.display = 'none';
+
+  const saveBtn = document.getElementById('wl-save');
+  const leaveBtn = document.getElementById('wl-leave');
+  // Personal leave/day-off state: hide the hour grid + save, offer to undo.
+  if (data.dayOff) {
+    document.getElementById('wl-tools-row').style.display = 'none';
+    if (saveBtn) saveBtn.style.display = 'none';
+    bodyEl.innerHTML = `<div style="text-align:center; padding:28px 16px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:12px; color:#166534;">
+      <div style="font-size:34px;">🌴</div>
+      <div style="font-weight:600; margin-top:6px;">วันนี้ทำเครื่องหมายว่า “ลา/หยุด” แล้ว</div>
+      <div class="sub" style="margin-top:4px;">ไม่ต้องบันทึกงาน และจะไม่ถูกนับเป็นวันขาดในรายงาน</div>
+      <button class="ghost" id="wl-cancel-leave" style="margin-top:14px;">↩ ยกเลิก กลับมาบันทึกงาน</button>
+    </div>`;
+    document.getElementById('wl-cancel-leave').addEventListener('click', cancelLeave);
+    return;
+  }
+  document.getElementById('wl-tools-row').style.display = '';
+  if (saveBtn) saveBtn.style.display = '';
+  if (leaveBtn) leaveBtn.style.display = '';
+
   bodyEl.innerHTML = data.entries.map(e => {
     const items = (e.items && e.items.length) ? e.items : [null];
     return `<div class="wl-hour" data-hour="${e.hour}">
@@ -296,6 +326,22 @@ async function saveDay() {
   btn.disabled = false; btn.textContent = old;
 }
 
+async function markLeave() {
+  if (!confirm('ทำเครื่องหมายว่าวันนี้ "ลา/หยุด"?\n\nไม่ต้องบันทึกงาน และจะไม่ถูกนับเป็นวันขาดในรายงาน (งานที่กรอกไว้วันนี้จะถูกล้าง)')) return;
+  try {
+    const r = await fetch(`${TBASE}/api/worklog`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ date: dateEl.value, dayOff: 'ลา/หยุด' }) });
+    if (!r.ok) throw new Error();
+    loadDay(dateEl.value);
+  } catch { alert('บันทึกไม่สำเร็จ'); }
+}
+async function cancelLeave() {
+  try {
+    const r = await fetch(`${TBASE}/api/worklog`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ date: dateEl.value, entries: [] }) });
+    if (!r.ok) throw new Error();
+    loadDay(dateEl.value);
+  } catch { alert('ยกเลิกไม่สำเร็จ'); }
+}
+
 const remindEl = document.getElementById('wl-remind');
 remindEl.checked = localStorage.getItem('worklog_remind') !== 'off';
 remindEl.addEventListener('change', () => localStorage.setItem('worklog_remind', remindEl.checked ? 'on' : 'off'));
@@ -309,6 +355,7 @@ remindEl.addEventListener('change', () => localStorage.setItem('worklog_remind',
   dateEl.addEventListener('change', () => { if (dateEl.value > t) dateEl.value = t; loadDay(dateEl.value); });
   document.getElementById('wl-save').addEventListener('click', saveDay);
   document.getElementById('wl-copy').addEventListener('click', copyRecurring);
+  document.getElementById('wl-leave').addEventListener('click', markLeave);
   loadDay(t);
 })();
 </script>

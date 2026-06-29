@@ -21,6 +21,8 @@
     .tw-c-complete { background:#dcfce7; color:#166534; }
     .tw-c-partial  { background:#fef9c3; color:#854d0e; }
     .tw-c-none     { background:#fee2e2; color:#991b1b; }
+    .tw-c-holiday  { background:#ecfdf5; color:#065f46; }
+    .tw-c-leave    { background:#f0fdfa; color:#0f766e; }
     .tw-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:13px; }
     .tw-table th { text-align:left; font-weight:600; color:#475569; padding:6px 8px; border-bottom:2px solid #e2e8f0; font-size:13px; }
     .tw-table td { padding:7px 8px; border-bottom:1px solid #f1f5f9; }
@@ -103,6 +105,8 @@
           <option value="complete">ครบแล้ว</option>
           <option value="partial">ยังไม่ครบ</option>
           <option value="none">ยังไม่บันทึก</option>
+          <option value="holiday">วันหยุด</option>
+          <option value="leave">ลา/หยุด</option>
         </select>
         <input type="date" id="f-date"/>
       </div>
@@ -141,6 +145,8 @@ const elSearch = document.getElementById('f-search');
 const STATUS_LABEL = { complete: 'ครบ', partial: 'ไม่ครบ', none: 'ยังไม่บันทึก' };
 
 function chip(m) {
+  if (m.status === 'holiday')   return `<span class="tw-chip tw-c-holiday">📅 ${esc(m.holidayLabel || 'วันหยุด')}</span>`;
+  if (m.status === 'leave')     return `<span class="tw-chip tw-c-leave">🌴 ลา/หยุด</span>`;
   if (m.status === 'complete') return `<span class="tw-chip tw-c-complete">ครบ ${m.filled}/${m.total}</span>`;
   if (m.status === 'partial')  return `<span class="tw-chip tw-c-partial">${m.filled}/${m.total}</span>`;
   return `<span class="tw-chip tw-c-none">ยังไม่บันทึก</span>`;
@@ -197,7 +203,10 @@ function renderDetail(data) {
       <td style="text-align:center; vertical-align:top; color:${has ? '#16a34a' : '#d97706'};">${has ? '✓' : '🕒'}</td>
     </tr>`;
   }).join('');
-  document.getElementById('tw-detail-body').innerHTML = `
+  const offBanner = data.holiday
+    ? `<div style="margin:0 0 10px; padding:9px 12px; border-radius:8px; background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46; font-size:13px;">📅 วันนี้เป็น${esc(data.holidayLabel || 'วันหยุด')} (วันหยุดบริษัท)</div>`
+    : (data.dayOff ? `<div style="margin:0 0 10px; padding:9px 12px; border-radius:8px; background:#f0fdfa; border:1px solid #99f6e4; color:#0f766e; font-size:13px;">🌴 พนักงานทำเครื่องหมายว่า “ลา/หยุด” วันนี้</div>` : '');
+  document.getElementById('tw-detail-body').innerHTML = offBanner + `
     <p class="sub" style="margin:0 0 8px;">บันทึกแล้ว ${data.filled}/${data.total} ชั่วโมง</p>
     <table class="tw-table">
       <thead><tr><th style="width:84px;">เวลา</th><th>งานที่ทำ</th><th style="width:22%;">หมวดหมู่</th><th style="width:52px; text-align:center;">ประจำ</th><th style="width:44px; text-align:center;">สถานะ</th></tr></thead>

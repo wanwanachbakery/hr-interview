@@ -161,6 +161,7 @@ function tenantDb(tenantId) {
     auth:      path.join(dir, 'auth.json'),
     claudeSettings: path.join(dir, 'claude.json'),
     claudeUsage:    path.join(dir, 'claude-usage.json'),
+    holidays:       path.join(dir, 'holidays.json'),
   };
   return {
     id: tenantId,
@@ -176,6 +177,7 @@ function tenantDb(tenantId) {
     auth:         () => readJson(F.auth, { master: '' }),
     claudeSettings: () => readJson(F.claudeSettings, { enabled: true }),
     claudeUsage:    () => readJson(F.claudeUsage, { totals: { runs: 0, input: 0, output: 0, cache_write: 0, cache_read: 0, cost_usd: 0, cost_thb: 0 }, runs: [] }),
+    holidays:       () => readJson(F.holidays, { weekly: [], dates: [] }),
     saveEmployees: (l) => writeJson(F.employees, l),
     saveDivisions: (l) => writeJson(F.divisions, l),
     saveSections:  (l) => writeJson(F.sections, l),
@@ -186,6 +188,7 @@ function tenantDb(tenantId) {
     saveAuth:      (o) => writeJson(F.auth, o),
     saveClaudeSettings: (o) => writeJson(F.claudeSettings, o),
     saveClaudeUsage:    (o) => writeJson(F.claudeUsage, o),
+    saveHolidays:       (o) => writeJson(F.holidays, o),
     interviewPath: (id) => path.join(intDir, `${id}.json`),
     loadInterview: (id) => readJson(path.join(intDir, `${id}.json`), null),
     saveInterview: (iv) => writeJson(path.join(intDir, `${iv.id}.json`), iv),
@@ -1536,6 +1539,23 @@ tenantRouter.get('/api/interview/:id/finish-status', (req, res) => {
 const WORKLOG_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const todayLocal = () => new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD
 
+// ---- Holidays (company calendar) ----------------------------------------
+// weekly: array of weekday numbers 0=Sun..6=Sat that are weekly days off.
+// dates:  array of specific YYYY-MM-DD holiday dates.
+function dowOf(dateStr) { return new Date(dateStr + 'T00:00:00').getDay(); }
+function loadHolidaySet(db) {
+  const h = db.holidays() || {};
+  return { weekly: Array.isArray(h.weekly) ? h.weekly : [], dates: new Set(Array.isArray(h.dates) ? h.dates : []) };
+}
+function isCompanyHoliday(hs, dateStr) {
+  return hs.weekly.includes(dowOf(dateStr)) || hs.dates.has(dateStr);
+}
+function companyHolidayLabel(hs, dateStr) {
+  if (hs.dates.has(dateStr)) return 'วันหยุด';
+  if (hs.weekly.includes(dowOf(dateStr))) return 'วันหยุดประจำสัปดาห์';
+  return null;
+}
+
 // Build the full hour grid for a user on a date, overlaying any saved entries.
 function buildWorklogForUser(db, user, date) {
   const uh = calcUserHours(user);
@@ -1553,7 +1573,14 @@ function buildWorklogForUser(db, user, date) {
   // One row per scheduled hour, each holding 0..n task items (multiple tasks per hour).
   const entries = hours.map(h => ({ hour: h, label: `${pad(h)}:00–${pad(h + 1)}:00`, items: byHour[h] || [] }));
   const filled = entries.filter(e => e.items.length > 0).length;   // hours with at least one task
-  return { date, total: entries.length, filled, entries, updated_at: saved ? saved.updated_at : null };
+  const hs = loadHolidaySet(db);
+  return {
+    date, total: entries.length, filled, entries,
+    updated_at: saved ? saved.updated_at : null,
+    holiday: isCompanyHoliday(hs, date),                  // company holiday (weekly or specific)
+    holidayLabel: companyHolidayLabel(hs, date),
+    dayOff: saved && saved.dayOff ? saved.dayOff : null,  // personal leave marked by the user
+  };
 }
 
 // Read current user's log for a date (default today)
@@ -1573,10 +1600,16 @@ tenantRouter.put('/api/worklog', (req, res) => {
   if (req.session.role === 'admin') return res.status(400).json({ error: 'admin ไม่มีบันทึกงานส่วนตัว' });
   const user = load.users().find(u => u.id === req.session.user_id);
   if (!user) return res.status(404).json({ error: 'not found' });
-  const { date, entries } = req.body || {};
+  const { date, entries, dayOff } = req.body || {};
   const today = todayLocal();
   if (!WORKLOG_DATE_RE.test(String(date || ''))) return res.status(400).json({ error: 'รูปแบบวันที่ผิด (YYYY-MM-DD)' });
   if (String(date) > today) return res.status(400).json({ error: 'บันทึกงานวันในอนาคตไม่ได้' });
+  // Personal leave/day-off: store with no work entries.
+  if (dayOff) {
+    const off = String(dayOff).slice(0, 40);
+    ctxDb().saveWorklog(user.id, date, { user_id: user.id, date, entries: [], dayOff: off, updated_at: new Date().toISOString() });
+    return res.json({ ok: true, dayOff: off });
+  }
   // Flat list — multiple entries may share the same hour. Blank tasks are dropped.
   const clean = Array.isArray(entries) ? entries.map(e => ({
     hour: Number(e.hour),
@@ -1595,7 +1628,45 @@ tenantRouter.get('/api/worklog/status', (req, res) => {
   const user = load.users().find(u => u.id === req.session.user_id);
   if (!user || !calcUserHours(user)) return res.json({ applicable: false });
   const wl = buildWorklogForUser(ctxDb(), user, todayLocal());
-  res.json({ applicable: true, date: wl.date, total: wl.total, filled: wl.filled, complete: wl.total > 0 && wl.filled >= wl.total });
+  // On a company holiday or a personal day off, there's nothing to remind about.
+  const offToday = !!(wl.holiday || wl.dayOff);
+  res.json({
+    applicable: true, date: wl.date, total: wl.total, filled: wl.filled,
+    complete: offToday || (wl.total > 0 && wl.filled >= wl.total),
+    holiday: wl.holiday, holidayLabel: wl.holidayLabel, dayOff: wl.dayOff,
+  });
+});
+
+// ---- Company holiday calendar ----
+// Readable by any logged-in user (to show badges / skip reminders); writable by admin.
+tenantRouter.get('/api/holidays', (req, res) => {
+  const h = ctxDb().holidays();
+  res.json({ weekly: Array.isArray(h.weekly) ? h.weekly : [], dates: Array.isArray(h.dates) ? h.dates.slice().sort() : [] });
+});
+tenantRouter.put('/api/admin/holidays', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const weekly = Array.isArray(b.weekly) ? [...new Set(b.weekly.map(Number).filter(n => n >= 0 && n <= 6))] : [];
+  const dates = Array.isArray(b.dates) ? [...new Set(b.dates.filter(d => WORKLOG_DATE_RE.test(String(d))))].sort() : [];
+  ctxDb().saveHolidays({ weekly, dates, updated_at: new Date().toISOString() });
+  res.json({ ok: true, weekly, dates });
+});
+// Fixed-date Thai public holidays (lunar ones e.g. มาฆบูชา/วิสาขบูชา change yearly — add by hand).
+const THAI_FIXED_HOLIDAYS = [
+  ['01-01', 'วันขึ้นปีใหม่'], ['04-06', 'วันจักรี'], ['04-13', 'สงกรานต์'], ['04-14', 'สงกรานต์'], ['04-15', 'สงกรานต์'],
+  ['05-01', 'วันแรงงาน'], ['05-04', 'วันฉัตรมงคล'], ['06-03', 'วันเฉลิมฯ สมเด็จพระราชินี'], ['07-28', 'วันเฉลิมฯ ร.10'],
+  ['08-12', 'วันแม่แห่งชาติ'], ['10-13', 'วันคล้ายวันสวรรคต ร.9'], ['10-23', 'วันปิยมหาราช'],
+  ['12-05', 'วันพ่อแห่งชาติ'], ['12-10', 'วันรัฐธรรมนูญ'], ['12-31', 'วันสิ้นปี'],
+];
+tenantRouter.post('/api/admin/holidays/thai-fixed', requireAdmin, (req, res) => {
+  const year = Number((req.body || {}).year) || new Date().getFullYear();
+  if (year < 2000 || year > 2100) return res.status(400).json({ error: 'ปีไม่ถูกต้อง' });
+  const cur = ctxDb().holidays();
+  const set = new Set(Array.isArray(cur.dates) ? cur.dates : []);
+  let added = 0;
+  for (const [md] of THAI_FIXED_HOLIDAYS) { const d = year + '-' + md; if (!set.has(d)) { set.add(d); added++; } }
+  const dates = [...set].sort();
+  ctxDb().saveHolidays({ weekly: Array.isArray(cur.weekly) ? cur.weekly : [], dates, updated_at: new Date().toISOString() });
+  res.json({ ok: true, added, dates });
 });
 
 // ---- Work categories (admin seeds a starter set; any user can add new) ----
@@ -1673,7 +1744,9 @@ tenantRouter.get('/api/worklog/team', (req, res) => {
         section_id: u.section_id || null, section_name: secMap[u.section_id] || '',
         position_name: posMap[u.position_id] || '',
         total: wl.total, filled: wl.filled,
-        status: wl.filled === 0 ? 'none' : (wl.filled >= wl.total ? 'complete' : 'partial'),
+        holiday: wl.holiday, holidayLabel: wl.holidayLabel, dayOff: wl.dayOff,
+        status: wl.holiday ? 'holiday' : (wl.dayOff ? 'leave'
+          : (wl.filled === 0 ? 'none' : (wl.filled >= wl.total ? 'complete' : 'partial'))),
       };
     })
     .sort((a, b) => String(a.name).localeCompare(String(b.name), 'th'));
@@ -1744,16 +1817,24 @@ tenantRouter.get('/api/worklog/report', (req, res) => {
   const byCategory = {};
   let totFilledHours = 0, totRecurringTasks = 0, totTasks = 0, peopleLogged = 0, sumAvg = 0;
 
+  // Working days in range = dates that are NOT a company holiday (weekly or specific).
+  const hs = loadHolidaySet(db);
+  const workingDates = dates.filter(ds => !isCompanyHoliday(hs, ds));
+  const workDays = workingDates.length;
+
   const members = users.map(u => {
     const uh = calcUserHours(u);
     const perDay = (uh && uh.hours.length) ? uh.hours.length : 8;
     let filledHours = 0, daysLogged = 0, sumComplete = 0;
+    const loggedSet = new Set(), leaveSet = new Set();
     for (const ds of dates) {
       const wl = db.loadWorklog(u.id, ds);
-      if (!wl || !Array.isArray(wl.entries)) continue;
+      if (!wl) continue;
+      if (wl.dayOff) { leaveSet.add(ds); continue; }   // personal leave
+      if (!Array.isArray(wl.entries)) continue;
       const f = wl.entries.filter(e => e.task && String(e.task).trim());
       if (!f.length) continue;
-      daysLogged++;
+      daysLogged++; loggedSet.add(ds);
       const hrs = new Set(f.map(e => e.hour));         // distinct hours worked that day
       filledHours += hrs.size;
       sumComplete += Math.min(1, hrs.size / perDay);
@@ -1764,6 +1845,11 @@ tenantRouter.get('/api/worklog/report', (req, res) => {
         if (e.recurring) totRecurringTasks++;
       }
     }
+    // Working-day fairness: ignore company holidays; leave days don't count as missing.
+    const leaveDays = workingDates.filter(d => leaveSet.has(d)).length;
+    const loggedWorking = workingDates.filter(d => loggedSet.has(d)).length;
+    const expectedDays = Math.max(0, workDays - leaveDays);
+    const missingDays = Math.max(0, expectedDays - loggedWorking);
     const avg = daysLogged ? Math.round((sumComplete / daysLogged) * 100) : 0;
     totFilledHours += filledHours;
     if (daysLogged) { peopleLogged++; sumAvg += avg; }
@@ -1771,6 +1857,7 @@ tenantRouter.get('/api/worklog/report', (req, res) => {
       user_id: u.id, name: u.name,
       position_name: posMap[u.position_id] || '', division_name: divMap[u.division_id] || '', section_name: secMap[u.section_id] || '',
       filledHours, daysLogged, avgCompleteness: avg,
+      workDays, expectedDays, loggedDays: loggedWorking, leaveDays, missingDays,
       status: daysLogged === 0 ? 'none' : (avg >= 90 ? 'good' : (avg >= 60 ? 'ok' : 'low')),
     };
   }).sort((a, b) => b.filledHours - a.filledHours);
@@ -1780,7 +1867,7 @@ tenantRouter.get('/api/worklog/report', (req, res) => {
     .sort((a, b) => b.count - a.count);
 
   res.json({
-    applicable: true, from, to, dayCount: dates.length,
+    applicable: true, from, to, dayCount: dates.length, workDays,
     totals: {
       filledHours: totFilledHours,
       recurringPct: totTasks ? Math.round((totRecurringTasks / totTasks) * 100) : 0,
