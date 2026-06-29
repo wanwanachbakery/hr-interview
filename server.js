@@ -1116,6 +1116,16 @@ tenantRouter.put('/api/admin/auth', requireAdmin, (req, res) => {
 // ---------- Claude AI settings + usage (admin) ----------
 // Per-tenant on/off switch for Claude document generation, plus a token/cost
 // ledger. The API key itself stays a server env var (never stored per tenant).
+
+// Verify the tenant's master (Admin) password — reused to confirm sensitive
+// admin actions like flipping the Claude switch.
+function masterPasswordOk(auth, password) {
+  if (!password) return false;
+  if (auth.master_hash && auth.master_salt) return verifyPassword(password, auth.master_salt, auth.master_hash);
+  if (auth.master) return password === auth.master;   // legacy plaintext fallback
+  return false;
+}
+
 tenantRouter.get('/api/admin/claude', requireAdmin, (req, res) => {
   const db = ctxDb();
   const usage = normalizeClaudeUsage(db.claudeUsage());
@@ -1132,7 +1142,12 @@ tenantRouter.get('/api/admin/claude', requireAdmin, (req, res) => {
   });
 });
 tenantRouter.put('/api/admin/claude', requireAdmin, (req, res) => {
-  const enabled = !!(req.body && req.body.enabled);
+  const body = req.body || {};
+  // Require the master Admin password to confirm before changing the switch.
+  if (!masterPasswordOk(load.auth(), body.password)) {
+    return res.status(401).json({ error: 'รหัส Admin ไม่ถูกต้อง' });
+  }
+  const enabled = !!body.enabled;
   const cur = ctxDb().claudeSettings();
   ctxDb().saveClaudeSettings(Object.assign({}, cur, { enabled, updated_at: new Date().toISOString() }));
   res.json({ ok: true, enabled, active: claude.isEnabled() && enabled });

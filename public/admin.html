@@ -328,14 +328,27 @@ async function loadClaude() {
 }
 
 async function setClaude(on) {
+  const toggle = document.getElementById('cl-toggle');
+  // Confirm with the Admin (master) password before changing the switch.
+  const pw = prompt(`ยืนยันการ${on ? 'เปิด' : 'ปิด'}ใช้งาน Claude API\n\nกรอกรหัส Admin เพื่อยืนยัน:`);
+  if (pw === null) { toggle.checked = !on; return; }   // cancelled → revert switch
   try {
     const r = await fetch(TBASE + '/api/admin/claude', {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ enabled: on }),
+      body: JSON.stringify({ enabled: on, password: pw }),
     });
-    if (!r.ok) throw new Error();
-  } catch { alert('บันทึกการตั้งค่าไม่สำเร็จ'); }
-  loadClaude();
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      alert(d.error || 'บันทึกการตั้งค่าไม่สำเร็จ');
+      toggle.checked = !on;                            // wrong password / error → revert
+      return;
+    }
+  } catch {
+    alert('บันทึกการตั้งค่าไม่สำเร็จ');
+    toggle.checked = !on;
+    return;
+  }
+  await loadClaude();
 }
 
 async function resetClaude() {
