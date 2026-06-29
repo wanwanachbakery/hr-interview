@@ -20,7 +20,7 @@
 
     const TITLES = {
       '/': 'หน้าแรก', '/worklog': 'บันทึกงานประจำวัน', '/worklog-team': 'บันทึกงานของทีม',
-      '/worklog-report': 'สรุปบันทึกงาน', '/dashboard': 'Dashboard', '/reports': 'รายงาน',
+      '/worklog-report': 'สรุปบันทึกงาน', '/dashboard': 'Dashboard Job', '/reports': 'รายงาน',
       '/profile': 'โปรไฟล์', '/interview': 'อินเทอร์วิว', '/review': 'เอกสาร', '/examples': 'ตัวอย่าง',
       '/manual': 'คู่มือการใช้งาน',
       '/admin': 'จัดการระบบ', '/admin/users': 'จัดการผู้ใช้', '/admin/org': 'จัดการองค์กร',
@@ -33,7 +33,7 @@
       { href: '/worklog', label: 'บันทึกงาน', ic: '📝', hideAdmin: true },
       { href: '/worklog-team', label: 'บันทึกงานทีม', ic: '👥', supervisor: true },
       { href: '/worklog-report', label: 'สรุปบันทึกงาน', ic: '📈', supervisor: true },
-      { href: '/dashboard', label: 'Dashboard', ic: '📋' },
+      { href: '/dashboard', label: 'Dashboard Job', ic: '📋' },
       { href: '/reports', label: 'รายงาน', ic: '📊' },
       { href: '/manual', label: 'คู่มือ', ic: '📖' },
     ];

@@ -109,8 +109,8 @@
     </nav>
   </div>
 
-  <h1>📋 สถานะ Interview ตามตำแหน่ง</h1>
-  <p class="sub">ดูทุกตำแหน่งในขอบเขตของคุณ · ใครครองตำแหน่ง · สถานะ interview ของแต่ละคน</p>
+  <h1>📋 Dashboard Job</h1>
+  <p class="sub">สถานะการสัมภาษณ์ของแต่ละตำแหน่ง · ใครครองตำแหน่ง · ใครกรอก / ยังไม่กรอก</p>
 
   <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
@@ -119,7 +119,22 @@
     </div>
   </div>
 
+  <div class="card" id="dash-controls" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px 16px;">
+    <div style="display:flex; gap:6px;">
+      <button class="ghost" id="view-tree">🌳 ตามตำแหน่ง</button>
+      <button class="ghost" id="view-list">👤 รายคน</button>
+    </div>
+    <input id="dash-search" placeholder="ค้นหาชื่อ / ตำแหน่ง..." style="flex:1; min-width:180px; display:none;"/>
+    <select id="dash-status" style="width:auto; display:none;">
+      <option value="">ทุกสถานะ</option>
+      <option value="completed">เสร็จ</option>
+      <option value="in_progress">กำลังตอบ</option>
+      <option value="not_started">ยังไม่ตอบ</option>
+    </select>
+  </div>
+
   <div id="tree"></div>
+  <div id="person-list" style="display:none;"></div>
 
   <div class="card" id="report-card" style="display:none;">
     <h2 style="margin-top:0;">รายงาน Optimization ล่าสุด</h2>
@@ -133,7 +148,8 @@ const STATUS_LABEL = {
   not_started:'ยังไม่ตอบ', in_progress:'กำลังตอบ', completed:'เสร็จ',
 };
 
-let ME;
+let ME, DATA = null, POSNAME = {}, SECNAME = {}, DIVNAME = {};
+let dashView = localStorage.getItem('dashView') || 'tree';
 
 async function load() {
   const [me, divs, secs, poss, emps] = await Promise.all([
@@ -144,6 +160,10 @@ async function load() {
     fetch(TBASE + '/api/employees').then(r => r.json()),  // active only
   ]);
   ME = me;
+  DATA = { divs, secs, poss, emps };
+  POSNAME = Object.fromEntries(poss.map(p => [p.id, p.name]));
+  SECNAME = Object.fromEntries(secs.map(s => [s.id, s.name]));
+  DIVNAME = Object.fromEntries(divs.map(d => [d.id, d.name]));
   if (me.role === 'admin') document.getElementById('nav-admin').style.display = 'inline';
 
   // Summary
@@ -165,74 +185,10 @@ async function load() {
     document.getElementById('analyze-btn').addEventListener('click', runAnalyze);
   }
 
-  // Build tree: division -> section -> position (+ incumbent emp if any)
-  const empByPos = Object.fromEntries(emps.map(e => [e.position_id, e]));
-  const tree = document.getElementById('tree');
-  if (divs.length === 0) {
-    tree.innerHTML = '<div class="card empty">ไม่มีฝ่ายในขอบเขตของคุณ</div>';
-    return;
-  }
-  tree.innerHTML = divs.map(d => {
-    const secsInDiv = secs.filter(s => s.division_id === d.id);
-    if (!secsInDiv.length) {
-      return `<div class="div-block" style="border-top-color:${esc(d.color)}">
-        <h2 style="margin:0 0 4px;">${esc(d.icon || '🏢')} ${esc(d.name)}</h2>
-        <p class="empty" style="padding:8px;">– ยังไม่มีแผนก –</p>
-      </div>`;
-    }
-    return `<div class="div-block" style="border-top-color:${esc(d.color)}">
-      <h2 style="margin:0 0 12px;">${esc(d.icon || '🏢')} ${esc(d.name)}</h2>
-      ${secsInDiv.map(s => {
-        const posInSec = poss.filter(p => p.section_id === s.id);
-        if (!posInSec.length) {
-          return `<div class="sec-block"><strong>📋 ${esc(s.name)}</strong> <span class="empty">– ยังไม่มีตำแหน่ง –</span></div>`;
-        }
-        return `<div class="sec-block">
-          <strong>📋 ${esc(s.name)}</strong>
-          <div style="margin-top:6px;">
-            ${posInSec.map(p => {
-              const e = empByPos[p.id];
-              if (!e) {
-                return `<div class="pos-row">
-                  <div class="pos-label">👤 ${esc(p.name)}</div>
-                  <div><span class="iv-status iv-vacant">ตำแหน่งว่าง</span>
-                    ${ME.role === 'admin' || ME.role === 'executive'
-                      ? `<a href="/position-history?id=${esc(p.id)}" style="font-size:12px; margin-left:8px;">ประวัติ</a>` : ''}
-                  </div>
-                </div>`;
-              }
-              const statusKey = e.interviewStatus || 'not_started';
-              const statusTxt = STATUS_LABEL[statusKey] || statusKey;
-              const link = statusKey === 'completed'
-                ? `<a href="/review?id=${esc(e.id)}" style="font-size:12px; margin-left:8px;">📄 ดูเอกสาร</a>`
-                : (e.user_id === ME.user_id
-                    ? `<a href="/interview?id=${esc(e.id)}" style="font-size:12px; margin-left:8px;">▶ ตอบของฉัน</a>`
-                    : '');
-              const delBtn = (ME.role === 'admin' && statusKey !== 'not_started')
-                ? `<button class="ghost del-btn" style="font-size:12px; padding:2px 8px; margin-left:8px;" data-id="${esc(e.id)}" data-name="${esc(e.name)}" title="ล้างคำตอบและเอกสาร กลับเป็นยังไม่ตอบ">↺ รีเซ็ต</button>`
-                : '';
-              return `<div class="pos-row">
-                <div class="pos-label">👤 ${esc(p.name)} <span style="color:#475569;">→ ${esc(e.name)}</span></div>
-                <div><span class="iv-status iv-${statusKey}">${esc(statusTxt)}</span>${link}${delBtn}</div>
-              </div>`;
-            }).join('')}
-          </div>
-        </div>`;
-      }).join('')}
-    </div>`;
-  }).join('');
-
-  // Wire reset buttons (admin only) — clears answers + docs, keeps the employee
-  document.querySelectorAll('.del-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.id;
-      if (!confirm(`รีเซ็ตอินเทอร์วิวของ "${btn.dataset.name}"?\n\nคำตอบและเอกสาร (JD/KPI/Optimization) ทั้งหมดจะถูกล้าง กลับเป็น "ยังไม่ตอบ"\nพนักงานยังอยู่ในระบบและกรอกใหม่ได้`)) return;
-      btn.disabled = true;
-      const r = await fetch(TBASE + '/api/interview/' + encodeURIComponent(id), { method: 'DELETE' });
-      if (!r.ok) { const d = await r.json().catch(() => ({})); alert('รีเซ็ตไม่ได้: ' + (d.error || 'unknown')); btn.disabled = false; return; }
-      await load();
-    });
-  });
+  renderTree();
+  renderList();
+  applyView();
+  wireResets();
 
   // preload report
   try {
@@ -250,6 +206,123 @@ async function load() {
     }
   } catch {}
 }
+
+// Action links/buttons for an incumbent (shared by tree + list views)
+function statusActions(e) {
+  const statusKey = e.interviewStatus || 'not_started';
+  const link = statusKey === 'completed'
+    ? `<a href="/review?id=${esc(e.id)}" style="font-size:12px; margin-left:8px;">📄 ดูเอกสาร</a>`
+    : (e.user_id === ME.user_id ? `<a href="/interview?id=${esc(e.id)}" style="font-size:12px; margin-left:8px;">▶ ตอบของฉัน</a>` : '');
+  const delBtn = (ME.role === 'admin' && statusKey !== 'not_started')
+    ? `<button class="ghost del-btn" style="font-size:12px; padding:2px 8px; margin-left:8px;" data-id="${esc(e.id)}" data-name="${esc(e.name)}" title="ล้างคำตอบและเอกสาร กลับเป็นยังไม่ตอบ">↺ รีเซ็ต</button>`
+    : '';
+  return { statusKey, statusTxt: STATUS_LABEL[statusKey] || statusKey, link, delBtn };
+}
+
+// ---- View 1: org tree (by position) ----
+function renderTree() {
+  const { divs, secs, poss, emps } = DATA;
+  const empByPos = Object.fromEntries(emps.map(e => [e.position_id, e]));
+  const tree = document.getElementById('tree');
+  if (divs.length === 0) { tree.innerHTML = '<div class="card empty">ไม่มีฝ่ายในขอบเขตของคุณ</div>'; return; }
+  tree.innerHTML = divs.map(d => {
+    const secsInDiv = secs.filter(s => s.division_id === d.id);
+    if (!secsInDiv.length) {
+      return `<div class="div-block" style="border-top-color:${esc(d.color)}">
+        <h2 style="margin:0 0 4px;">${esc(d.icon || '🏢')} ${esc(d.name)}</h2>
+        <p class="empty" style="padding:8px;">– ยังไม่มีแผนก –</p></div>`;
+    }
+    return `<div class="div-block" style="border-top-color:${esc(d.color)}">
+      <h2 style="margin:0 0 12px;">${esc(d.icon || '🏢')} ${esc(d.name)}</h2>
+      ${secsInDiv.map(s => {
+        const posInSec = poss.filter(p => p.section_id === s.id);
+        if (!posInSec.length) return `<div class="sec-block"><strong>📋 ${esc(s.name)}</strong> <span class="empty">– ยังไม่มีตำแหน่ง –</span></div>`;
+        return `<div class="sec-block"><strong>📋 ${esc(s.name)}</strong><div style="margin-top:6px;">
+            ${posInSec.map(p => {
+              const e = empByPos[p.id];
+              if (!e) return `<div class="pos-row">
+                  <div class="pos-label">👤 ${esc(p.name)}</div>
+                  <div><span class="iv-status iv-vacant">ตำแหน่งว่าง</span>
+                    ${ME.role === 'admin' || ME.role === 'executive' ? `<a href="/position-history?id=${esc(p.id)}" style="font-size:12px; margin-left:8px;">ประวัติ</a>` : ''}</div></div>`;
+              const a = statusActions(e);
+              return `<div class="pos-row">
+                <div class="pos-label">👤 ${esc(p.name)} <span style="color:#475569;">→ ${esc(e.name)}</span></div>
+                <div><span class="iv-status iv-${a.statusKey}">${esc(a.statusTxt)}</span>${a.link}${a.delBtn}</div></div>`;
+            }).join('')}
+          </div></div>`;
+      }).join('')}</div>`;
+  }).join('');
+}
+
+// ---- View 2: flat per-person list (who filled / who didn't) ----
+function renderList() {
+  const { emps } = DATA;
+  const q = (document.getElementById('dash-search').value || '').trim().toLowerCase();
+  const fst = document.getElementById('dash-status').value;
+  const rows = emps.slice()
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'th'))
+    .filter(e => {
+      const statusKey = e.interviewStatus || 'not_started';
+      if (fst && statusKey !== fst) return false;
+      if (q && !((e.name + ' ' + (POSNAME[e.position_id] || '')).toLowerCase().includes(q))) return false;
+      return true;
+    });
+  const total = emps.length;
+  const done = emps.filter(e => e.interviewStatus === 'completed').length;
+  const notyet = emps.filter(e => (e.interviewStatus || 'not_started') === 'not_started').length;
+  const inprog = emps.filter(e => e.interviewStatus === 'in_progress').length;
+  const head = `<div class="row" style="gap:18px; margin-bottom:12px;">
+      <span class="sub">ทั้งหมด <strong style="color:var(--ink);">${total}</strong> คน</span>
+      <span class="sub">✅ เสร็จ <strong style="color:#166534;">${done}</strong></span>
+      <span class="sub">✍️ กำลังตอบ <strong style="color:#1e40af;">${inprog}</strong></span>
+      <span class="sub">🕒 ยังไม่ตอบ <strong style="color:#92400e;">${notyet}</strong></span>
+    </div>`;
+  const body = rows.map(e => {
+    const a = statusActions(e);
+    return `<tr>
+      <td>👤 ${esc(e.name)}</td>
+      <td>${esc(POSNAME[e.position_id] || '-')}</td>
+      <td class="sub">${esc(DIVNAME[e.division_id] || '-')}${e.section_id ? ' · ' + esc(SECNAME[e.section_id] || '') : ''}</td>
+      <td><span class="iv-status iv-${a.statusKey}">${esc(a.statusTxt)}</span></td>
+      <td style="white-space:nowrap;">${a.link || '<span class="sub">–</span>'}${a.delBtn}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('person-list').innerHTML = `<div class="card">${head}
+    <div style="overflow-x:auto;"><table>
+      <thead><tr><th>ชื่อ</th><th>ตำแหน่ง</th><th>ฝ่าย / แผนก</th><th>สถานะ</th><th>การทำงาน</th></tr></thead>
+      <tbody>${body || '<tr><td colspan="5" class="empty">ไม่พบรายชื่อตามเงื่อนไข</td></tr>'}</tbody>
+    </table></div></div>`;
+}
+
+function applyView() {
+  const isList = dashView === 'list';
+  document.getElementById('tree').style.display = isList ? 'none' : '';
+  document.getElementById('person-list').style.display = isList ? '' : 'none';
+  document.getElementById('dash-search').style.display = isList ? '' : 'none';
+  document.getElementById('dash-status').style.display = isList ? '' : 'none';
+  const t = document.getElementById('view-tree'), l = document.getElementById('view-list');
+  [t, l].forEach(b => { b.style.background = ''; b.style.color = ''; b.style.borderColor = ''; });
+  const active = isList ? l : t;
+  active.style.background = 'var(--brand)'; active.style.color = '#fff'; active.style.borderColor = 'var(--brand)';
+}
+
+function wireResets() {
+  document.querySelectorAll('.del-btn').forEach(btn => {
+    if (btn._wired) return; btn._wired = true;
+    btn.addEventListener('click', async () => {
+      if (!confirm(`รีเซ็ตอินเทอร์วิวของ "${btn.dataset.name}"?\n\nคำตอบและเอกสาร (JD/KPI/Optimization) ทั้งหมดจะถูกล้าง กลับเป็น "ยังไม่ตอบ"\nพนักงานยังอยู่ในระบบและกรอกใหม่ได้`)) return;
+      btn.disabled = true;
+      const r = await fetch(TBASE + '/api/interview/' + encodeURIComponent(btn.dataset.id), { method: 'DELETE' });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert('รีเซ็ตไม่ได้: ' + (d.error || 'unknown')); btn.disabled = false; return; }
+      await load();
+    });
+  });
+}
+
+document.getElementById('view-tree').addEventListener('click', () => { dashView = 'tree'; localStorage.setItem('dashView', 'tree'); applyView(); });
+document.getElementById('view-list').addEventListener('click', () => { dashView = 'list'; localStorage.setItem('dashView', 'list'); applyView(); });
+document.getElementById('dash-search').addEventListener('input', () => { renderList(); wireResets(); });
+document.getElementById('dash-status').addEventListener('change', () => { renderList(); wireResets(); });
 
 async function runAnalyze() {
   const btn = document.getElementById('analyze-btn');
