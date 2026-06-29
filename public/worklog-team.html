@@ -182,13 +182,19 @@ function renderDetail(data) {
   document.getElementById('tw-detail-title').textContent =
     `${data.member.name} — ${formatThaiDate(elDate.value)}`;
   const rows = data.entries.map(e => {
-    const has = e.task && e.task.trim();
+    const items = e.items || [];
+    const has = items.length > 0;
+    const taskCell = has
+      ? items.map(it => esc(it.task)).join('<br>')
+      : '<span style="color:#94a3b8;">— ยังไม่บันทึก —</span>';
+    const catCell = has ? items.map(it => esc(it.category || '—')).join('<br>') : '—';
+    const recCell = has ? items.map(it => it.recurring ? '<span title="งานประจำ">⟳</span>' : '·').join('<br>') : '';
     return `<tr>
-      <td class="tw-time">${esc(e.label)}</td>
-      <td>${has ? esc(e.task) : '<span style="color:#94a3b8;">— ยังไม่บันทึก —</span>'}</td>
-      <td style="color:#64748b;">${esc(e.category || '—')}</td>
-      <td style="text-align:center; color:#0369a1;">${e.recurring ? '<span title="งานประจำ">⟳</span>' : ''}</td>
-      <td style="text-align:center; color:${has ? '#16a34a' : '#d97706'};">${has ? '✓' : '🕒'}</td>
+      <td class="tw-time" style="vertical-align:top;">${esc(e.label)}</td>
+      <td>${taskCell}</td>
+      <td style="color:#64748b; vertical-align:top;">${catCell}</td>
+      <td style="text-align:center; color:#0369a1; vertical-align:top;">${recCell}</td>
+      <td style="text-align:center; vertical-align:top; color:${has ? '#16a34a' : '#d97706'};">${has ? '✓' : '🕒'}</td>
     </tr>`;
   }).join('');
   document.getElementById('tw-detail-body').innerHTML = `

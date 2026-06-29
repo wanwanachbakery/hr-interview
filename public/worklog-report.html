@@ -161,12 +161,12 @@ async function loadReport() {
     </div>`;
   const maxPct = Math.max(1, ...(d.byCategory || []).map(c => c.pct));
   const cats = (d.byCategory || []).length ? `
-    <div style="font-weight:500; margin:4px 0 10px; display:flex; align-items:center; gap:6px;">⏱️ % เวลาแยกตามหมวดหมู่</div>
+    <div style="font-weight:500; margin:4px 0 10px; display:flex; align-items:center; gap:6px;">⏱️ สัดส่วนงานแยกตามหมวดหมู่</div>
     ${d.byCategory.map(c => `
       <div class="rp-bar-row">
         <span class="name" title="${esc(c.category)}">${esc(c.category)}</span>
         <div class="rp-track"><div class="rp-fill" style="width:${Math.round(c.pct / maxPct * 100)}%; ${c.category === 'ไม่ระบุ' ? 'background:#85B7EB;' : ''}"></div></div>
-        <span style="width:64px; text-align:right; font-size:13px;">${c.pct}% · ${c.hours} ชม.</span>
+        <span style="width:72px; text-align:right; font-size:13px;">${c.pct}% · ${c.count} งาน</span>
       </div>`).join('')}` : '<p class="sub">ยังไม่มีข้อมูลบันทึกในช่วงนี้</p>';
   const rows = lastMembers.map(m => {
     const [label, cls] = STATUS[m.status] || STATUS.none;

@@ -1294,7 +1294,7 @@ function summarizeUserWorklog(db, userId, endDate, days) {
     .map(([c, h]) => `${c} ${Math.round((h / totalFilled) * 100)}%`);
   const topTasks = Object.values(taskDays).sort((a, b) => b.days - a.days).slice(0, 8);
   const lines = [
-    `สรุปบันทึกงานจริงของพนักงาน (ย้อนหลัง ${days} วัน · มีบันทึก ${daysLogged} วัน · รวม ${totalFilled} ชม.):`,
+    `สรุปบันทึกงานจริงของพนักงาน (ย้อนหลัง ${days} วัน · มีบันทึก ${daysLogged} วัน · รวม ${totalFilled} รายการงาน):`,
     `- เวลาแยกตามหมวดหมู่: ${cats.join(', ')}`,
     `- งานซ้ำ ${Math.round((recurringFilled / totalFilled) * 100)}% ของเวลาทั้งหมด`,
     `- งานที่ทำบ่อย: ${topTasks.map(t => `${t.label} (${t.days} วัน${t.recurring ? ', งานประจำ' : ''})`).join('; ')}`,
@@ -1374,13 +1374,17 @@ function buildWorklogForUser(db, user, date) {
   const hours = (uh && uh.hours.length) ? uh.hours : [9, 10, 11, 13, 14, 15, 16, 17];
   const saved = db.loadWorklog(user.id, date);
   const byHour = {};
-  if (saved && Array.isArray(saved.entries)) for (const e of saved.entries) byHour[e.hour] = e;
+  if (saved && Array.isArray(saved.entries)) {
+    for (const e of saved.entries) {
+      if (!e || e.hour == null) continue;
+      if (!(e.task && String(e.task).trim())) continue;            // skip blanks
+      (byHour[e.hour] = byHour[e.hour] || []).push({ task: e.task || '', tools: e.tools || '', category: e.category || '', recurring: !!e.recurring });
+    }
+  }
   const pad = (n) => String(n).padStart(2, '0');
-  const entries = hours.map(h => {
-    const e = byHour[h] || {};
-    return { hour: h, label: `${pad(h)}:00–${pad(h + 1)}:00`, task: e.task || '', tools: e.tools || '', category: e.category || '', recurring: !!e.recurring };
-  });
-  const filled = entries.filter(e => e.task && e.task.trim()).length;
+  // One row per scheduled hour, each holding 0..n task items (multiple tasks per hour).
+  const entries = hours.map(h => ({ hour: h, label: `${pad(h)}:00–${pad(h + 1)}:00`, items: byHour[h] || [] }));
+  const filled = entries.filter(e => e.items.length > 0).length;   // hours with at least one task
   return { date, total: entries.length, filled, entries, updated_at: saved ? saved.updated_at : null };
 }
 
@@ -1405,13 +1409,14 @@ tenantRouter.put('/api/worklog', (req, res) => {
   const today = todayLocal();
   if (!WORKLOG_DATE_RE.test(String(date || ''))) return res.status(400).json({ error: 'รูปแบบวันที่ผิด (YYYY-MM-DD)' });
   if (String(date) > today) return res.status(400).json({ error: 'บันทึกงานวันในอนาคตไม่ได้' });
+  // Flat list — multiple entries may share the same hour. Blank tasks are dropped.
   const clean = Array.isArray(entries) ? entries.map(e => ({
     hour: Number(e.hour),
     task: String(e.task || '').slice(0, 1000),
     tools: String(e.tools || '').slice(0, 300),
     category: String(e.category || '').slice(0, 80),
     recurring: !!e.recurring,
-  })).filter(e => Number.isInteger(e.hour)) : [];
+  })).filter(e => Number.isInteger(e.hour) && e.task && e.task.trim()) : [];
   ctxDb().saveWorklog(user.id, date, { user_id: user.id, date, entries: clean, updated_at: new Date().toISOString() });
   res.json({ ok: true });
 });
@@ -1569,47 +1574,48 @@ tenantRouter.get('/api/worklog/report', (req, res) => {
     (!fDiv || u.division_id === fDiv) && (!fSec || u.section_id === fSec));
 
   const byCategory = {};
-  let totFilled = 0, totRecurring = 0, peopleLogged = 0, sumAvg = 0;
+  let totFilledHours = 0, totRecurringTasks = 0, totTasks = 0, peopleLogged = 0, sumAvg = 0;
 
   const members = users.map(u => {
     const uh = calcUserHours(u);
     const perDay = (uh && uh.hours.length) ? uh.hours.length : 8;
-    let filled = 0, recurring = 0, daysLogged = 0, sumComplete = 0;
+    let filledHours = 0, daysLogged = 0, sumComplete = 0;
     for (const ds of dates) {
       const wl = db.loadWorklog(u.id, ds);
       if (!wl || !Array.isArray(wl.entries)) continue;
       const f = wl.entries.filter(e => e.task && String(e.task).trim());
       if (!f.length) continue;
       daysLogged++;
-      filled += f.length;
-      sumComplete += Math.min(1, f.length / perDay);
-      for (const e of f) {
+      const hrs = new Set(f.map(e => e.hour));         // distinct hours worked that day
+      filledHours += hrs.size;
+      sumComplete += Math.min(1, hrs.size / perDay);
+      for (const e of f) {                              // category/recurring counted per task
+        totTasks++;
         const cat = e.category && String(e.category).trim() ? e.category : 'ไม่ระบุ';
         byCategory[cat] = (byCategory[cat] || 0) + 1;
-        if (e.recurring) recurring++;
+        if (e.recurring) totRecurringTasks++;
       }
     }
     const avg = daysLogged ? Math.round((sumComplete / daysLogged) * 100) : 0;
-    totFilled += filled; totRecurring += recurring;
+    totFilledHours += filledHours;
     if (daysLogged) { peopleLogged++; sumAvg += avg; }
     return {
       user_id: u.id, name: u.name,
       position_name: posMap[u.position_id] || '', division_name: divMap[u.division_id] || '', section_name: secMap[u.section_id] || '',
-      filledHours: filled, daysLogged, avgCompleteness: avg,
+      filledHours, daysLogged, avgCompleteness: avg,
       status: daysLogged === 0 ? 'none' : (avg >= 90 ? 'good' : (avg >= 60 ? 'ok' : 'low')),
     };
   }).sort((a, b) => b.filledHours - a.filledHours);
 
   const byCat = Object.entries(byCategory)
-    .map(([category, hours]) => ({ category, hours, pct: totFilled ? Math.round((hours / totFilled) * 100) : 0 }))
-    .sort((a, b) => b.hours - a.hours);
+    .map(([category, count]) => ({ category, count, pct: totTasks ? Math.round((count / totTasks) * 100) : 0 }))
+    .sort((a, b) => b.count - a.count);
 
   res.json({
     applicable: true, from, to, dayCount: dates.length,
     totals: {
-      filledHours: totFilled,
-      recurringHours: totRecurring,
-      recurringPct: totFilled ? Math.round((totRecurring / totFilled) * 100) : 0,
+      filledHours: totFilledHours,
+      recurringPct: totTasks ? Math.round((totRecurringTasks / totTasks) * 100) : 0,
       peopleLogged, peopleTotal: members.length,
       avgCompleteness: peopleLogged ? Math.round(sumAvg / peopleLogged) : 0,
     },

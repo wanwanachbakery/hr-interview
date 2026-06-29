@@ -7,16 +7,21 @@
   <link rel="stylesheet" href="/styles.css"/>
   <link rel="icon" type="image/png" href="/logo.png"/>
   <style>
-    .wl-wrap { overflow-x:auto; }
-    .wl-table { width:100%; border-collapse:collapse; font-size:14px; margin-top:8px; min-width:560px; }
-    .wl-table th { text-align:left; font-weight:600; color:#475569; padding:8px; border-bottom:2px solid #e2e8f0; font-size:13px; }
-    .wl-table td { padding:6px 8px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
-    .wl-table input[type=text], .wl-table select { width:100%; padding:7px 9px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px; box-sizing:border-box; background:#fff; }
-    .wl-time { color:#64748b; white-space:nowrap; font-variant-numeric:tabular-nums; }
     .wl-prog-track { flex:1; height:8px; background:#e2e8f0; border-radius:999px; overflow:hidden; }
     .wl-prog-fill { height:100%; background:#0284c7; width:0%; transition:width .25s; }
-    .wl-rec { cursor:pointer; border:1px solid #cbd5e1; background:#fff; color:#64748b; border-radius:999px; padding:4px 10px; font-size:12px; font-family:inherit; white-space:nowrap; }
+    .wl-hour { border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; margin:10px 0; }
+    .wl-hour-head { display:flex; align-items:center; gap:10px; font-weight:600; color:#334155; font-size:14px; margin-bottom:8px; }
+    .wl-hour-head .wl-hour-status { font-size:12px; font-weight:400; }
+    .wl-taskline { display:flex; gap:8px; align-items:center; margin-bottom:7px; flex-wrap:wrap; }
+    .wl-taskline .t-task { flex:1; min-width:200px; }
+    .wl-taskline .t-cat { width:160px; }
+    .wl-taskline input, .wl-taskline select { padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px; box-sizing:border-box; background:#fff; }
+    .wl-rec { cursor:pointer; border:1px solid #cbd5e1; background:#fff; color:#64748b; border-radius:999px; padding:7px 12px; font-size:12px; font-family:inherit; white-space:nowrap; flex-shrink:0; }
     .wl-rec.on { background:#e0f2fe; border-color:#7dd3fc; color:#0369a1; font-weight:600; }
+    .wl-del { background:#fff; border:1px solid #fecaca; color:#b91c1c; border-radius:8px; width:34px; height:36px; cursor:pointer; font-size:14px; flex-shrink:0; }
+    .wl-del:hover { background:#fef2f2; }
+    .wl-addtask { background:transparent; border:1px dashed #94a3b8; color:#475569; border-radius:8px; padding:6px 12px; font-size:12px; cursor:pointer; font-family:inherit; }
+    .wl-addtask:hover { border-color:#0284c7; color:#0284c7; }
   </style>
 <script>
   window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
@@ -103,10 +108,10 @@
       <button class="ghost" id="wl-copy" style="font-size:13px;">📋 คัดลอกงานประจำจากเมื่อวาน</button>
     </div>
 
-    <div class="wl-wrap"><div id="wl-body" style="margin-top:8px;"><p class="sub">กำลังโหลด...</p></div></div>
+    <div id="wl-body" style="margin-top:8px;"><p class="sub">กำลังโหลด...</p></div>
 
     <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:18px; flex-wrap:wrap;">
-      <p class="hint" style="margin:0; max-width:420px;">💡 ติ๊ก “งานประจำ” สำหรับงานที่ทำซ้ำทุกวัน → คัดลอกมาใช้วันถัดไปได้ และช่วยให้รายงานสรุปแม่นขึ้น</p>
+      <p class="hint" style="margin:0; max-width:430px;">💡 เพิ่มได้หลายงานใน 1 ชั่วโมง (กด “+ เพิ่มงาน”) · ติ๊ก “งานประจำ” สำหรับงานที่ทำซ้ำทุกวัน</p>
       <div style="display:flex; align-items:center; gap:10px;">
         <span id="wl-saved-msg" class="sub" style="color:#16a34a;"></span>
         <button id="wl-save">💾 บันทึกงานวันนี้</button>
@@ -127,21 +132,40 @@ function todayStr() { return new Date().toLocaleDateString('en-CA'); }
 
 function catOptions(selected) {
   const opts = categories.map(c => `<option value="${esc(c)}"${c === selected ? ' selected' : ''}>${esc(c)}</option>`);
-  // keep an unknown saved value selectable
   if (selected && !categories.includes(selected)) opts.unshift(`<option value="${esc(selected)}" selected>${esc(selected)}</option>`);
   opts.unshift(`<option value=""${!selected ? ' selected' : ''}>— เลือกหมวดหมู่ —</option>`);
   opts.push(`<option value="${ADD_NEW}" style="color:#0369a1;">+ เพิ่มหมวดหมู่ใหม่…</option>`);
   return opts.join('');
 }
 
-function recPill(on) {
-  return `<button type="button" class="wl-rec${on ? ' on' : ''}" data-on="${on ? 1 : 0}">${on ? '⟳ ประจำ' : 'ครั้งเดียว'}</button>`;
+function taskLineHTML(item) {
+  item = item || {};
+  const on = !!item.recurring;
+  return `<div class="wl-taskline">
+    <input class="t-task" type="text" data-field="task" value="${esc(item.task || '')}" placeholder="ทำอะไรในช่วงนี้..."/>
+    <select class="t-cat" data-field="category">${catOptions(item.category || '')}</select>
+    <button type="button" class="wl-rec${on ? ' on' : ''}" data-on="${on ? 1 : 0}">${on ? '⟳ ประจำ' : 'ครั้งเดียว'}</button>
+    <button type="button" class="wl-del" title="ลบงานนี้">✕</button>
+  </div>`;
+}
+
+function toggleRec(btn) {
+  const on = btn.getAttribute('data-on') === '1';
+  btn.setAttribute('data-on', on ? '0' : '1');
+  btn.className = 'wl-rec' + (on ? '' : ' on');
+  btn.textContent = on ? 'ครั้งเดียว' : '⟳ ประจำ';
 }
 
 function recomputeProgress() {
-  const tasks = bodyEl.querySelectorAll('input[data-field="task"]');
+  const blocks = bodyEl.querySelectorAll('.wl-hour');
   let total = 0, filled = 0;
-  tasks.forEach(inp => { total++; if (inp.value.trim()) filled++; });
+  blocks.forEach(b => {
+    total++;
+    const has = [...b.querySelectorAll('input[data-field="task"]')].some(i => i.value.trim());
+    if (has) filled++;
+    const st = b.querySelector('.wl-hour-status');
+    if (st) st.innerHTML = has ? '<span style="color:#16a34a;">✓ บันทึกแล้ว</span>' : '<span style="color:#d97706;">🕒 ยังไม่บันทึก</span>';
+  });
   const pct = total ? Math.round((filled / total) * 100) : 0;
   document.getElementById('wl-progress-text').textContent = `บันทึกแล้ว ${filled}/${total} ชั่วโมง`;
   document.getElementById('wl-progress-fill').style.width = pct + '%';
@@ -151,64 +175,60 @@ function recomputeProgress() {
 function renderTable(data) {
   if (data.applicable === false) {
     bodyEl.innerHTML = `<p class="sub" style="color:#b91c1c; padding:12px 0;">${esc(data.error || 'บัญชีนี้ไม่มีบันทึกงานส่วนตัว')}</p>`;
-    ['wl-save','wl-copy'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    ['wl-save', 'wl-copy'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
     document.getElementById('wl-tools-row').style.display = 'none';
     document.getElementById('wl-remind-row').style.display = 'none';
     return;
   }
-  const rows = data.entries.map(e => `
-    <tr data-hour="${e.hour}">
-      <td class="wl-time">${esc(e.label)}</td>
-      <td><input type="text" data-field="task" value="${esc(e.task)}" placeholder="ทำอะไรในช่วงนี้..."/></td>
-      <td><select data-field="category">${catOptions(e.category)}</select></td>
-      <td style="text-align:center;">${recPill(e.recurring)}</td>
-    </tr>`).join('');
-  bodyEl.innerHTML = `
-    <table class="wl-table">
-      <thead><tr>
-        <th style="width:110px;">เวลา</th><th>งานที่ทำ</th>
-        <th style="width:180px;">หมวดหมู่</th><th style="width:104px; text-align:center;">งานประจำ</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
-  bindRowEvents();
+  bodyEl.innerHTML = data.entries.map(e => {
+    const items = (e.items && e.items.length) ? e.items : [null];
+    return `<div class="wl-hour" data-hour="${e.hour}">
+      <div class="wl-hour-head">${esc(e.label)} <span class="wl-hour-status"></span></div>
+      <div class="wl-tasks">${items.map(taskLineHTML).join('')}</div>
+      <button type="button" class="wl-addtask" data-hour="${e.hour}">+ เพิ่มงานในชั่วโมงนี้</button>
+    </div>`;
+  }).join('');
   recomputeProgress();
 }
 
-function bindRowEvents() {
-  bodyEl.querySelectorAll('input[data-field="task"]').forEach(inp => inp.addEventListener('input', recomputeProgress));
-  bodyEl.querySelectorAll('select[data-field="category"]').forEach(sel => {
-    sel.dataset.prev = sel.value;
-    sel.addEventListener('change', () => {
-      if (sel.value === ADD_NEW) { addCategory(sel); return; }
-      sel.dataset.prev = sel.value;
-    });
-  });
-  bodyEl.querySelectorAll('.wl-rec').forEach(btn => btn.addEventListener('click', () => {
-    const on = btn.getAttribute('data-on') === '1';
-    btn.setAttribute('data-on', on ? '0' : '1');
-    btn.className = 'wl-rec' + (on ? '' : ' on');
-    btn.textContent = on ? 'ครั้งเดียว' : '⟳ ประจำ';
-  }));
-}
+// One set of delegated listeners (bodyEl is stable across renders)
+bodyEl.addEventListener('input', e => { if (e.target.matches('input[data-field="task"]')) recomputeProgress(); });
+bodyEl.addEventListener('change', e => {
+  const sel = e.target.closest('select[data-field="category"]');
+  if (sel && sel.value === ADD_NEW) addCategory(sel);
+});
+bodyEl.addEventListener('click', e => {
+  const rec = e.target.closest('.wl-rec');
+  if (rec) { toggleRec(rec); return; }
+  const del = e.target.closest('.wl-del');
+  if (del) {
+    const line = del.closest('.wl-taskline');
+    const tasks = line.parentElement;
+    line.remove();
+    if (!tasks.querySelector('.wl-taskline')) tasks.insertAdjacentHTML('beforeend', taskLineHTML(null));
+    recomputeProgress();
+    return;
+  }
+  const add = e.target.closest('.wl-addtask');
+  if (add) {
+    add.closest('.wl-hour').querySelector('.wl-tasks').insertAdjacentHTML('beforeend', taskLineHTML(null));
+    return;
+  }
+});
 
 async function addCategory(sel) {
   const name = (prompt('ชื่อหมวดหมู่ใหม่:') || '').trim();
-  if (!name) { sel.value = sel.dataset.prev || ''; return; }
+  if (!name) { sel.value = ''; return; }
   try {
-    const r = await fetch(`${TBASE}/api/worklog/categories`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }),
-    });
+    const r = await fetch(`${TBASE}/api/worklog/categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
     const d = await r.json();
-    if (!r.ok) { alert(d.error || 'เพิ่มหมวดหมู่ไม่สำเร็จ'); sel.value = sel.dataset.prev || ''; return; }
+    if (!r.ok) { alert(d.error || 'เพิ่มหมวดหมู่ไม่สำเร็จ'); sel.value = ''; return; }
     categories = d.categories || categories;
-    // rebuild every category select, preserving each row's current pick
     bodyEl.querySelectorAll('select[data-field="category"]').forEach(s => {
-      const cur = (s === sel) ? name : (s.value === ADD_NEW ? (s.dataset.prev || '') : s.value);
+      const cur = (s === sel) ? name : (s.value === ADD_NEW ? '' : s.value);
       s.innerHTML = catOptions(cur);
-      s.dataset.prev = cur;
     });
-  } catch (e) { alert('เชื่อมต่อไม่สำเร็จ'); sel.value = sel.dataset.prev || ''; }
+  } catch (e) { alert('เชื่อมต่อไม่สำเร็จ'); sel.value = ''; }
 }
 
 async function loadDay(date) {
@@ -235,15 +255,15 @@ async function copyRecurring() {
     else {
       let n = 0;
       for (const e of d.entries) {
-        const tr = bodyEl.querySelector(`tr[data-hour="${e.hour}"]`);
-        if (!tr) continue;
-        const taskInp = tr.querySelector('input[data-field="task"]');
-        if (taskInp.value.trim()) continue; // don't overwrite what you already typed
-        taskInp.value = e.task;
-        const sel = tr.querySelector('select[data-field="category"]');
+        const block = bodyEl.querySelector(`.wl-hour[data-hour="${e.hour}"]`);
+        if (!block) continue;
+        const tasks = block.querySelector('.wl-tasks');
+        let line = [...tasks.querySelectorAll('.wl-taskline')].find(l => !l.querySelector('input[data-field="task"]').value.trim());
+        if (!line) { tasks.insertAdjacentHTML('beforeend', taskLineHTML(null)); line = tasks.lastElementChild; }
+        line.querySelector('input[data-field="task"]').value = e.task;
         if (e.category && !categories.includes(e.category)) categories.push(e.category);
-        sel.innerHTML = catOptions(e.category); sel.dataset.prev = e.category;
-        const rec = tr.querySelector('.wl-rec');
+        line.querySelector('select[data-field="category"]').innerHTML = catOptions(e.category || '');
+        const rec = line.querySelector('.wl-rec');
         rec.setAttribute('data-on', '1'); rec.className = 'wl-rec on'; rec.textContent = '⟳ ประจำ';
         n++;
       }
@@ -257,18 +277,19 @@ async function copyRecurring() {
 
 async function saveDay() {
   const btn = document.getElementById('wl-save');
-  const entries = [...bodyEl.querySelectorAll('tr[data-hour]')].map(tr => ({
-    hour: Number(tr.getAttribute('data-hour')),
-    task: tr.querySelector('input[data-field="task"]').value,
-    category: (v => v === ADD_NEW ? '' : v)(tr.querySelector('select[data-field="category"]').value),
-    recurring: tr.querySelector('.wl-rec').getAttribute('data-on') === '1',
-  }));
+  const entries = [];
+  bodyEl.querySelectorAll('.wl-hour').forEach(b => {
+    const hour = Number(b.getAttribute('data-hour'));
+    b.querySelectorAll('.wl-taskline').forEach(line => {
+      const task = line.querySelector('input[data-field="task"]').value;
+      if (!task.trim()) return;
+      const catV = line.querySelector('select[data-field="category"]').value;
+      entries.push({ hour, task, category: catV === ADD_NEW ? '' : catV, recurring: line.querySelector('.wl-rec').getAttribute('data-on') === '1' });
+    });
+  });
   btn.disabled = true; const old = btn.textContent; btn.textContent = 'กำลังบันทึก...';
   try {
-    const r = await fetch(`${TBASE}/api/worklog`, {
-      method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ date: dateEl.value, entries }),
-    });
+    const r = await fetch(`${TBASE}/api/worklog`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ date: dateEl.value, entries }) });
     if (r.ok) { savedMsg.style.color = '#16a34a'; savedMsg.textContent = '✓ บันทึกแล้ว'; setTimeout(() => savedMsg.textContent = '', 3000); }
     else { const d = await r.json().catch(() => ({})); savedMsg.style.color = '#b91c1c'; savedMsg.textContent = d.error || 'บันทึกไม่สำเร็จ'; }
   } catch (e) { savedMsg.style.color = '#b91c1c'; savedMsg.textContent = 'เชื่อมต่อไม่สำเร็จ'; }
