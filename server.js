@@ -490,7 +490,13 @@ const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.use(express.json({ limit: '5mb' }));  // bumped for base64-encoded Excel uploads
-app.use(express.static(path.join(ROOT, 'public')));
+app.use(express.static(path.join(ROOT, 'public'), {
+  setHeaders: (res, fp) => {
+    // Force revalidation of text assets so updated pages/scripts/styles show
+    // right after a deploy (avoids stale cached HTML/JS/CSS/Markdown).
+    if (/\.(html|js|css|md)$/i.test(fp)) res.setHeader('Cache-Control', 'no-cache');
+  },
+}));
 
 // ============================================================
 // Tenant subrouter — every request that touches per-tenant data goes here.

@@ -38,6 +38,28 @@
       { href: '/manual', label: 'คู่มือ', ic: '📖' },
     ];
 
+    // Short "how to use this page" guidance shown at the top of each page.
+    const HELP = {
+      '/': 'หน้ารวมภาพรวมและทางลัดของคุณ — เลือกเมนูทางซ้ายเพื่อเข้าใช้งานแต่ละส่วน',
+      '/worklog': 'บันทึกสิ่งที่ทำในแต่ละชั่วโมง: พิมพ์งาน เลือกหมวดหมู่ · กด “+ เพิ่มงานในชั่วโมงนี้” ถ้ามีหลายงานในชั่วโมงเดียว · ติ๊ก “งานประจำ” สำหรับงานที่ทำซ้ำทุกวัน · เสร็จแล้วกด “บันทึกงานวันนี้”',
+      '/worklog-team': 'ดูบันทึกงานของลูกน้อง: เลือกชื่อพนักงานจากดรอปดาวน์ (พิมพ์เพื่อค้นหา) คัดกรองตามฝ่าย/แผนก และเลือกวันที่ที่ต้องการดู (ดูอย่างเดียว แก้ไม่ได้)',
+      '/worklog-report': 'สรุปบันทึกงานของทีม: เลือกช่วงเวลา แล้วดูสัดส่วนเวลาที่ใช้แยกตามหมวดหมู่งาน และดูว่าใครบันทึกครบ/ไม่ครบ',
+      '/dashboard': 'ดูสถานะการสัมภาษณ์ของแต่ละตำแหน่ง · ผู้ครองที่ “เสร็จ” แล้วกด “ดูเอกสาร” ได้ · กด “วิเคราะห์ภาพรวมบริษัท” เพื่อสร้างรายงานรวม · ปุ่ม “รีเซ็ต” (เฉพาะแอดมิน) ล้างคำตอบกลับเป็น “ยังไม่ตอบ” โดยไม่ลบพนักงาน',
+      '/reports': 'สรุปจำนวนผู้ใช้และฝ่าย พร้อมรายชื่อทั้งหมด — ค้นหาด้วยชื่อ/username และคัดกรองตามบทบาท/ฝ่าย/แผนกได้',
+      '/manual': 'คู่มือการใช้งานทั้งหมด — สลับแท็บ “ฉบับเต็ม / ตามบทบาท” ใช้สารบัญด้านข้างกระโดดไปแต่ละหัวข้อ หรือกด “ดาวน์โหลด PDF” เพื่อบันทึก/ส่งต่อ',
+      '/profile': 'ดูข้อมูลส่วนตัวของคุณ และเปลี่ยนรหัสผ่านได้ที่หน้านี้',
+      '/interview': 'ตอบคำถามการทำงานประจำวันตามช่วงเวลา · เมื่อตอบครบกด “เสร็จสิ้น” ระบบจะสร้างเอกสารให้ (เลือกดึงบันทึกงานย้อนหลัง 1/2/3 เดือนมาช่วยวิเคราะห์ได้)',
+      '/review': 'เอกสาร 6 ฉบับที่ระบบสร้างจากการสัมภาษณ์ — กดแถบสารบัญด้านบนเพื่อข้ามไปแต่ละฉบับ หรือกด “เปิดไฟล์” เพื่อดาวน์โหลด',
+      '/admin': 'ศูนย์จัดการระบบ — โครงสร้างองค์กร · ผู้ใช้ · รหัสแอดมิน · ตั้งค่า Claude AI · ลบข้อมูล (Danger Zone) · ข้อมูลโดยสรุป',
+      '/admin/users': 'เพิ่ม/แก้ไข/ลบผู้ใช้ และกำหนดบทบาท + ฝ่าย/แผนก/ตำแหน่ง · นำเข้าจำนวนมากด้วยไฟล์ Excel ได้',
+      '/admin/org': 'สร้างโครงสร้างองค์กรจากบนลงล่าง: ฝ่าย → แผนก → ตำแหน่ง',
+    };
+    function helpFor(p) {
+      if (HELP[p]) return HELP[p];
+      if (p.indexOf('/admin') === 0) return HELP['/admin'];
+      return '';
+    }
+
     const shell = document.createElement('div');
     shell.className = 'app-shell';
     shell.innerHTML =
@@ -62,6 +84,38 @@
     document.body.insertBefore(shell, container);
     oldTopbar.style.display = 'none';                   // keep in DOM (page JS may reference it)
     document.getElementById('appContent').appendChild(container);
+
+    // Contextual help: a collapsible "วิธีใช้หน้านี้" box at the top of the page.
+    (function mountHelp() {
+      const txt = helpFor(path);
+      if (!txt) return;
+      if (!document.getElementById('appHelpStyle')) {
+        const st = document.createElement('style');
+        st.id = 'appHelpStyle';
+        st.textContent =
+          '.app-help{background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;margin-bottom:16px;overflow:hidden}' +
+          '.app-help-head{display:flex;align-items:center;gap:8px;width:100%;background:none;border:0;color:#0c4a6e;font-weight:600;font-size:14px;padding:11px 14px;cursor:pointer;text-align:left}' +
+          '.app-help-head:hover{background:#e0f2fe}' +
+          '.app-help-head .chev{margin-left:auto;transition:transform .2s;font-size:12px}' +
+          '.app-help.collapsed .chev{transform:rotate(-90deg)}' +
+          '.app-help-body{padding:2px 16px 14px 40px;color:#334155;font-size:13.5px;line-height:1.65}' +
+          '.app-help.collapsed .app-help-body{display:none}';
+        document.head.appendChild(st);
+      }
+      const collapsed = localStorage.getItem('wwnHelpCollapsed') === '1';
+      const box = document.createElement('div');
+      box.className = 'app-help' + (collapsed ? ' collapsed' : '');
+      box.innerHTML =
+        '<button class="app-help-head" type="button">' +
+          '<span>💡</span><span>วิธีใช้หน้านี้</span><span class="chev">▾</span>' +
+        '</button>' +
+        '<div class="app-help-body">' + esc(txt) + '</div>';
+      container.insertBefore(box, container.firstChild);     // top of the centered content
+      box.querySelector('.app-help-head').addEventListener('click', () => {
+        box.classList.toggle('collapsed');
+        localStorage.setItem('wwnHelpCollapsed', box.classList.contains('collapsed') ? '1' : '0');
+      });
+    })();
 
     // Preserve the language switcher (if a page mounted one in the old topbar)
     const ls = document.getElementById('lang-switcher');
