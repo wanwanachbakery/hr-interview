@@ -1829,6 +1829,7 @@ tenantRouter.get('/admin/users', requireAdmin, (req, res) => res.sendFile(path.j
 tenantRouter.get('/admin/org',   requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-org.html')));
 tenantRouter.get('/profile',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'profile.html')));
 tenantRouter.get('/reports',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'reports.html')));
+tenantRouter.get('/manual',   (req, res) => res.sendFile(path.join(ROOT, 'public', 'manual.html')));
 tenantRouter.get('/division', (req, res) => res.sendFile(path.join(ROOT, 'public', 'division.html')));
 tenantRouter.get('/interview',(req, res) => res.sendFile(path.join(ROOT, 'public', 'interview.html')));
 tenantRouter.get('/review',   (req, res) => res.sendFile(path.join(ROOT, 'public', 'review.html')));

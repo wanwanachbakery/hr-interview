@@ -22,6 +22,7 @@
       '/': 'หน้าแรก', '/worklog': 'บันทึกงานประจำวัน', '/worklog-team': 'บันทึกงานของทีม',
       '/worklog-report': 'สรุปบันทึกงาน', '/dashboard': 'Dashboard', '/reports': 'รายงาน',
       '/profile': 'โปรไฟล์', '/interview': 'อินเทอร์วิว', '/review': 'เอกสาร', '/examples': 'ตัวอย่าง',
+      '/manual': 'คู่มือการใช้งาน',
       '/admin': 'จัดการระบบ', '/admin/users': 'จัดการผู้ใช้', '/admin/org': 'จัดการองค์กร',
     };
     const title = TITLES[path] || (path.indexOf('/admin') === 0 ? 'จัดการระบบ' : '');
@@ -34,6 +35,7 @@
       { href: '/worklog-report', label: 'สรุปบันทึกงาน', ic: '📈', supervisor: true },
       { href: '/dashboard', label: 'Dashboard', ic: '📋' },
       { href: '/reports', label: 'รายงาน', ic: '📊' },
+      { href: '/manual', label: 'คู่มือ', ic: '📖' },
     ];
 
     const shell = document.createElement('div');

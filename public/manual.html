@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>คู่มือการใช้งาน | HR-Interview</title>
+  <link rel="stylesheet" href="/styles.css?v=2"/>
+  <link rel="icon" type="image/png" href="/logo.png"/>
+<script>
+  // Multi-tenant: derive /t/{tenantId} prefix and apply to <a href="/...">
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  function shouldPrefix(href) {
+    return href && href.startsWith('/')
+      && !href.startsWith('/t/') && !href.startsWith('/super')
+      && !href.startsWith('/styles') && !href.startsWith('/logo')
+      && !href.startsWith('/i18n') && !href.startsWith('/favicon')
+      && !href.startsWith('/manuals') && !href.startsWith('/md.js') && !href.startsWith('/app-shell');
+  }
+  function rewriteLinks(root) {
+    if (!window.TBASE || !root) return;
+    if (root.nodeType === 1 && root.tagName === 'A' && shouldPrefix(root.getAttribute('href'))) {
+      root.setAttribute('href', window.TBASE + root.getAttribute('href'));
+    }
+    if (typeof root.querySelectorAll === 'function') {
+      root.querySelectorAll('a[href^="/"]').forEach(a => {
+        const h = a.getAttribute('href');
+        if (shouldPrefix(h)) a.setAttribute('href', window.TBASE + h);
+      });
+    }
+  }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    new MutationObserver(muts => {
+      for (const m of muts) { rewriteLinks(m.target); for (const node of m.addedNodes) rewriteLinks(node); }
+    }).observe(document.body, { childList: true, subtree: true });
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span');
+      span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => {
+        span.textContent = c && c.name ? c.name : '';
+        if (!c || !c.name) span.style.display = 'none';
+      }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
+  <script src="/md.js"></script>
+  <script src="/app-shell.js"></script>
+  <style>
+    .man-tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
+    .man-tab { padding:9px 16px; border:1px solid var(--border); background:#fff; border-radius:999px; cursor:pointer; font-size:14px; font-weight:600; color:#334155; }
+    .man-tab.active { background:var(--brand); color:#fff; border-color:var(--brand); }
+    .man-tools { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
+    .man-layout { display:flex; gap:24px; align-items:flex-start; }
+    .man-toc { flex:0 0 250px; position:sticky; top:16px; max-height:calc(100vh - 90px); overflow:auto;
+               border:1px solid var(--border); border-radius:12px; padding:14px; background:#fff; }
+    .man-toc h4 { margin:0 0 8px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+    .man-toc a { display:block; padding:6px 10px; border-radius:8px; text-decoration:none; color:#334155; font-size:13.5px; line-height:1.4; }
+    .man-toc a:hover { background:#f1f5f9; }
+    .man-toc a.active { background:#eff6ff; color:var(--brand-dark); font-weight:600; }
+    .man-doc { flex:1; min-width:0; }
+    @media (max-width: 860px) {
+      .man-layout { flex-direction:column; }
+      .man-toc { position:static; flex:1 1 auto; width:100%; max-height:none; }
+    }
+    @media print {
+      .app-sidebar, .app-topbar, .app-backdrop, .man-tabs, .man-toc, #man-print, #man-pdf { display:none !important; }
+      .app-content, .container, .man-doc { all:unset; display:block; }
+    }
+  </style>
+</head>
+<body>
+<div class="container wide">
+  <div class="topbar">
+    <div class="logo"><span>HR-Interview</span></div>
+    <nav>
+      <a href="/">หน้าแรก</a>
+      <a href="/dashboard">📋 Dashboard</a>
+      <a href="#" onclick="(async()=>{await fetch(TBASE + '/api/logout',{method:'POST'});location.href = TBASE + '/login';})();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <h1>📖 คู่มือการใช้งาน</h1>
+  <p class="sub">คู่มือการใช้งานระบบ HR-Interview — อ่านในหน้านี้ หรือดาวน์โหลดเป็น PDF เพื่อส่งต่อ/พิมพ์</p>
+
+  <div class="man-tools">
+    <div class="man-tabs">
+      <button class="man-tab active" id="tab-full" onclick="showDoc('full')">📘 คู่มือฉบับเต็ม</button>
+      <button class="man-tab" id="tab-roles" onclick="showDoc('roles')">👥 คู่มือตามบทบาท</button>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <a id="man-pdf" href="/manuals/manual-full.pdf" target="_blank"><button>⬇ ดาวน์โหลด PDF</button></a>
+      <button id="man-print" class="ghost" onclick="window.print()">🖨 พิมพ์</button>
+    </div>
+  </div>
+
+  <div class="man-layout">
+    <aside class="man-toc" id="man-toc"><h4>สารบัญ</h4><div id="toc-list" class="sub">กำลังโหลด…</div></aside>
+    <div class="man-doc md-body" id="man-doc"><p class="sub">กำลังโหลดคู่มือ…</p></div>
+  </div>
+</div>
+
+<script>
+const DOCS = {
+  full:  { md: '/manuals/manual-full.md',  pdf: '/manuals/manual-full.pdf' },
+  roles: { md: '/manuals/manual-roles.md', pdf: '/manuals/manual-roles.pdf' },
+};
+let CURRENT = 'full';
+const slug = (s, i) => 'sec-' + i + '-' + String(s).toLowerCase().replace(/[^a-z0-9ก-๙]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+
+async function showDoc(which) {
+  CURRENT = which;
+  document.getElementById('tab-full').classList.toggle('active', which === 'full');
+  document.getElementById('tab-roles').classList.toggle('active', which === 'roles');
+  document.getElementById('man-pdf').setAttribute('href', DOCS[which].pdf);
+
+  const docEl = document.getElementById('man-doc');
+  const tocEl = document.getElementById('toc-list');
+  docEl.innerHTML = '<p class="sub">กำลังโหลดคู่มือ…</p>';
+  tocEl.innerHTML = '';
+  let md;
+  try {
+    const r = await fetch(DOCS[which].md, { cache: 'no-cache' });
+    if (!r.ok) throw new Error();
+    md = await r.text();
+  } catch {
+    docEl.innerHTML = '<p class="empty">โหลดคู่มือไม่สำเร็จ — ลองรีเฟรชหน้าอีกครั้ง</p>';
+    return;
+  }
+
+  docEl.innerHTML = window.renderMarkdown ? window.renderMarkdown(md) : ('<pre>' + md.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) + '</pre>');
+
+  // Build a table of contents from the <h2> section headings.
+  const heads = Array.from(docEl.querySelectorAll('h2'));
+  if (!heads.length) { tocEl.innerHTML = '<span class="sub">—</span>'; return; }
+  tocEl.innerHTML = heads.map((h, i) => {
+    const id = slug(h.textContent, i);
+    h.id = id;
+    h.style.scrollMarginTop = '16px';
+    return '<a href="#' + id + '" data-id="' + id + '">' + h.textContent.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) + '</a>';
+  }).join('');
+
+  // Smooth scroll + active highlight
+  tocEl.querySelectorAll('a').forEach(a => a.addEventListener('click', e => {
+    e.preventDefault();
+    const t = document.getElementById(a.dataset.id);
+    if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+}
+
+// Highlight the TOC entry of the section currently in view
+window.addEventListener('scroll', () => {
+  const links = document.querySelectorAll('#toc-list a');
+  let activeId = null;
+  document.querySelectorAll('#man-doc h2').forEach(h => {
+    if (h.getBoundingClientRect().top <= 120) activeId = h.id;
+  });
+  links.forEach(a => a.classList.toggle('active', a.dataset.id === activeId));
+}, { passive: true });
+
+showDoc('full');
+</script>
+</body>
+</html>
