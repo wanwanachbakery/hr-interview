@@ -190,6 +190,29 @@
     </div>
   </div>
 
+  <!-- Re-analyze everyone -->
+  <div class="card" id="reall-card" style="margin-top:24px; border-top:4px solid #0ea5e9;">
+    <h2 style="margin-top:0;">🔄 วิเคราะห์เอกสารใหม่ — ทั้งระบบ</h2>
+    <p class="sub" style="margin:4px 0 0;">กดครั้งเดียว สร้างเอกสาร (JD / KPI / Optimization ฯลฯ) ใหม่ให้พนักงานที่สัมภาษณ์เสร็จ <strong>ทุกคน</strong> + อัปเดตรายงานภาพรวมบริษัท · ใช้คำตอบสัมภาษณ์เดิม + บันทึกงานล่าสุด (คำตอบไม่หาย)</p>
+    <div class="row" style="align-items:center; gap:12px 16px; margin-top:14px;">
+      <label style="margin:0; font-weight:400; color:#475569; display:flex; align-items:center; gap:8px; flex:0 0 auto;">
+        ใช้บันทึกงานย้อนหลัง:
+        <select id="ra-window" style="width:auto; padding:7px 10px;">
+          <option value="30">1 เดือน</option>
+          <option value="60" selected>2 เดือน</option>
+          <option value="90">3 เดือน</option>
+          <option value="0">ไม่ใช้ (จากบทสัมภาษณ์อย่างเดียว)</option>
+        </select>
+      </label>
+      <button id="ra-btn" onclick="reanalyzeAll()">▶ วิเคราะห์ใหม่ทั้งหมด</button>
+    </div>
+    <div id="ra-progress" style="display:none; margin-top:14px;">
+      <div class="progress" style="height:10px;"><div id="ra-bar" style="width:0%;"></div></div>
+      <div class="sub" id="ra-text" style="margin-top:6px;"></div>
+    </div>
+    <p class="sub" id="ra-note" style="margin:10px 0 0; color:#b45309;">⚠️ ถ้าเปิด Claude AI อยู่ การวิเคราะห์ใหม่จะมีค่าใช้จ่ายต่อคน (ดูยอดได้ที่การ์ด Claude AI ด้านบน) · ทำทีละคนจึงอาจใช้เวลาสักครู่ถ้าคนเยอะ</p>
+  </div>
+
   <!-- Danger Zone -->
   <div class="card" style="margin-top:24px; background:#fef2f2; border-color:#fecaca;">
     <h2 style="margin-top:0; color:#991b1b;">🛑 Danger Zone — ลบข้อมูล</h2>
@@ -375,6 +398,54 @@ async function resetClaude() {
 }
 
 loadClaude();
+
+// ---------- Bulk re-analyze (all completed employees) ----------
+let raPoll = null;
+function raRender(job) {
+  const prog = document.getElementById('ra-progress');
+  const bar = document.getElementById('ra-bar');
+  const text = document.getElementById('ra-text');
+  const btn = document.getElementById('ra-btn');
+  if (!job || (!job.running && !job.total && !job.finishedAt)) { prog.style.display = 'none'; btn.disabled = false; return; }
+  prog.style.display = 'block';
+  const pct = job.total ? Math.round((job.done / job.total) * 100) : 0;
+  bar.style.width = pct + '%';
+  if (job.running) {
+    btn.disabled = true;
+    text.textContent = `กำลังวิเคราะห์... ${job.done}/${job.total} คน (${pct}%)` + (job.failed ? ` · ล้มเหลว ${job.failed}` : '');
+  } else {
+    btn.disabled = false;
+    text.innerHTML = `✅ เสร็จแล้ว — สำเร็จ ${job.done - job.failed}/${job.total} คน` + (job.failed ? ` · <span style="color:#b91c1c;">ล้มเหลว ${job.failed}</span>` : '') + ' · อัปเดตรายงานภาพรวมแล้ว';
+  }
+}
+async function raStatus() {
+  try {
+    const j = await fetch(TBASE + '/api/admin/reanalyze-all/status').then(r => r.json());
+    raRender(j);
+    if (!j.running && raPoll) { clearInterval(raPoll); raPoll = null; loadClaude(); }
+  } catch {}
+}
+async function reanalyzeAll() {
+  const days = document.getElementById('ra-window').value;
+  if (!confirm('วิเคราะห์เอกสารใหม่ให้พนักงานที่สัมภาษณ์เสร็จ "ทุกคน" ในระบบ?\n\nใช้คำตอบสัมภาษณ์เดิม + บันทึกงานล่าสุด สร้างเอกสารชุดใหม่แทนที่ของเดิม (คำตอบไม่หาย)')) return;
+  const pw = prompt('กรอกรหัส Admin เพื่อยืนยันการวิเคราะห์ใหม่ทั้งระบบ:');
+  if (pw === null) return;
+  document.getElementById('ra-btn').disabled = true;
+  let r, d;
+  try {
+    r = await fetch(TBASE + '/api/admin/reanalyze-all', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ worklogDays: Number(days), password: pw }),
+    });
+    d = await r.json().catch(() => ({}));
+  } catch { alert('เริ่มไม่สำเร็จ — ลองใหม่'); document.getElementById('ra-btn').disabled = false; return; }
+  if (!r.ok) { alert(d.error || 'เริ่มไม่สำเร็จ'); document.getElementById('ra-btn').disabled = false; return; }
+  if (!d.total) { alert('ยังไม่มีพนักงานที่สัมภาษณ์เสร็จให้วิเคราะห์'); document.getElementById('ra-btn').disabled = false; return; }
+  raRender({ running: true, total: d.total, done: 0, failed: 0 });
+  if (raPoll) clearInterval(raPoll);
+  raPoll = setInterval(raStatus, 1500);
+}
+raStatus();   // resume display if a job is already running
 </script>
 </body>
 </html>

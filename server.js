@@ -1163,6 +1163,71 @@ tenantRouter.post('/api/admin/claude/usage/reset', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Bulk re-analyze: regenerate documents for ALL completed employees ----------
+// Admin one-click "re-analyze everyone". Runs in the background (sequentially, so
+// Claude rate limits are respected) and exposes a progress counter. Uses each
+// person's existing interview answers + latest worklog; interview answers are kept.
+const reanalyzeJobs = {};   // tenantId -> { running, total, done, failed, startedAt, finishedAt }
+
+tenantRouter.post('/api/admin/reanalyze-all', requireAdmin, (req, res) => {
+  const body = req.body || {};
+  if (!masterPasswordOk(load.auth(), body.password)) {
+    return res.status(401).json({ error: 'รหัส Admin ไม่ถูกต้อง' });
+  }
+  const worklogDays = [30, 60, 90].includes(Number(body.worklogDays)) ? Number(body.worklogDays) : 0;
+  const tid = req.tenant.id;
+  if (reanalyzeJobs[tid] && reanalyzeJobs[tid].running) {
+    return res.status(409).json({ error: 'กำลังวิเคราะห์อยู่แล้ว', job: reanalyzeJobs[tid] });
+  }
+  const db = ctxDb();   // capture concrete db — ALS context is gone after we respond
+  const completed = db.employees().filter(e => e.interviewStatus === 'completed');
+  const job = reanalyzeJobs[tid] = {
+    running: true, total: completed.length, done: 0, failed: 0,
+    startedAt: new Date().toISOString(), finishedAt: null,
+  };
+  res.json({ ok: true, total: completed.length });
+
+  (async () => {
+    for (const emp of completed) {
+      try {
+        const iv = db.loadInterview(emp.id);
+        if (!iv) { job.failed++; job.done++; continue; }
+        if (worklogDays && emp.user_id) {
+          const s = summarizeUserWorklog(db, emp.user_id, String(iv.finishedAt || new Date().toISOString()).slice(0, 10), worklogDays);
+          if (s) iv.worklogSummary = s.text;
+        }
+        const outDir = path.join(db.outDir, emp.id);
+        if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+        const docs = await generateDocuments(iv, db);
+        for (const [n, content] of Object.entries(docs)) fs.writeFileSync(path.join(outDir, n), content);
+        job.done++;
+      } catch (e) {
+        job.failed++; job.done++;
+        console.error('[reanalyze-all]', emp.id, '-', e.message);
+      }
+    }
+    // Mark everyone done + refresh the company-wide report.
+    try {
+      const l2 = db.employees();
+      let changed = false;
+      for (const e of l2) if (e.interviewStatus === 'completed' && e.docStatus !== 'done') { e.docStatus = 'done'; changed = true; }
+      if (changed) db.saveEmployees(l2);
+      const interviews = l2.map(e => db.loadInterview(e.id)).filter(iv => iv && iv.finishedAt);
+      if (interviews.length) {
+        const md = await analyzeCompany(interviews, db);
+        if (!fs.existsSync(db.cmpOutDir)) fs.mkdirSync(db.cmpOutDir, { recursive: true });
+        fs.writeFileSync(path.join(db.cmpOutDir, 'optimization-report.md'), md);
+      }
+    } catch (e) { console.error('[reanalyze-all] company report:', e.message); }
+    job.running = false;
+    job.finishedAt = new Date().toISOString();
+  })();
+});
+
+tenantRouter.get('/api/admin/reanalyze-all/status', requireAdmin, (req, res) => {
+  res.json(reanalyzeJobs[req.tenant.id] || { running: false, total: 0, done: 0, failed: 0, finishedAt: null });
+});
+
 // ---------- Language preference ----------
 tenantRouter.post('/api/lang', (req, res) => {
   const lang = String((req.body && req.body.lang) || '').toLowerCase();
