@@ -265,18 +265,6 @@ th { background: #f8fafc; font-weight: 600; color: var(--muted); font-size: 12px
 .md-body table.md-table th, .md-body table.md-table td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; }
 .md-body table.md-table tr:nth-child(even) td { background: #f8fafc; }
 
-/* Admin summary tiles */
-.summary-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 14px; }
-.sum-tile {
-  display: flex; align-items: center; gap: 12px;
-  background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
-}
-.sum-tile .sum-ic { font-size: 26px; line-height: 1; }
-.sum-tile .sum-num { font-size: 24px; font-weight: 800; color: var(--brand-dark); line-height: 1.1; }
-.sum-tile .sum-lbl { font-size: 13px; color: var(--muted); margin-top: 2px; }
-.sum-tile.sum-co { grid-column: 1 / -1; background: linear-gradient(135deg, #eff6ff, #f0f9ff); border-color: #bae6fd; }
-.sum-tile.sum-co .sum-co-name { font-size: 20px; font-weight: 800; color: #0c4a6e; }
-
 /* Generated-document cards (per-employee report page) */
 .doc-card { background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 0; margin-bottom: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
 .doc-card .doc-head {

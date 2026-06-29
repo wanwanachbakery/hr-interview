@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Admin | HR-Interview</title>
-  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="stylesheet" href="/styles.css?v=2"/>
   <link rel="icon" type="image/png" href="/logo.png"/>
 <script>
   // Multi-tenant: derive /t/{tenantId} prefix from URL and apply to <a href="/...">
@@ -220,26 +220,28 @@
 
   <div class="card" style="margin-top:24px;">
     <h2 style="margin-top:0;">📊 ข้อมูลโดยสรุป</h2>
-    <div class="summary-grid">
-      <div class="sum-tile sum-co">
-        <div class="sum-ic">🏢</div>
-        <div><div class="sum-lbl">บริษัท</div><div class="sum-co-name" id="s-co">–</div></div>
+    <!-- Inline styles on purpose: this section must look right even if the
+         browser is still serving an old cached /styles.css. -->
+    <div style="border:1px solid #e2e8f0; border-radius:10px; overflow:hidden; margin-top:10px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:13px 18px; background:#eff6ff; border-bottom:1px solid #e2e8f0;">
+        <span style="font-weight:600; color:#0c4a6e;">🏢 บริษัท</span>
+        <strong id="s-co" style="color:#0c4a6e; font-size:16px; text-align:right;">–</strong>
       </div>
-      <div class="sum-tile">
-        <div class="sum-ic">🗂️</div>
-        <div><div class="sum-num" id="s-div">0</div><div class="sum-lbl">ฝ่าย</div></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:13px 18px; border-bottom:1px solid #f1f5f9;">
+        <span style="color:#334155;">🗂️ ฝ่าย</span>
+        <strong id="s-div" style="color:#0369a1; font-size:18px;">0</strong>
       </div>
-      <div class="sum-tile">
-        <div class="sum-ic">📋</div>
-        <div><div class="sum-num" id="s-sec">0</div><div class="sum-lbl">แผนก</div></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:13px 18px; border-bottom:1px solid #f1f5f9;">
+        <span style="color:#334155;">📋 แผนก</span>
+        <strong id="s-sec" style="color:#0369a1; font-size:18px;">0</strong>
       </div>
-      <div class="sum-tile">
-        <div class="sum-ic">👤</div>
-        <div><div class="sum-num" id="s-pos">0</div><div class="sum-lbl">ตำแหน่ง</div></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:13px 18px; border-bottom:1px solid #f1f5f9;">
+        <span style="color:#334155;">👤 ตำแหน่ง</span>
+        <strong id="s-pos" style="color:#0369a1; font-size:18px;">0</strong>
       </div>
-      <div class="sum-tile">
-        <div class="sum-ic">👥</div>
-        <div><div class="sum-num" id="s-usr">0</div><div class="sum-lbl">ผู้ใช้</div></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:13px 18px;">
+        <span style="color:#334155;">👥 ผู้ใช้</span>
+        <strong id="s-usr" style="color:#0369a1; font-size:18px;">0</strong>
       </div>
     </div>
   </div>
