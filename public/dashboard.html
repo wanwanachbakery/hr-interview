@@ -89,6 +89,7 @@
     }
   });
 </script>
+  <script src="/md.js"></script>
   <script src="/app-shell.js"></script>
 </head>
 <body>
@@ -239,8 +240,11 @@ async function load() {
     if (r.ok) {
       const txt = await r.text();
       document.getElementById('report-card').style.display = 'block';
-      document.getElementById('report-preview').innerHTML =
-        `<pre style="white-space:pre-wrap; font-family:inherit; font-size:14px; max-height:600px; overflow:auto;">${esc(txt)}</pre>`;
+      const prev = document.getElementById('report-preview');
+      prev.className = 'md-body';   // drop .empty (centered/muted) → left-aligned rendered report
+      prev.style.cssText = 'max-height:640px; overflow:auto;';
+      prev.innerHTML = window.renderMarkdown ? window.renderMarkdown(txt)
+        : `<pre style="white-space:pre-wrap;">${esc(txt)}</pre>`;
       const link = document.getElementById('report-link');
       if (link) link.style.display = 'inline-block';
     }

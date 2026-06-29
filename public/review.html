@@ -78,6 +78,7 @@
     }
   });
 </script>
+  <script src="/md.js"></script>
   <script src="/app-shell.js"></script>
 </head>
 <body>
@@ -98,24 +99,12 @@
   <h1 id="title">...</h1>
   <p class="sub" id="sub"></p>
 
-  <div class="card">
-    <h2 data-i18n="rv_files_h2">เอกสารที่สร้างจากอินเทอร์วิว</h2>
-    <p class="sub" data-i18n="rv_files_sub">ดาวน์โหลดหรือเปิดดูได้เลย (ไฟล์เก็บใน outputs/&lt;id&gt;/)</p>
-    <table>
-      <thead><tr><th data-i18n="rv_col_file">ไฟล์</th><th data-i18n="rv_col_desc">คำอธิบาย</th><th></th></tr></thead>
-      <tbody>
-        <tr><td>workflow.md</td><td>Workflow (Markdown)</td><td><a id="f1" target="_blank" data-i18n="rv_open">เปิด</a></td></tr>
-        <tr><td>workflow.csv</td><td>CSV (Excel)</td><td><a id="f2" target="_blank" data-i18n="rv_open">เปิด</a></td></tr>
-        <tr><td>workflow-diagram.md</td><td>Flowchart (Mermaid — paste at <a href="https://mermaid.live" target="_blank">mermaid.live</a>)</td><td><a id="f3" target="_blank" data-i18n="rv_open">เปิด</a></td></tr>
-        <tr><td>job-description.md</td><td>Job Description</td><td><a id="f4" target="_blank" data-i18n="rv_open">เปิด</a></td></tr>
-        <tr><td>kpi.md</td><td>KPI</td><td><a id="f5" target="_blank" data-i18n="rv_open">เปิด</a></td></tr>
-        <tr><td>optimization.md</td><td>Optimization</td><td><a id="f6" target="_blank" data-i18n="rv_open">เปิด</a></td></tr>
-      </tbody>
-    </table>
-  </div>
+  <div class="doc-jump" id="doc-jump"></div>
+
+  <div id="docs"></div>
 
   <div class="card">
-    <h2 data-i18n="rv_answers_h2">สรุปคำตอบทั้งหมด</h2>
+    <h2 style="margin-top:0;" data-i18n="rv_answers_h2">สรุปคำตอบทั้งหมด</h2>
     <div id="answers"></div>
   </div>
 
@@ -133,14 +122,74 @@ if (!id) location.href = TBASE + '/';
 const T = (k, v) => (window.I18N ? window.I18N.t(k, v) : k);
 function esc(s){return String(s||'').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
 
-['workflow.md','workflow.csv','workflow-diagram.md','job-description.md','kpi.md','optimization.md']
-  .forEach((f,i) => document.getElementById('f'+(i+1)).href = `${TBASE}/api/outputs/${id}/${f}`);
+// The 6 generated documents, in a presentation-friendly order.
+const DOCS = [
+  { file:'job-description.md',   icon:'📋', title:'Job Description',                 type:'md'  },
+  { file:'kpi.md',               icon:'🎯', title:'KPI — ตัวชี้วัด',                 type:'md'  },
+  { file:'optimization.md',      icon:'🚀', title:'Optimization — ข้อเสนอปรับปรุง',  type:'md'  },
+  { file:'workflow.md',          icon:'🗂️', title:'Workflow — ขั้นตอนงานประจำวัน',   type:'md'  },
+  { file:'workflow-diagram.md',  icon:'🔀', title:'ผังงาน (Flowchart)',              type:'md'  },
+  { file:'workflow.csv',         icon:'📊', title:'ตารางงาน (เปิดใน Excel)',          type:'csv' },
+];
 
+// Minimal CSV parser (handles quoted fields + escaped "") -> rows of cells.
+function parseCsv(text){
+  const rows = []; let row = [], field = '', q = false;
+  for (let i = 0; i < text.length; i++){
+    const c = text[i];
+    if (q){
+      if (c === '"'){ if (text[i+1] === '"'){ field += '"'; i++; } else q = false; }
+      else field += c;
+    } else if (c === '"'){ q = true; }
+    else if (c === ','){ row.push(field); field = ''; }
+    else if (c === '\n'){ row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c !== '\r'){ field += c; }
+  }
+  if (field.length || row.length){ row.push(field); rows.push(row); }
+  return rows.filter(r => !(r.length === 1 && r[0] === ''));
+}
+function csvToTable(text){
+  const rows = parseCsv(text);
+  if (!rows.length) return '<p class="empty">ไม่มีข้อมูล</p>';
+  const head = rows[0], body = rows.slice(1);
+  let t = '<table class="md-table"><thead><tr>' + head.map(c => `<th>${esc(c)}</th>`).join('') + '</tr></thead><tbody>';
+  for (const r of body){ t += '<tr>' + r.map(c => `<td>${esc(c)}</td>`).join('') + '</tr>'; }
+  return t + '</tbody></table>';
+}
+
+// Build card skeletons + jump links
+document.getElementById('docs').innerHTML = DOCS.map((d, i) => `
+  <div class="doc-card" id="doc-${i}">
+    <div class="doc-head">
+      <h2>${d.icon} ${esc(d.title)}</h2>
+      <a class="doc-open" href="${TBASE}/api/outputs/${encodeURIComponent(id)}/${d.file}" target="_blank">เปิดไฟล์ ↗</a>
+    </div>
+    <div class="doc-content md-body" id="doc-content-${i}"><p class="sub">กำลังโหลด…</p></div>
+  </div>`).join('');
+document.getElementById('doc-jump').innerHTML =
+  DOCS.map((d, i) => `<a href="#doc-${i}">${d.icon} ${esc(d.title)}</a>`).join('');
+
+// Load + render each document
+DOCS.forEach(async (d, i) => {
+  const el = document.getElementById('doc-content-' + i);
+  try {
+    const r = await fetch(`${TBASE}/api/outputs/${encodeURIComponent(id)}/${d.file}`);
+    if (!r.ok){ el.innerHTML = '<p class="empty">ยังไม่มีไฟล์นี้</p>'; return; }
+    const txt = await r.text();
+    if (d.type === 'csv') el.innerHTML = csvToTable(txt);
+    else el.innerHTML = window.renderMarkdown ? window.renderMarkdown(txt)
+      : `<pre style="white-space:pre-wrap;">${esc(txt)}</pre>`;
+  } catch { el.innerHTML = '<p class="empty">โหลดไม่สำเร็จ</p>'; }
+});
+
+// Header + answers
 fetch(`${TBASE}/api/interview/${id}`).then(r=>r.json()).then(iv => {
   const e = iv.employee;
-  document.getElementById('title').textContent = T('rv_heading_tpl', { name: e.name });
-  // DD/MM/YYYY HH:MM (ค.ศ., 24h) via the global formatDateTime helper
-  document.getElementById('sub').textContent = `${e.role} · ${e.department || ''} · ${formatDateTime(iv.finishedAt || iv.startedAt)}`;
+  const titleTxt = T('rv_heading_tpl', { name: e.name });
+  document.getElementById('title').textContent =
+    (titleTxt && titleTxt !== 'rv_heading_tpl') ? titleTxt : ('📄 เอกสารของ ' + e.name);
+  document.getElementById('sub').textContent =
+    `${e.role} · ${e.department || ''} · ${formatDateTime(iv.finishedAt || iv.startedAt)}`;
 
   const rows = iv.answers.map(a => `
     <div style="padding:10px 0; border-bottom:1px solid #e2e8f0;">
