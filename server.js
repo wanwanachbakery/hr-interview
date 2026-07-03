@@ -18,6 +18,11 @@ const ai = require('./scripts/mock-ai');
 // mock-ai on any problem. Only generateDocuments + analyzeCompany use Claude;
 // interview questions/probes stay on mock-ai (cheaper, deterministic).
 const claude = require('./scripts/claude-ai');
+// Web Push (VAPID). Required lazily so a droplet that hasn't run `npm install`
+// yet still boots the server — push just stays disabled until the dep exists.
+let webpush = null;
+try { webpush = require('web-push'); }
+catch { console.warn('[push] "web-push" not installed — push notifications disabled (run: npm install)'); }
 
 // Use Claude when a key is configured on the server AND this tenant has the
 // switch turned on (admin console); otherwise mock. Both wrappers are async and
@@ -104,6 +109,27 @@ if (fs.existsSync(SECRET_FILE)) {
   fs.writeFileSync(SECRET_FILE, SECRET);
 }
 
+// ---------- Web Push VAPID keys ----------
+// Generated once on first boot and persisted under data/ (gitignored, like _secret).
+// NEVER delete or change these after users subscribe — a new keypair invalidates
+// every existing subscription. Only the publicKey is ever sent to clients.
+const VAPID_FILE = path.join(DATA_DIR, '_vapid.json');
+let VAPID = null;
+if (webpush) {
+  if (fs.existsSync(VAPID_FILE)) {
+    VAPID = readJson(VAPID_FILE, null);
+  }
+  if (!VAPID || !VAPID.publicKey || !VAPID.privateKey) {
+    const keys = webpush.generateVAPIDKeys();
+    VAPID = { publicKey: keys.publicKey, privateKey: keys.privateKey, subject: 'mailto:it@wanwanach.com', created_at: new Date().toISOString() };
+    fs.writeFileSync(VAPID_FILE, JSON.stringify(VAPID, null, 2));
+    console.log('[push] generated new VAPID keypair → data/_vapid.json');
+  }
+  webpush.setVapidDetails(VAPID.subject || 'mailto:it@wanwanach.com', VAPID.publicKey, VAPID.privateKey);
+  console.log('[push] Web Push ready (VAPID configured)');
+}
+const pushEnabled = () => !!(webpush && VAPID);
+
 // ---------- JSON helpers ----------
 function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
@@ -162,6 +188,9 @@ function tenantDb(tenantId) {
     claudeSettings: path.join(dir, 'claude.json'),
     claudeUsage:    path.join(dir, 'claude-usage.json'),
     holidays:       path.join(dir, 'holidays.json'),
+    pushSubs:       path.join(dir, 'push-subs.json'),
+    notifySettings: path.join(dir, 'notify-settings.json'),
+    notifyLog:      path.join(dir, 'notify-log.json'),
   };
   return {
     id: tenantId,
@@ -178,6 +207,10 @@ function tenantDb(tenantId) {
     claudeSettings: () => readJson(F.claudeSettings, { enabled: true }),
     claudeUsage:    () => readJson(F.claudeUsage, { totals: { runs: 0, input: 0, output: 0, cache_write: 0, cache_read: 0, cost_usd: 0, cost_thb: 0 }, runs: [] }),
     holidays:       () => readJson(F.holidays, { weekly: [], dates: [] }),
+    // Push notifications (per-tenant, isolated by folder — no cross-company leak):
+    pushSubs:       () => readJson(F.pushSubs, {}),                  // { userId: [ {endpoint, keys, ua, created_at} ] }
+    notifySettings: () => readJson(F.notifySettings, { enabled: true }),  // company-wide on/off (default ON)
+    notifyLog:      () => readJson(F.notifyLog, {}),                // { userId: { "YYYY-MM-DD": [10,11,...] } } dedup of sent reminders
     saveEmployees: (l) => writeJson(F.employees, l),
     saveDivisions: (l) => writeJson(F.divisions, l),
     saveSections:  (l) => writeJson(F.sections, l),
@@ -189,6 +222,9 @@ function tenantDb(tenantId) {
     saveClaudeSettings: (o) => writeJson(F.claudeSettings, o),
     saveClaudeUsage:    (o) => writeJson(F.claudeUsage, o),
     saveHolidays:       (o) => writeJson(F.holidays, o),
+    savePushSubs:       (o) => writeJson(F.pushSubs, o),
+    saveNotifySettings: (o) => writeJson(F.notifySettings, o),
+    saveNotifyLog:      (o) => writeJson(F.notifyLog, o),
     interviewPath: (id) => path.join(intDir, `${id}.json`),
     loadInterview: (id) => readJson(path.join(intDir, `${id}.json`), null),
     saveInterview: (iv) => writeJson(path.join(intDir, `${iv.id}.json`), iv),
@@ -304,6 +340,8 @@ const PUBLIC_PATHS = new Set([
 function isPublicRequest(req) {
   if (PUBLIC_PATHS.has(req.path)) return true;
   if (req.method === 'GET' && req.path === '/api/company') return true;
+  // PWA manifest must load without auth (browser fetches it on the login page too).
+  if (req.method === 'GET' && req.path === '/manifest.webmanifest') return true;
   return false;
 }
 function authMiddleware(req, res, next) {
@@ -486,6 +524,42 @@ function canEdit(session, target) {
   return false;
 }
 
+// ============================================================
+// Web Push helpers (shared by /api/push/* endpoints and the scheduler)
+// ============================================================
+// Send one push payload to every subscription of a user (in a given tenant db).
+// Prunes dead subscriptions (HTTP 404/410) from push-subs.json automatically.
+// `subs` is optional — pass the caller's already-loaded map to avoid a re-read;
+// when omitted we load it here. Returns { sent, removed }.
+async function sendPushToUser(db, userId, payload, subsMap) {
+  if (!pushEnabled()) return { sent: 0, removed: 0 };
+  const all = subsMap || db.pushSubs();
+  const list = Array.isArray(all[userId]) ? all[userId] : [];
+  if (!list.length) return { sent: 0, removed: 0 };
+  const body = JSON.stringify(payload);
+  const dead = [];
+  let sent = 0;
+  for (const sub of list) {
+    try {
+      await webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, body);
+      sent++;
+    } catch (e) {
+      const code = e && e.statusCode;
+      if (code === 404 || code === 410) dead.push(sub.endpoint);   // gone → prune
+      else console.error('[push] send failed:', code || e.message);
+    }
+  }
+  if (dead.length) {
+    const fresh = db.pushSubs();                                   // re-read to avoid clobbering concurrent writes
+    if (Array.isArray(fresh[userId])) {
+      fresh[userId] = fresh[userId].filter(s => !dead.includes(s.endpoint));
+      if (!fresh[userId].length) delete fresh[userId];
+      db.savePushSubs(fresh);
+    }
+  }
+  return { sent, removed: dead.length };
+}
+
 // ---------- app ----------
 const app = express();
 // Trust the first proxy (Fly.io / Cloudflare / similar) so req.ip and req.secure
@@ -496,8 +570,8 @@ app.use(express.json({ limit: '5mb' }));  // bumped for base64-encoded Excel upl
 app.use(express.static(path.join(ROOT, 'public'), {
   setHeaders: (res, fp) => {
     // Force revalidation of text assets so updated pages/scripts/styles show
-    // right after a deploy (avoids stale cached HTML/JS/CSS/Markdown).
-    if (/\.(html|js|css|md)$/i.test(fp)) res.setHeader('Cache-Control', 'no-cache');
+    // right after a deploy (avoids stale cached HTML/JS/CSS/Markdown/manifest/SW).
+    if (/\.(html|js|css|md|json|webmanifest)$/i.test(fp)) res.setHeader('Cache-Control', 'no-cache');
   },
 }));
 
@@ -1650,6 +1724,135 @@ tenantRouter.put('/api/admin/holidays', requireAdmin, (req, res) => {
   ctxDb().saveHolidays({ weekly, dates, updated_at: new Date().toISOString() });
   res.json({ ok: true, weekly, dates });
 });
+
+// ============================================================
+// PWA manifest (per-tenant) + Web Push notifications
+// ============================================================
+// Dynamic manifest so each company's installed app has the right name and opens
+// straight to /t/<tid>/worklog. Public (browser fetches it before login too).
+tenantRouter.get('/manifest.webmanifest', (req, res) => {
+  const tbase = req.tbase;
+  let coName = '';
+  try { coName = (req.db.company().name || '').trim(); } catch (_) {}
+  const name = coName ? `บันทึกงาน · ${coName}` : 'HR-Interview — บันทึกงาน';
+  res.type('application/manifest+json');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.json({
+    name,
+    short_name: 'บันทึกงาน',
+    description: 'บันทึกงานประจำวันรายชั่วโมง + แจ้งเตือนเข้ามือถือ',
+    start_url: tbase + '/worklog',
+    scope: tbase + '/',
+    display: 'standalone',
+    theme_color: '#0284c7',
+    background_color: '#ffffff',
+    lang: 'th',
+    icons: [
+      { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    ],
+  });
+});
+
+// Public VAPID key — client needs it to subscribe. (Only the public half.)
+tenantRouter.get('/api/push/key', (req, res) => {
+  if (!pushEnabled()) return res.status(503).json({ error: 'push ยังไม่พร้อมใช้งานบนเซิร์ฟเวอร์' });
+  res.json({ publicKey: VAPID.publicKey });
+});
+
+// Per-user throttle for the "test push" button — stops mash-clicking from spamming
+// the user's own devices. In-memory Map keyed by tenant+user_id (resets on restart).
+const PUSH_TEST_THROTTLE_MS = 10 * 1000;
+const pushTestMap = new Map();
+function pushTestKey(req) { return req.tenant.id + ':' + req.session.user_id; }
+function pushTestThrottled(req) {
+  const now = Date.now();
+  const last = pushTestMap.get(pushTestKey(req));
+  return last && (now - last) < PUSH_TEST_THROTTLE_MS;
+}
+function pushTestMark(req) { pushTestMap.set(pushTestKey(req), Date.now()); }
+
+// Per-user push endpoints don't work for the company-level admin login (no user_id,
+// so subscriptions would be stored under an "undefined" key). Reject cleanly instead.
+function requirePushUser(req, res) {
+  if (!req.session.user_id) {
+    res.status(400).json({ error: 'บัญชีผู้ดูแลไม่รองรับการแจ้งเตือนรายบุคคล ใช้บัญชีพนักงาน' });
+    return false;
+  }
+  return true;
+}
+
+// Store a browser PushSubscription for the current user (dedupe by endpoint).
+tenantRouter.post('/api/push/subscribe', (req, res) => {
+  if (!pushEnabled()) return res.status(503).json({ error: 'push ยังไม่พร้อมใช้งาน' });
+  if (!requirePushUser(req, res)) return;
+  const sub = (req.body && req.body.subscription) || req.body;
+  if (!sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
+    return res.status(400).json({ error: 'subscription ไม่ถูกต้อง' });
+  }
+  const uid = req.session.user_id;
+  const db = ctxDb();
+  const all = db.pushSubs();
+  const list = Array.isArray(all[uid]) ? all[uid] : [];
+  const record = {
+    endpoint: sub.endpoint,
+    keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth },
+    ua: String((req.body && req.body.ua) || req.headers['user-agent'] || '').slice(0, 200),
+    created_at: new Date().toISOString(),
+  };
+  const idx = list.findIndex(s => s.endpoint === sub.endpoint);
+  if (idx >= 0) list[idx] = { ...list[idx], ...record };   // same device re-subscribed → update
+  else list.push(record);
+  all[uid] = list;
+  db.savePushSubs(all);
+  res.json({ ok: true, count: list.length });
+});
+
+// Remove a subscription (this device turned notifications off).
+tenantRouter.post('/api/push/unsubscribe', (req, res) => {
+  if (!requirePushUser(req, res)) return;
+  const endpoint = (req.body && (req.body.endpoint || (req.body.subscription && req.body.subscription.endpoint))) || '';
+  const uid = req.session.user_id;
+  const db = ctxDb();
+  const all = db.pushSubs();
+  if (Array.isArray(all[uid])) {
+    all[uid] = endpoint ? all[uid].filter(s => s.endpoint !== endpoint) : [];
+    if (!all[uid].length) delete all[uid];
+    db.savePushSubs(all);
+  }
+  res.json({ ok: true });
+});
+
+// Send a test push to all of this user's devices right now (proves the pipeline).
+tenantRouter.post('/api/push/test', async (req, res) => {
+  if (!pushEnabled()) return res.status(503).json({ error: 'push ยังไม่พร้อมใช้งาน' });
+  if (!requirePushUser(req, res)) return;
+  if (pushTestThrottled(req)) return res.status(429).json({ error: 'กดทดสอบถี่เกินไป รอสักครู่แล้วลองใหม่' });
+  pushTestMark(req);
+  const uid = req.session.user_id;
+  const db = ctxDb();
+  const result = await sendPushToUser(db, uid, {
+    title: '🔔 ทดสอบการแจ้งเตือน',
+    body: 'ระบบแจ้งเตือนกรอกงานทำงานได้แล้ว 🎉',
+    tag: 'worklog-test',
+    data: { url: req.tbase + '/worklog' },
+  });
+  if (!result.sent) return res.status(400).json({ error: 'ยังไม่มีอุปกรณ์ที่เปิดแจ้งเตือน (กดเปิดแจ้งเตือนก่อน)', ...result });
+  res.json({ ok: true, ...result });
+});
+
+// ---- Company-wide notification toggle (admin) ----
+tenantRouter.get('/api/admin/notify', requireAdmin, (req, res) => {
+  const s = ctxDb().notifySettings();
+  res.json({ enabled: s.enabled !== false, pushAvailable: pushEnabled() });
+});
+tenantRouter.put('/api/admin/notify', requireAdmin, (req, res) => {
+  const enabled = !!(req.body && req.body.enabled);
+  const cur = ctxDb().notifySettings();
+  ctxDb().saveNotifySettings(Object.assign({}, cur, { enabled, updated_at: new Date().toISOString() }));
+  res.json({ ok: true, enabled });
+});
 // Fixed-date Thai public holidays (lunar ones e.g. มาฆบูชา/วิสาขบูชา change yearly — add by hand).
 const THAI_FIXED_HOLIDAYS = [
   ['01-01', 'วันขึ้นปีใหม่'], ['04-06', 'วันจักรี'], ['04-13', 'สงกรานต์'], ['04-14', 'สงกรานต์'], ['04-15', 'สงกรานต์'],
@@ -2510,10 +2713,144 @@ app.get('/', (req, res) => {
   return res.redirect('/super/login');
 });
 
+// ============================================================
+// Reminder scheduler — push "you haven't logged hour HH:00 yet"
+// ============================================================
+// IMPORTANT: this runs in the single PM2 process with NO tenant ALS context, so
+// it calls tenantDb(id) directly per tenant (like the reanalyze-all background job).
+// All time decisions use Bangkok time regardless of the server's own timezone.
+
+// Current wall-clock time in Asia/Bangkok as { dateStr:'YYYY-MM-DD', hour:0-23 }.
+function nowBangkok() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date());
+  const p = {};
+  for (const x of parts) p[x.type] = x.value;
+  let hour = Number(p.hour);
+  if (hour === 24) hour = 0;                         // some engines emit "24" at midnight
+  return { dateStr: `${p.year}-${p.month}-${p.day}`, hour, minute: Number(p.minute) };
+}
+
+// Prune notify-log entries older than 3 days so the file doesn't grow forever.
+// Uses UTC-anchored math so the day arithmetic never shifts with the server's
+// local timezone (the same class of bug we avoid in the scheduler).
+function pruneNotifyLog(log, todayStr) {
+  const keep = new Set();
+  const d = new Date(todayStr + 'T00:00:00Z');            // anchor at UTC midnight
+  for (let i = 0; i < 3; i++) {
+    keep.add(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() - 1);
+  }
+  for (const uid of Object.keys(log)) {
+    for (const day of Object.keys(log[uid])) if (!keep.has(day)) delete log[uid][day];
+    if (!Object.keys(log[uid]).length) delete log[uid];
+  }
+  return log;
+}
+
+// Core logic — separated from the timer so it's unit-testable.
+// `now` is injectable ({dateStr,hour}) so the E2E harness can pin the clock;
+// production passes nothing and uses real Bangkok time.
+// Returns a small summary (useful for the E2E harness).
+async function checkAndSendReminders(now) {
+  if (!pushEnabled()) return { skipped: 'push-disabled' };
+  const { dateStr, hour } = now || nowBangkok();
+  const targetHour = hour - 1;                       // the hour that JUST ended (e.g. 11:xx → check 10:00)
+  if (targetHour < 0) return { targetHour, sent: 0 }; // before 01:00 there's no prior hour today
+
+  let totalSent = 0, tenantsChecked = 0;
+  for (const t of loadTenants()) {
+    let db;
+    try { db = tenantDb(t.id); } catch { continue; }
+    try {
+      // Company-wide switch off → skip the whole tenant.
+      if (db.notifySettings().enabled === false) continue;
+      // Whole company on holiday → nobody to remind.
+      const hs = loadHolidaySet(db);
+      if (isCompanyHoliday(hs, dateStr)) continue;
+      tenantsChecked++;
+
+      const subsMap = db.pushSubs();
+      const log = db.notifyLog();
+      let logDirty = false;
+
+      for (const user of db.users()) {
+        try {
+          if (user.role === 'admin') continue;                          // admins have no worklog
+          if (!Array.isArray(subsMap[user.id]) || !subsMap[user.id].length) continue;  // no device subscribed
+          const uh = calcUserHours(user);
+          if (!uh || !uh.hours.includes(targetHour)) continue;          // outside work hours / lunch → skip
+          const wl = db.loadWorklog(user.id, dateStr);
+          if (wl && wl.dayOff) continue;                                // personal leave → skip
+          // Already logged this hour? (any non-blank task in that slot)
+          const filled = wl && Array.isArray(wl.entries) &&
+            wl.entries.some(e => e && Number(e.hour) === targetHour && e.task && String(e.task).trim());
+          if (filled) continue;
+          // Already reminded this exact hour today? (persisted dedup — survives restart)
+          const byDay = log[user.id] || (log[user.id] = {});
+          const hoursSent = byDay[dateStr] || (byDay[dateStr] = []);
+          if (hoursSent.includes(targetHour)) continue;
+
+          const pad = (n) => String(n).padStart(2, '0');
+          const r = await sendPushToUser(db, user.id, {
+            title: '⏰ อย่าลืมบันทึกงาน',
+            body: `ชั่วโมง ${pad(targetHour)}:00–${pad(targetHour + 1)}:00 ยังไม่ได้กรอก`,
+            tag: 'worklog-reminder',
+            data: { url: '/t/' + t.id + '/worklog' },
+          }, subsMap);
+          // Mark as reminded even if 0 delivered (all subs dead) — we tried; dead
+          // subs were pruned, and we won't re-spam this hour.
+          hoursSent.push(targetHour);
+          logDirty = true;
+          totalSent += r.sent;
+        } catch (eUser) {
+          console.error('[reminder] user', user.id, '-', eUser.message);   // one user must not break the loop
+        }
+      }
+
+      if (logDirty) db.saveNotifyLog(pruneNotifyLog(log, dateStr));
+    } catch (eTenant) {
+      console.error('[reminder] tenant', t.id, '-', eTenant.message);        // one tenant must not break the loop
+    }
+  }
+  return { dateStr, targetHour, tenantsChecked, sent: totalSent };
+}
+
+let reminderTimer = null;
+function startReminderScheduler() {
+  if (!pushEnabled()) { console.log('[reminder] scheduler idle (web-push not installed)'); return; }
+  if (reminderTimer) return;
+  const EVERY_MS = 5 * 60 * 1000;                     // check every 5 minutes
+  // Do NOT fire immediately on boot — that would risk spamming the just-ended hour
+  // right after a restart. The first tick happens after one interval; notify-log
+  // still guards against duplicates within the hour.
+  reminderTimer = setInterval(() => {
+    checkAndSendReminders().catch(e => console.error('[reminder] tick failed:', e.message));
+  }, EVERY_MS);
+  if (reminderTimer.unref) reminderTimer.unref();     // don't keep the process alive just for this
+  console.log('[reminder] scheduler started (every 5 min, Asia/Bangkok time)');
+}
+
+// Global JSON body-parse error handler. A malformed JSON body makes express.json()
+// throw with err.type === 'entity.parse.failed'; without this, Express would render
+// an HTML stack trace that leaks server file paths. Reply with a clean 400 instead.
+// (Must be registered after all routes, with the 4-arg signature Express uses for
+// error middleware.)
+app.use((err, req, res, next) => {
+  if (err && err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'รูปแบบข้อมูลไม่ถูกต้อง' });
+  }
+  return next(err);
+});
+
 app.listen(PORT, () => {
   console.log(`\n🚀 HR-Interview (multi-tenant) running at http://localhost:${PORT}\n`);
   console.log(`   super-admin login → http://localhost:${PORT}/super/login`);
   console.log(`   default password   → super!2026 (change after first login)\n`);
+
+  startReminderScheduler();   // hourly worklog push reminders (no-op if web-push missing)
 
   // Optional: open the default browser to the super-admin login on startup.
   if (process.env.AUTO_OPEN_BROWSER === 'true') {

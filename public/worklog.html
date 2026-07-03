@@ -99,6 +99,23 @@
       <label for="wl-remind">🔔 เตือนฉันในแอปถ้ายังไม่ได้บันทึกงานวันนี้</label>
     </div>
 
+    <!-- Mobile push: per-device subscribe/unsubscribe + test -->
+    <div id="wl-push-card" style="display:none; margin-top:14px; padding:12px 14px; border:1px solid #bae6fd; background:#f0f9ff; border-radius:10px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div style="min-width:200px; flex:1;">
+          <div style="font-weight:600; color:#0c4a6e; font-size:14px;">🔔 แจ้งเตือนกรอกงานเข้ามือถือ</div>
+          <div class="sub" id="wl-push-status" style="margin-top:2px; font-size:13px;">กำลังตรวจสอบ...</div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="wl-push-toggle" style="font-size:13px; display:none;">เปิดแจ้งเตือนบนมือถือนี้</button>
+          <button class="ghost" id="wl-push-test" style="font-size:13px; display:none;">📩 ทดสอบแจ้งเตือน</button>
+        </div>
+      </div>
+      <div id="wl-push-ios" class="sub" style="display:none; margin-top:10px; font-size:12.5px; color:#0369a1; background:#e0f2fe; border-radius:8px; padding:9px 11px; line-height:1.6;">
+        📱 <strong>บน iPhone/iPad:</strong> ต้องกด “แชร์” <span style="font-size:14px;">⬆️</span> → “เพิ่มไปยังหน้าจอโฮม” (Add to Home Screen) แล้วเปิดแอปจากไอคอนบนหน้าจอก่อน จึงจะเปิดแจ้งเตือนได้ (iOS 16.4 ขึ้นไป)
+      </div>
+    </div>
+
     <div id="wl-holiday" style="display:none; margin-top:14px; padding:11px 14px; border-radius:10px; background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; font-size:14px;"></div>
 
     <div id="wl-tools-row" style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:14px; flex-wrap:wrap;">
@@ -359,6 +376,107 @@ const remindEl = document.getElementById('wl-remind');
 remindEl.checked = localStorage.getItem('worklog_remind') !== 'off';
 remindEl.addEventListener('change', () => localStorage.setItem('worklog_remind', remindEl.checked ? 'on' : 'off'));
 
+// ---------- Mobile push (per-device) ----------
+const pushCard = document.getElementById('wl-push-card');
+const pushStatus = document.getElementById('wl-push-status');
+const pushToggle = document.getElementById('wl-push-toggle');
+const pushTest = document.getElementById('wl-push-test');
+const pushIos = document.getElementById('wl-push-ios');
+let pushBusy = false;
+
+function isStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+function isIOS() {
+  return /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+function urlB64ToUint8(base64) {
+  const pad = '='.repeat((4 - base64.length % 4) % 4);
+  const b64 = (base64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+function setPushUI(state, msg) {
+  // state: 'unsupported' | 'need-install' | 'off' | 'on'
+  pushToggle.style.display = 'none'; pushTest.style.display = 'none'; pushIos.style.display = 'none';
+  pushStatus.textContent = msg || '';
+  if (state === 'unsupported') { pushStatus.style.color = '#b45309'; return; }
+  if (state === 'need-install') { pushStatus.style.color = '#0369a1'; pushIos.style.display = 'block'; return; }
+  if (state === 'off') {
+    pushStatus.style.color = '#64748b';
+    pushToggle.style.display = ''; pushToggle.textContent = 'เปิดแจ้งเตือนบนมือถือนี้';
+    return;
+  }
+  if (state === 'on') {
+    pushStatus.style.color = '#16a34a';
+    pushToggle.style.display = ''; pushToggle.textContent = 'ปิดแจ้งเตือนบนเครื่องนี้';
+    pushTest.style.display = '';
+  }
+}
+async function getReg() {
+  if (!('serviceWorker' in navigator)) return null;
+  try { return await navigator.serviceWorker.ready; } catch { return null; }
+}
+async function refreshPushUI() {
+  pushCard.style.display = 'block';
+  const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  if (!supported) {
+    // iOS < 16.4, or opened in a normal Safari tab (needs Add-to-Home-Screen first).
+    if (isIOS() && !isStandalone()) return setPushUI('need-install', 'เปิดแจ้งเตือนบน iPhone ต้อง “เพิ่มไปยังหน้าจอโฮม” ก่อน');
+    return setPushUI('unsupported', 'เบราว์เซอร์นี้ยังไม่รองรับการแจ้งเตือนแบบ push');
+  }
+  const reg = await getReg();
+  if (!reg) return setPushUI('unsupported', 'ยังโหลด Service Worker ไม่สำเร็จ ลองรีเฟรชหน้า');
+  const sub = await reg.pushManager.getSubscription();
+  if (sub) setPushUI('on', '✅ เปิดแจ้งเตือนบนเครื่องนี้แล้ว');
+  else if (Notification.permission === 'denied') setPushUI('unsupported', 'การแจ้งเตือนถูกบล็อกในตั้งค่าเบราว์เซอร์ (ต้องอนุญาตก่อน)');
+  else setPushUI('off', 'ยังไม่ได้เปิดแจ้งเตือนบนเครื่องนี้');
+}
+async function enablePush() {
+  const reg = await getReg();
+  if (!reg) { alert('ยังโหลด Service Worker ไม่สำเร็จ ลองรีเฟรชหน้า'); return; }
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') { alert('ต้องอนุญาตการแจ้งเตือนก่อน จึงจะเปิดได้'); await refreshPushUI(); return; }
+  const keyResp = await fetch(TBASE + '/api/push/key').then(r => r.ok ? r.json() : null).catch(() => null);
+  if (!keyResp || !keyResp.publicKey) { alert('เซิร์ฟเวอร์ยังไม่พร้อมสำหรับการแจ้งเตือน'); return; }
+  const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8(keyResp.publicKey) });
+  const r = await fetch(TBASE + '/api/push/subscribe', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ subscription: sub.toJSON(), ua: navigator.userAgent }),
+  });
+  if (!r.ok) { alert('บันทึกการเปิดแจ้งเตือนไม่สำเร็จ'); try { await sub.unsubscribe(); } catch {} }
+}
+async function disablePush() {
+  const reg = await getReg();
+  const sub = reg && await reg.pushManager.getSubscription();
+  const endpoint = sub ? sub.endpoint : '';
+  if (sub) { try { await sub.unsubscribe(); } catch {} }
+  await fetch(TBASE + '/api/push/unsubscribe', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ endpoint }),
+  }).catch(() => {});
+}
+pushToggle.addEventListener('click', async () => {
+  if (pushBusy) return; pushBusy = true;
+  pushToggle.disabled = true; const on = pushToggle.textContent.indexOf('ปิด') === 0;
+  try { if (on) await disablePush(); else await enablePush(); }
+  catch (e) { alert('ทำรายการไม่สำเร็จ: ' + (e.message || e)); }
+  pushToggle.disabled = false; pushBusy = false;
+  await refreshPushUI();
+});
+pushTest.addEventListener('click', async () => {
+  pushTest.disabled = true; const old = pushTest.textContent; pushTest.textContent = 'กำลังส่ง...';
+  try {
+    const r = await fetch(TBASE + '/api/push/test', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) { pushStatus.textContent = `✅ ส่งทดสอบแล้ว (${d.sent} เครื่อง) — ดูการแจ้งเตือนบนมือถือ`; pushStatus.style.color = '#16a34a'; }
+    else { alert(d.error || 'ส่งทดสอบไม่สำเร็จ'); }
+  } catch { alert('ส่งทดสอบไม่สำเร็จ'); }
+  pushTest.disabled = false; pushTest.textContent = old;
+});
+
 (async function init() {
   const me = await fetch(TBASE + '/api/me').then(r => r.json()).catch(() => null);
   if (me) document.getElementById('wl-emp').textContent =
@@ -370,6 +488,7 @@ remindEl.addEventListener('change', () => localStorage.setItem('worklog_remind',
   document.getElementById('wl-copy').addEventListener('click', copyRecurring);
   document.getElementById('wl-leave').addEventListener('change', e => { if (e.target.value) markLeave(e.target.value); });
   loadDay(t);
+  refreshPushUI().catch(() => {});   // show the mobile-push controls once the page is ready
 })();
 </script>
 </body>
