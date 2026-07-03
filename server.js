@@ -89,7 +89,17 @@ const TENANTS_FILE = path.join(DATA_DIR, '_tenants.json');
 const SUPER_AUTH_FILE = path.join(DATA_DIR, '_super_auth.json');
 const SECRET_FILE = path.join(DATA_DIR, '_secret');
 
-for (const d of [DATA_DIR, TENANT_DATA_DIR, OUTPUT_DIR, TENANT_OUTPUT_DIR]) {
+// ---------- Backup storage ----------
+// Compressed backups live OUTSIDE public/ and are NEVER served by express.static —
+// only via the auth-checked download endpoints below. `backups/` is gitignored.
+//   backups/system/<YYYYMMDD-HHMMSS>.tar.gz          (whole-system, super-admin)
+//   backups/tenants/<tid>/<YYYYMMDD-HHMMSS>.tar.gz   (one company, that tenant only)
+const BACKUP_DIR = path.join(ROOT, 'backups');
+const BACKUP_SYSTEM_DIR = path.join(BACKUP_DIR, 'system');
+const BACKUP_TENANTS_DIR = path.join(BACKUP_DIR, 'tenants');
+const BACKUP_SETTINGS_FILE = path.join(DATA_DIR, '_backup-settings.json');
+
+for (const d of [DATA_DIR, TENANT_DATA_DIR, OUTPUT_DIR, TENANT_OUTPUT_DIR, BACKUP_DIR, BACKUP_SYSTEM_DIR, BACKUP_TENANTS_DIR]) {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 }
 const ensure = (p, def) => { if (!fs.existsSync(p)) fs.writeFileSync(p, def); };
@@ -559,6 +569,159 @@ async function sendPushToUser(db, userId, payload, subsMap) {
   }
   return { sent, removed: dead.length };
 }
+
+// ============================================================
+// Backup system — compressed tar.gz archives, two levels
+// ============================================================
+// Uses the system `tar` (present on Linux droplets and Windows 10+) via
+// child_process.execFile — no npm dependency. All archives are stored under
+// backups/ (gitignored, outside public/) and downloaded only through the
+// auth-checked endpoints. ISOLATION RULE: a per-tenant backup contains ONLY
+// that tenant's data/outputs folder — never _secret / _vapid.json /
+// _super_auth.json / _tenants.json / other tenants.
+const { execFile } = require('child_process');
+
+// Backup archive filenames are ALWAYS "<YYYYMMDD-HHMMSS>.tar.gz". This single
+// regex both validates user-supplied filenames (path-traversal guard on
+// download/delete) and matches what we generate. Seconds are included so two
+// backups of the same scope within one minute never overwrite each other.
+const BACKUP_FILE_RE = /^[0-9]{8}-[0-9]{6}\.tar\.gz$/;
+
+// In-memory guard against concurrent backup creation for the same scope. Keys:
+// 'system' for the whole-system backup, 'tenant:<tid>' for a per-company backup.
+// A double-click / racing request while a backup is running gets a 409 instead of
+// spawning a second tar of the same scope. Purely per-process (single PM2 worker);
+// the flag is always cleared in a finally so a crash-free error path never sticks.
+const backupInProgress = new Set();
+
+// Build a "YYYYMMDD-HHMMSS" stamp from Bangkok wall-clock time (consistent with
+// the rest of the app's time decisions). Defined near nowBangkok() usage; a
+// forward reference is fine because this runs at request time, not load time.
+function backupStamp() {
+  const n = nowBangkok();                                    // { dateStr:'YYYY-MM-DD', hour, minute, second }
+  const pad = (x) => String(x).padStart(2, '0');
+  return `${n.dateStr.replace(/-/g, '')}-${pad(n.hour)}${pad(n.minute)}${pad(n.second)}`;
+}
+
+// Resolve the backup folder for a scope. tenantId=null → whole-system folder.
+function backupDirFor(tenantId) {
+  return tenantId ? path.join(BACKUP_TENANTS_DIR, tenantId) : BACKUP_SYSTEM_DIR;
+}
+
+// List backups in a scope, newest first. Returns [{file, size, created_at}].
+function listBackups(tenantId) {
+  const dir = backupDirFor(tenantId);
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter(f => BACKUP_FILE_RE.test(f))
+    .map(f => {
+      const st = fs.statSync(path.join(dir, f));
+      return { file: f, size: st.size, created_at: st.mtime.toISOString() };
+    })
+    .sort((a, b) => b.file.localeCompare(a.file));           // filename stamp sorts chronologically
+}
+
+// Run `tar` with the given args. Rejects with a Thai error message that never
+// leaks a stack trace. ENOENT → tar not installed on this machine.
+// Convert a path to forward-slash form (tar is happy with "/" on Windows too).
+const toPosix = (p) => p.split(path.sep).join('/');
+
+// Run tar from a given working directory using ONLY relative paths. Windows
+// drive letters (e.g. "D:\...") make GNU tar treat a colon as a remote host
+// ("host:path"), so we NEVER pass an absolute path to tar — every path is
+// relative to `cwd`. Rejects with a Thai error that never leaks a stack trace;
+// ENOENT → tar not installed on this machine.
+function runTar(args, cwd) {
+  return new Promise((resolve, reject) => {
+    execFile('tar', args, { cwd, windowsHide: true, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) {
+        if (err.code === 'ENOENT') {
+          return reject(new Error('ไม่พบโปรแกรม tar บนเซิร์ฟเวอร์ — ติดตั้ง tar ก่อนใช้งานการสำรองข้อมูล'));
+        }
+        return reject(new Error('บีบอัดไฟล์ไม่สำเร็จ: ' + String(stderr || err.message).trim().slice(0, 300)));
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+// Add one target ("<archive-name>" living under <baseDir>) to a tar-append plan.
+// Each entry becomes a "-C <baseDir> <name>" pair so the archive stores it under
+// <name> regardless of where <baseDir> physically lives (handles DATA_DIR /
+// OUTPUT_DIR overridden onto a volume outside the source tree).
+function tarTargetArgs(entries) {
+  const args = [];
+  for (const e of entries) args.push('-C', e.baseDir, e.name);
+  return args;
+}
+
+// Create a whole-system backup: everything under DATA_DIR and OUTPUT_DIR
+// (operator data — includes secrets, on purpose; only the super-admin can access
+// it). Stored in the archive under "data/" and "outputs/". Returns {ok,file,size}.
+async function createSystemBackup() {
+  if (!fs.existsSync(BACKUP_SYSTEM_DIR)) fs.mkdirSync(BACKUP_SYSTEM_DIR, { recursive: true });
+  const entries = [];
+  if (fs.existsSync(DATA_DIR))   entries.push({ baseDir: path.dirname(DATA_DIR),   name: path.basename(DATA_DIR) });
+  if (fs.existsSync(OUTPUT_DIR)) entries.push({ baseDir: path.dirname(OUTPUT_DIR), name: path.basename(OUTPUT_DIR) });
+  if (!entries.length) throw new Error('ไม่มีข้อมูลให้สำรอง');
+  const file = backupStamp() + '.tar.gz';
+  const out = path.join(BACKUP_SYSTEM_DIR, file);
+  // cwd = BACKUP_SYSTEM_DIR so the output is a bare relative filename (no colon);
+  // each -C hops to the real DATA_DIR/OUTPUT_DIR parent for its target.
+  await runTar(['-czf', file, ...tarTargetArgs(entries)], BACKUP_SYSTEM_DIR);
+  return { ok: true, file, size: fs.statSync(out).size };
+}
+
+// Create a single-tenant backup. ISOLATION: only this tenant's data + outputs
+// folders — nothing else. Each subtree is added with "-C <tenants-parent>
+// <tid>", so the archive holds exactly "<tid>/..." for data and outputs; no
+// _secret / _vapid.json / _super_auth.json / _tenants.json / other tenant can
+// possibly be reached. If the tenant's outputs folder doesn't exist yet, skip it.
+async function createTenantBackup(tenantId) {
+  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(String(tenantId || ''))) {
+    throw new Error('tenant id ไม่ถูกต้อง');
+  }
+  const tDataDir = path.join(TENANT_DATA_DIR, tenantId);       // DATA_DIR/tenants/<tid>
+  const tOutDir  = path.join(TENANT_OUTPUT_DIR, tenantId);     // OUTPUT_DIR/tenants/<tid>
+  const entries = [];
+  // Store as "data/tenants/<tid>" and "outputs/tenants/<tid>" inside the archive
+  // so a system restore and a tenant restore share the same layout.
+  if (fs.existsSync(tDataDir)) entries.push({ baseDir: path.dirname(DATA_DIR),   name: toPosix(path.join(path.basename(DATA_DIR),   'tenants', tenantId)) });
+  if (fs.existsSync(tOutDir))  entries.push({ baseDir: path.dirname(OUTPUT_DIR), name: toPosix(path.join(path.basename(OUTPUT_DIR), 'tenants', tenantId)) });
+  if (!entries.length) throw new Error('ไม่มีข้อมูลของบริษัทนี้ให้สำรอง');
+  const dir = backupDirFor(tenantId);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const file = backupStamp() + '.tar.gz';
+  const out = path.join(dir, file);
+  await runTar(['-czf', file, ...tarTargetArgs(entries)], dir);
+  return { ok: true, file, size: fs.statSync(out).size };
+}
+
+// Keep only the newest `keep` archives in a scope; delete the rest. Used by the
+// auto-scheduler's retention. Returns the number of files pruned.
+function pruneBackups(tenantId, keep) {
+  const n = Math.max(1, Number(keep) || 1);
+  const dir = backupDirFor(tenantId);
+  const all = listBackups(tenantId);                          // newest first
+  const doomed = all.slice(n);
+  for (const b of doomed) {
+    try { fs.unlinkSync(path.join(dir, b.file)); } catch (e) { console.error('[backup] prune failed:', b.file, e.message); }
+  }
+  return doomed.length;
+}
+
+// ---------- Auto-backup settings (whole-system only) ----------
+const DEFAULT_BACKUP_SETTINGS = { enabled: false, time: '02:00', retention: 14, lastRun: null };
+function readBackupSettings() {
+  const s = readJson(BACKUP_SETTINGS_FILE, null) || {};
+  return {
+    enabled: s.enabled === true,
+    time: /^([01]\d|2[0-3]):[0-5]\d$/.test(s.time) ? s.time : DEFAULT_BACKUP_SETTINGS.time,
+    retention: Math.min(365, Math.max(1, Number(s.retention) || DEFAULT_BACKUP_SETTINGS.retention)),
+    lastRun: typeof s.lastRun === 'string' ? s.lastRun : null,   // 'YYYY-MM-DD' of last auto-run
+  };
+}
+function writeBackupSettings(s) { writeJson(BACKUP_SETTINGS_FILE, s); }
 
 // ---------- app ----------
 const app = express();
@@ -2182,6 +2345,49 @@ tenantRouter.get('/api/outputs/:id/:file', (req, res) => {
   res.sendFile(p);
 });
 
+// ============================================================
+// Per-company backup (admin only) — scoped to req.tenant.id ONLY.
+// An admin of company A can NEVER touch company B's archives (the folder is
+// keyed by req.tenant.id from the signed session, not from any request input),
+// and the archive itself contains only this tenant's data (see createTenantBackup).
+// ============================================================
+tenantRouter.post('/api/admin/backup/create', requireAdmin, async (req, res) => {
+  const key = 'tenant:' + req.tenant.id;
+  if (backupInProgress.has(key)) {
+    return res.status(409).json({ error: 'กำลังสำรองอยู่ กรุณารอสักครู่' });
+  }
+  backupInProgress.add(key);
+  try {
+    const result = await createTenantBackup(req.tenant.id);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'สำรองข้อมูลไม่สำเร็จ' });
+  } finally {
+    backupInProgress.delete(key);
+  }
+});
+
+tenantRouter.get('/api/admin/backup/list', requireAdmin, (req, res) => {
+  res.json(listBackups(req.tenant.id));
+});
+
+tenantRouter.get('/api/admin/backup/download', requireAdmin, (req, res) => {
+  const file = String(req.query.file || '');
+  if (!BACKUP_FILE_RE.test(file)) return res.status(400).json({ error: 'ชื่อไฟล์ไม่ถูกต้อง' });
+  const p = path.join(backupDirFor(req.tenant.id), file);
+  if (!fs.existsSync(p)) return res.status(404).json({ error: 'ไม่พบไฟล์' });
+  res.download(p, `${req.tenant.id}-${file}`);
+});
+
+tenantRouter.post('/api/admin/backup/delete', requireAdmin, (req, res) => {
+  const file = String((req.body || {}).file || '');
+  if (!BACKUP_FILE_RE.test(file)) return res.status(400).json({ error: 'ชื่อไฟล์ไม่ถูกต้อง' });
+  const p = path.join(backupDirFor(req.tenant.id), file);
+  if (!fs.existsSync(p)) return res.status(404).json({ error: 'ไม่พบไฟล์' });
+  try { fs.unlinkSync(p); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: 'ลบไฟล์ไม่สำเร็จ: ' + e.message }); }
+});
+
 // ---------- Static page routes ----------
 tenantRouter.get('/',         (req, res) => res.sendFile(path.join(ROOT, 'public', 'index.html')));
 tenantRouter.get('/login',    (req, res) => res.sendFile(path.join(ROOT, 'public', 'login.html')));
@@ -2542,7 +2748,7 @@ function parseSuperSession(req) {
 function requireSuperAdmin(req, res, next) {
   const s = parseSuperSession(req);
   if (!s) {
-    if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'super admin only' });
+    if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'เฉพาะผู้ดูแลระดับสูง (Super Admin)' });
     return res.redirect('/super/login');
   }
   req.superSession = s;
@@ -2702,10 +2908,71 @@ app.put('/api/super/password', requireSuperAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// ============================================================
+// Whole-system backup (super-admin only)
+// ============================================================
+app.post('/api/super/backup/create', requireSuperAdmin, async (req, res) => {
+  const key = 'system';
+  if (backupInProgress.has(key)) {
+    return res.status(409).json({ error: 'กำลังสำรองอยู่ กรุณารอสักครู่' });
+  }
+  backupInProgress.add(key);
+  try {
+    const result = await createSystemBackup();
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'สำรองข้อมูลไม่สำเร็จ' });
+  } finally {
+    backupInProgress.delete(key);
+  }
+});
+
+app.get('/api/super/backup/list', requireSuperAdmin, (req, res) => {
+  res.json(listBackups(null));
+});
+
+app.get('/api/super/backup/download', requireSuperAdmin, (req, res) => {
+  const file = String(req.query.file || '');
+  if (!BACKUP_FILE_RE.test(file)) return res.status(400).json({ error: 'ชื่อไฟล์ไม่ถูกต้อง' });
+  const p = path.join(BACKUP_SYSTEM_DIR, file);
+  if (!fs.existsSync(p)) return res.status(404).json({ error: 'ไม่พบไฟล์' });
+  res.download(p, `system-${file}`);
+});
+
+app.post('/api/super/backup/delete', requireSuperAdmin, (req, res) => {
+  const file = String((req.body || {}).file || '');
+  if (!BACKUP_FILE_RE.test(file)) return res.status(400).json({ error: 'ชื่อไฟล์ไม่ถูกต้อง' });
+  const p = path.join(BACKUP_SYSTEM_DIR, file);
+  if (!fs.existsSync(p)) return res.status(404).json({ error: 'ไม่พบไฟล์' });
+  try { fs.unlinkSync(p); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: 'ลบไฟล์ไม่สำเร็จ: ' + e.message }); }
+});
+
+// Auto-backup settings (whole-system). Returns/accepts { enabled, time, retention }.
+app.get('/api/super/backup/settings', requireSuperAdmin, (req, res) => {
+  const s = readBackupSettings();
+  res.json({ enabled: s.enabled, time: s.time, retention: s.retention, lastRun: s.lastRun });
+});
+
+app.put('/api/super/backup/settings', requireSuperAdmin, (req, res) => {
+  const b = req.body || {};
+  const cur = readBackupSettings();
+  const next = {
+    enabled: b.enabled === true,
+    time: /^([01]\d|2[0-3]):[0-5]\d$/.test(b.time) ? b.time : cur.time,
+    retention: Math.min(365, Math.max(1, Number(b.retention) || cur.retention)),
+    lastRun: cur.lastRun,                        // preserve — only the scheduler advances this
+    updated_at: new Date().toISOString(),
+  };
+  writeBackupSettings(next);
+  res.json({ enabled: next.enabled, time: next.time, retention: next.retention, lastRun: next.lastRun });
+});
+
 // Super-admin pages
 app.get('/super/login',   (req, res) => res.sendFile(path.join(ROOT, 'public', 'super-login.html')));
 app.get('/super',         requireSuperAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'super-tenants.html')));
 app.get('/super/tenants', requireSuperAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'super-tenants.html')));
+app.get('/super/backup',  requireSuperAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'super-backup.html')));
 
 // Root → super-admin
 app.get('/', (req, res) => {
@@ -2724,13 +2991,13 @@ app.get('/', (req, res) => {
 function nowBangkok() {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false,
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
   }).formatToParts(new Date());
   const p = {};
   for (const x of parts) p[x.type] = x.value;
   let hour = Number(p.hour);
   if (hour === 24) hour = 0;                         // some engines emit "24" at midnight
-  return { dateStr: `${p.year}-${p.month}-${p.day}`, hour, minute: Number(p.minute) };
+  return { dateStr: `${p.year}-${p.month}-${p.day}`, hour, minute: Number(p.minute), second: Number(p.second) };
 }
 
 // Prune notify-log entries older than 3 days so the file doesn't grow forever.
@@ -2833,6 +3100,51 @@ function startReminderScheduler() {
   console.log('[reminder] scheduler started (every 5 min, Asia/Bangkok time)');
 }
 
+// ============================================================
+// Auto-backup scheduler (whole-system only) — reuses nowBangkok().
+// ============================================================
+// Each tick: if enabled AND the current Bangkok time is at/past today's `time`
+// AND we haven't already run today → create a system backup + prune to
+// `retention`. `lastRun` (a 'YYYY-MM-DD' string in the settings file) is the
+// persisted marker that survives PM2 restarts and prevents a double run.
+// `now` is injectable for the E2E harness; production passes nothing.
+async function checkAndRunAutoBackup(now) {
+  const s = readBackupSettings();
+  if (!s.enabled) return { skipped: 'disabled' };
+  const { dateStr, hour, minute } = now || nowBangkok();
+  if (s.lastRun === dateStr) return { skipped: 'already-ran-today', dateStr };
+  // Has today's scheduled time passed yet?
+  const [th, tm] = s.time.split(':').map(Number);
+  const nowMin = hour * 60 + minute;
+  if (nowMin < th * 60 + tm) return { skipped: 'before-time', dateStr };
+
+  let result;
+  try {
+    result = await createSystemBackup();
+  } catch (e) {
+    console.error('[backup] auto-backup failed:', e.message);
+    return { error: e.message, dateStr };
+  }
+  // Mark as done for today FIRST (so a prune error can't cause a re-run loop).
+  writeBackupSettings({ ...s, lastRun: dateStr, updated_at: new Date().toISOString() });
+  const pruned = pruneBackups(null, s.retention);
+  console.log(`[backup] auto-backup created ${result.file} (${result.size} bytes), pruned ${pruned} old`);
+  return { ok: true, file: result.file, size: result.size, pruned, dateStr };
+}
+
+let backupTimer = null;
+function startBackupScheduler() {
+  if (backupTimer) return;
+  const EVERY_MS = 5 * 60 * 1000;                     // check every 5 minutes (same cadence as reminders)
+  // Do NOT fire immediately on boot — the first tick happens after one interval.
+  // lastRun (persisted) is the real guard against a double run within a day.
+  backupTimer = setInterval(() => {
+    checkAndRunAutoBackup().catch(e => console.error('[backup] tick failed:', e.message));
+  }, EVERY_MS);
+  if (backupTimer.unref) backupTimer.unref();
+  console.log('[backup] auto-backup scheduler started (every 5 min, Asia/Bangkok time)');
+}
+
 // Global JSON body-parse error handler. A malformed JSON body makes express.json()
 // throw with err.type === 'entity.parse.failed'; without this, Express would render
 // an HTML stack trace that leaks server file paths. Reply with a clean 400 instead.
@@ -2845,21 +3157,32 @@ app.use((err, req, res, next) => {
   return next(err);
 });
 
-app.listen(PORT, () => {
-  console.log(`\n🚀 HR-Interview (multi-tenant) running at http://localhost:${PORT}\n`);
-  console.log(`   super-admin login → http://localhost:${PORT}/super/login`);
-  console.log(`   default password   → super!2026 (change after first login)\n`);
+// BACKUP_TEST_MODE lets the E2E harness require() this file to unit-test the
+// backup helpers WITHOUT opening a port or starting the schedulers.
+if (process.env.BACKUP_TEST_MODE === '1') {
+  module.exports = {
+    createSystemBackup, createTenantBackup, listBackups, pruneBackups,
+    readBackupSettings, writeBackupSettings, checkAndRunAutoBackup,
+    BACKUP_SYSTEM_DIR, BACKUP_TENANTS_DIR, BACKUP_SETTINGS_FILE,
+  };
+} else {
+  app.listen(PORT, () => {
+    console.log(`\n🚀 HR-Interview (multi-tenant) running at http://localhost:${PORT}\n`);
+    console.log(`   super-admin login → http://localhost:${PORT}/super/login`);
+    console.log(`   default password   → super!2026 (change after first login)\n`);
 
-  startReminderScheduler();   // hourly worklog push reminders (no-op if web-push missing)
+    startReminderScheduler();   // hourly worklog push reminders (no-op if web-push missing)
+    startBackupScheduler();     // whole-system auto-backup (no-op unless enabled in settings)
 
-  // Optional: open the default browser to the super-admin login on startup.
-  if (process.env.AUTO_OPEN_BROWSER === 'true') {
-    setTimeout(() => {
-      const url = `http://localhost:${PORT}/super/login`;
-      const cmd = process.platform === 'win32' ? `start "" "${url}"`
-                : process.platform === 'darwin' ? `open "${url}"`
-                : `xdg-open "${url}"`;
-      require('child_process').exec(cmd, () => { /* swallow errors */ });
-    }, 1200);
-  }
-});
+    // Optional: open the default browser to the super-admin login on startup.
+    if (process.env.AUTO_OPEN_BROWSER === 'true') {
+      setTimeout(() => {
+        const url = `http://localhost:${PORT}/super/login`;
+        const cmd = process.platform === 'win32' ? `start "" "${url}"`
+                  : process.platform === 'darwin' ? `open "${url}"`
+                  : `xdg-open "${url}"`;
+        require('child_process').exec(cmd, () => { /* swallow errors */ });
+      }, 1200);
+    }
+  });
+}

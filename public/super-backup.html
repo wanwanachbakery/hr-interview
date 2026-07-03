@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Super Admin · สำรองข้อมูลทั้งระบบ | HR-Interview</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="icon" type="image/png" href="/logo.png"/>
+  <style>
+    .bk-row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 14px; border:1px solid var(--border); border-radius:10px; margin-bottom:8px; background:#fff; }
+    .bk-info { flex:1; min-width:180px; }
+    .bk-actions { display:flex; gap:6px; flex-wrap:wrap; }
+    .bk-actions button, .bk-actions a button { font-size:13px; padding:6px 12px; }
+    .warn-box { background:#fffbeb; border:1px solid #fde68a; color:#92400e; border-radius:10px; padding:12px 14px; font-size:14px; margin-top:4px; }
+    .switch{position:relative;display:inline-block;width:56px;height:30px;flex:none;}
+    .switch input{opacity:0;width:0;height:0;}
+    .switch .slider{position:absolute;inset:0;cursor:pointer;background:#cbd5e1;border-radius:30px;transition:.2s;}
+    .switch .slider:before{content:"";position:absolute;height:22px;width:22px;left:4px;top:4px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.3);}
+    .switch input:checked + .slider{background:#0284c7;}
+    .switch input:checked + .slider:before{transform:translateX(26px);}
+    .setting-line { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:12px; }
+    .setting-line label { margin:0; font-weight:400; color:#475569; }
+    .setting-line input[type="time"], .setting-line input[type="number"] { width:auto; padding:7px 10px; }
+  </style>
+</head>
+<body>
+<div class="container wide">
+  <div class="topbar">
+    <div class="logo">
+      <span>HR-Interview</span>
+      <span class="pill blue" style="font-size:11px;">SUPER ADMIN</span>
+    </div>
+    <nav>
+      <a href="/super">👑 จัดการบริษัท</a>
+      <a href="/super/backup">💾 สำรองข้อมูล</a>
+      <a href="#" onclick="logout();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <h1>💾 สำรองข้อมูลทั้งระบบ</h1>
+  <p class="sub">สำรองข้อมูล <strong>ทุกบริษัท + การตั้งค่าระบบทั้งหมด</strong> เป็นไฟล์บีบอัด (.tar.gz) — ไฟล์นี้ใช้กู้คืนทั้งเซิร์ฟเวอร์ได้</p>
+
+  <div class="warn-box">
+    ⚠️ <strong>สำคัญ:</strong> ควร <strong>ดาวน์โหลดไฟล์สำรองไปเก็บนอกเซิร์ฟเวอร์</strong> (เช่น เครื่องของคุณ หรือ cloud) เสมอ — ถ้าเซิร์ฟเวอร์เสียหาย ไฟล์ที่อยู่บนเซิร์ฟเวอร์อย่างเดียวก็หายไปด้วย
+  </div>
+
+  <!-- Create now -->
+  <div class="card" style="margin-top:16px; border-top:4px solid #0284c7;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h2 style="margin:0;">📦 สำรองตอนนี้</h2>
+        <p class="sub" style="margin:4px 0 0;">สร้างไฟล์สำรองของทั้งระบบ ณ ขณะนี้</p>
+      </div>
+      <button id="create-btn" onclick="createNow()">📦 สำรองตอนนี้</button>
+    </div>
+    <div id="create-msg" style="margin-top:10px; font-size:14px;"></div>
+  </div>
+
+  <!-- Auto settings -->
+  <div class="card" style="border-top:4px solid #7c3aed;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h2 style="margin:0;">⏰ สำรองอัตโนมัติ</h2>
+        <p class="sub" style="margin:4px 0 0;">เปิด = ระบบจะสำรองข้อมูลทั้งระบบให้เองทุกวันตามเวลาที่ตั้งไว้ (เวลาไทย)</p>
+      </div>
+      <label class="switch" title="เปิด/ปิดสำรองอัตโนมัติ">
+        <input type="checkbox" id="auto-enabled"/>
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="setting-line">
+      <label>เวลาที่สำรอง (ทุกวัน):</label>
+      <input type="time" id="auto-time" value="02:00"/>
+      <label style="margin-left:16px;">เก็บย้อนหลัง (จำนวนชุด):</label>
+      <input type="number" id="auto-retention" min="1" max="365" value="14" style="width:90px;"/>
+      <button onclick="saveSettings()" style="margin-left:8px;">💾 บันทึกการตั้งค่า</button>
+      <span class="sub" id="settings-msg" style="margin-left:8px;"></span>
+    </div>
+    <p class="sub" id="lastrun-line" style="margin:12px 0 0;"></p>
+    <p class="sub" style="margin:6px 0 0;">* เมื่อครบจำนวนชุดที่ตั้งไว้ ระบบจะลบไฟล์เก่าสุดให้อัตโนมัติ · การสำรองอัตโนมัติทำเฉพาะ “ทั้งระบบ” เท่านั้น</p>
+  </div>
+
+  <!-- File list -->
+  <h2 style="margin-top:24px;">🗂️ ไฟล์สำรองที่มีอยู่ <span id="bk-count" class="sub" style="font-size:14px;"></span></h2>
+  <div id="bk-list"><div class="card empty">กำลังโหลด…</div></div>
+</div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+function fmtSize(b) {
+  b = Number(b) || 0;
+  if (b < 1024) return b + ' B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+  if (b < 1024*1024*1024) return (b/1024/1024).toFixed(1) + ' MB';
+  return (b/1024/1024/1024).toFixed(2) + ' GB';
+}
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso); if (isNaN(d.getTime())) return '';
+  const p = n => String(n).padStart(2,'0');
+  return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes());
+}
+
+async function loadList() {
+  const list = document.getElementById('bk-list');
+  let items;
+  try { const r = await fetch('/api/super/backup/list'); if (!r.ok) throw 0; items = await r.json(); }
+  catch { list.innerHTML = '<div class="card empty">โหลดรายการไม่สำเร็จ</div>'; return; }
+  document.getElementById('bk-count').textContent = `(${items.length})`;
+  if (!items.length) { list.innerHTML = '<div class="card empty">ยังไม่มีไฟล์สำรอง — กด “สำรองตอนนี้” ด้านบน</div>'; return; }
+  list.innerHTML = items.map(it => `
+    <div class="bk-row">
+      <div class="bk-info">
+        <div><strong style="font-family:monospace;">${esc(it.file)}</strong></div>
+        <div class="sub" style="font-size:13px; margin-top:2px;">ขนาด ${fmtSize(it.size)} · สร้างเมื่อ ${esc(fmtDateTime(it.created_at))}</div>
+      </div>
+      <div class="bk-actions">
+        <a href="/api/super/backup/download?file=${encodeURIComponent(it.file)}"><button class="ghost">⬇ ดาวน์โหลด</button></a>
+        <button class="ghost" style="color:#b91c1c;" onclick="del('${esc(it.file)}')">🗑 ลบ</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function createNow() {
+  const btn = document.getElementById('create-btn');
+  const msg = document.getElementById('create-msg');
+  btn.disabled = true; const orig = btn.textContent; btn.textContent = '⏳ กำลังสำรอง…'; msg.textContent = '';
+  try {
+    const r = await fetch('/api/super/backup/create', { method:'POST', headers:{'content-type':'application/json'}, body:'{}' });
+    const d = await r.json();
+    if (!r.ok) { msg.style.color = '#b91c1c'; msg.textContent = '✗ ' + (d.error || 'สำรองไม่สำเร็จ'); }
+    else { msg.style.color = '#166534'; msg.textContent = `✓ สำรองสำเร็จ: ${d.file} (${fmtSize(d.size)}) — อย่าลืมดาวน์โหลดไปเก็บนอกเซิร์ฟเวอร์`; loadList(); }
+  } catch { msg.style.color = '#b91c1c'; msg.textContent = '✗ เกิดข้อผิดพลาด'; }
+  finally { btn.disabled = false; btn.textContent = orig; }
+}
+
+async function del(file) {
+  if (!confirm(`ลบไฟล์สำรอง "${file}" ?\n\nลบแล้วกู้ไฟล์นี้ไม่ได้`)) return;
+  const r = await fetch('/api/super/backup/delete', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ file }) });
+  if (!r.ok) { const d = await r.json().catch(()=>({})); alert('ลบไม่สำเร็จ: ' + (d.error || 'unknown')); return; }
+  loadList();
+}
+
+async function loadSettings() {
+  let s;
+  try { const r = await fetch('/api/super/backup/settings'); if (!r.ok) return; s = await r.json(); }
+  catch { return; }
+  document.getElementById('auto-enabled').checked = s.enabled === true;
+  document.getElementById('auto-time').value = s.time || '02:00';
+  document.getElementById('auto-retention').value = s.retention || 14;
+  const ll = document.getElementById('lastrun-line');
+  ll.textContent = s.lastRun ? ('สำรองอัตโนมัติล่าสุด: ' + s.lastRun) : 'ยังไม่เคยสำรองอัตโนมัติ';
+}
+
+async function saveSettings() {
+  const enabled = document.getElementById('auto-enabled').checked;
+  const time = document.getElementById('auto-time').value || '02:00';
+  const retention = Math.max(1, Math.min(365, Number(document.getElementById('auto-retention').value) || 14));
+  const msg = document.getElementById('settings-msg'); msg.textContent = '';
+  const r = await fetch('/api/super/backup/settings', {
+    method:'PUT', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ enabled, time, retention }),
+  });
+  if (!r.ok) { msg.style.color = '#b91c1c'; msg.textContent = '✗ บันทึกไม่สำเร็จ'; return; }
+  msg.style.color = '#166534'; msg.textContent = '✓ บันทึกแล้ว';
+  setTimeout(() => { msg.textContent = ''; }, 2500);
+  loadSettings();
+}
+
+async function logout() {
+  await fetch('/api/super/logout', { method: 'POST' });
+  location.href = '/super/login';
+}
+
+loadList();
+loadSettings();
+</script>
+</body>
+</html>

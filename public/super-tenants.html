@@ -22,6 +22,8 @@
       <span class="pill blue" style="font-size:11px;">SUPER ADMIN</span>
     </div>
     <nav>
+      <a href="/super">👑 จัดการบริษัท</a>
+      <a href="/super/backup">💾 สำรองข้อมูล</a>
       <a href="#" onclick="changePassword();return false;">🔑 เปลี่ยนรหัส Super-admin</a>
       <a href="/worklog">📝 บันทึกงาน</a>
       <a href="/worklog-team">👥 บันทึกงานทีม</a>
@@ -32,6 +34,17 @@
 
   <h1>👑 จัดการบริษัท (Tenants)</h1>
   <p class="sub">แต่ละบริษัทมีฐานข้อมูลแยกกัน — สร้าง tenant ใหม่จะได้ URL `/t/{id}` ส่งให้ admin ของบริษัทนั้น login</p>
+
+  <!-- Backup shortcut -->
+  <a href="/super/backup" style="text-decoration:none;">
+    <div class="card" style="border-left:4px solid #0284c7; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <strong style="color:#0369a1;">💾 สำรองข้อมูลทั้งระบบ</strong>
+        <div class="sub" style="font-size:13px; margin-top:2px;">สำรองทุกบริษัท + ตั้งเวลาสำรองอัตโนมัติ · ดาวน์โหลดเก็บนอกเซิร์ฟเวอร์</div>
+      </div>
+      <button class="ghost">เปิดหน้าสำรองข้อมูล →</button>
+    </div>
+  </a>
 
   <!-- Create -->
   <div class="card">

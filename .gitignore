@@ -21,6 +21,10 @@ data/tenants/
 
 # Local backups (created by 3-BACKUP.bat)
 backup/
+# Backup archives + settings created by the in-app backup system (server.js)
+# NEVER commit — these tarballs contain full tenant data / operator data.
+backups/
+data/_backup-settings.json
 
 # Distribution packages / deploy artifacts
 HR-Interview-Package_*
