@@ -6,6 +6,45 @@
 (function () {
   document.addEventListener('DOMContentLoaded', () => { try { build(); } catch (e) { /* leave page as-is */ } });
 
+  // PWA wiring — inject the per-tenant manifest link + iOS meta tags, then
+  // register the service worker. Done in JS so we don't have to edit every page.
+  (function pwaSetup() {
+    var TB = window.TBASE;
+    if (TB && !document.querySelector('link[rel="manifest"]')) {
+      var link = document.createElement('link');
+      link.rel = 'manifest';
+      link.href = TB + '/manifest.webmanifest';        // dynamic, per-tenant (name + start_url)
+      document.head.appendChild(link);
+    }
+    var metas = [
+      ['theme-color', '#0284c7'],
+      ['apple-mobile-web-app-capable', 'yes'],          // iOS: run standalone from home screen
+      ['apple-mobile-web-app-status-bar-style', 'default'],
+      ['apple-mobile-web-app-title', 'บันทึกงาน'],
+      ['mobile-web-app-capable', 'yes'],
+    ];
+    metas.forEach(function (m) {
+      if (!document.querySelector('meta[name="' + m[0] + '"]')) {
+        var el = document.createElement('meta');
+        el.name = m[0]; el.content = m[1];
+        document.head.appendChild(el);
+      }
+    });
+    // iOS home-screen icon (uses the 192 PWA icon).
+    if (!document.querySelector('link[rel="apple-touch-icon"]')) {
+      var ai = document.createElement('link');
+      ai.rel = 'apple-touch-icon'; ai.href = '/icon-192.png';
+      document.head.appendChild(ai);
+    }
+    // Register the service worker (scope "/" covers every /t/<tid>/ page).
+    // Bump ?v= when sw.js changes so browsers pick up the new worker.
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/sw.js?v=1', { scope: '/' }).catch(function () { /* HTTP dev / unsupported → ignore */ });
+      });
+    }
+  })();
+
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
   function build() {
