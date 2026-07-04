@@ -2312,16 +2312,49 @@ tenantRouter.get('/api/interviews/history', (req, res) => {
 });
 
 // Company-wide analysis — admin + executive + manager
-tenantRouter.post('/api/company/analyze', requireRoles('admin', 'executive', 'manager'), async (req, res) => {
-  const list = load.employees();
-  const interviews = list
-    .map(e => loadInterview(e.id))
+// รันเป็น background job (เลียนแบบ reanalyze-all): report คนเยอะใช้เวลานาน
+// เกิน ~100 วิ Cloudflare ตัด client → ปุ่มค้าง ถ้ารันสดในรีเควสต์เดียว
+const companyAnalyzeJobs = {};   // tenantId -> { running, done, error, count, startedAt, finishedAt }
+
+tenantRouter.post('/api/company/analyze', requireRoles('admin', 'executive', 'manager'), (req, res) => {
+  const tid = req.tenant.id;
+  if (companyAnalyzeJobs[tid] && companyAnalyzeJobs[tid].running) {
+    return res.status(409).json({ error: 'กำลังวิเคราะห์อยู่แล้ว', job: companyAnalyzeJobs[tid] });
+  }
+  // capture concrete db ก่อนตอบ — ALS context หายหลังจากตอบ (ห้ามใช้ ctxDb/load ใน async block)
+  const db = ctxDb();
+  const interviews = db.employees()
+    .map(e => db.loadInterview(e.id))
     .filter(iv => iv && iv.finishedAt);
-  const md = await analyzeCompany(interviews, ctxDb());
-  const outDir = ctxDb().cmpOutDir;
-  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-  fs.writeFileSync(path.join(outDir, 'optimization-report.md'), md);
-  res.json({ ok: true, count: interviews.length, file: 'optimization-report.md' });
+  const count = interviews.length;
+  const job = companyAnalyzeJobs[tid] = {
+    running: true, done: false, error: null, count,
+    startedAt: new Date().toISOString(), finishedAt: null,
+  };
+  res.json({ ok: true, status: 'processing', count });
+
+  (async () => {
+    try {
+      const md = await analyzeCompany(interviews, db);
+      if (!fs.existsSync(db.cmpOutDir)) fs.mkdirSync(db.cmpOutDir, { recursive: true });
+      fs.writeFileSync(path.join(db.cmpOutDir, 'optimization-report.md'), md);
+      job.done = true;
+    } catch (e) {
+      job.error = e.message || 'unknown error';
+      console.error('[company/analyze]', tid, '-', e.message);
+    } finally {
+      job.running = false;
+      job.finishedAt = new Date().toISOString();
+    }
+  })();
+});
+
+// Company-wide analysis status — admin + executive + manager
+tenantRouter.get('/api/company/analyze/status', requireRoles('admin', 'executive', 'manager'), (req, res) => {
+  const job = companyAnalyzeJobs[req.tenant.id]
+    || { running: false, done: false, error: null, count: 0, startedAt: null, finishedAt: null };
+  const hasReport = fs.existsSync(path.join(ctxDb().cmpOutDir, 'optimization-report.md'));
+  res.json({ ...job, hasReport });
 });
 
 // Download company-wide report — admin + executive + manager
