@@ -142,6 +142,20 @@
   </div>
 </div>
 
+<!-- Popup สถานะการวิเคราะห์ภาพรวม (background job + polling) -->
+<div id="analyze-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:9999; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:16px; padding:32px 28px; max-width:400px; width:90%; text-align:center; box-shadow:0 20px 50px rgba(0,0,0,.3);">
+    <div id="an-spinner" style="width:48px; height:48px; margin:0 auto 18px; border:4px solid #e0f2fe; border-top-color:#0284c7; border-radius:50%; animation:an-spin .9s linear infinite;"></div>
+    <div id="an-icon" style="display:none; font-size:46px; line-height:1; margin-bottom:10px;"></div>
+    <h2 id="an-title" style="margin:0 0 8px; font-size:20px; color:#0f172a;">กำลังวิเคราะห์...</h2>
+    <p id="an-sub" style="margin:0; color:#64748b; font-size:14px; line-height:1.6;">AI กำลังสรุปภาพรวมบริษัท<br>อาจใช้เวลาสักครู่ อย่าปิดหน้านี้</p>
+    <div id="an-actions" style="display:none; margin-top:18px; gap:8px; justify-content:center;">
+      <button type="button" class="ghost" id="an-close">ปิด</button>
+    </div>
+  </div>
+</div>
+<style>@keyframes an-spin{to{transform:rotate(360deg)}}</style>
+
 <script>
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
 const STATUS_LABEL = {
@@ -324,17 +338,124 @@ document.getElementById('view-list').addEventListener('click', () => { dashView 
 document.getElementById('dash-search').addEventListener('input', () => { renderList(); wireResets(); });
 document.getElementById('dash-status').addEventListener('change', () => { renderList(); wireResets(); });
 
-async function runAnalyze() {
+// ---- Popup สถานะการวิเคราะห์ (background job) ----
+const analyzeModal = document.getElementById('analyze-modal');
+function showAnalyze(state, opts = {}) {
+  analyzeModal.style.display = 'flex';
+  const sp = document.getElementById('an-spinner');
+  const ic = document.getElementById('an-icon');
+  const title = document.getElementById('an-title');
+  const sub = document.getElementById('an-sub');
+  const actions = document.getElementById('an-actions');
+  if (state === 'analyzing') {
+    sp.style.display = 'block'; ic.style.display = 'none'; actions.style.display = 'none';
+    title.textContent = 'กำลังวิเคราะห์...'; title.style.color = '#0f172a';
+    const cnt = opts.count != null ? ` (${opts.count} คน)` : '';
+    sub.innerHTML = `AI กำลังสรุปภาพรวมบริษัท${cnt}<br>อาจใช้เวลาสักครู่ อย่าปิดหน้านี้`;
+  } else if (state === 'success') {
+    sp.style.display = 'none'; ic.style.display = 'block'; ic.textContent = '✅'; actions.style.display = 'none';
+    title.textContent = 'วิเคราะห์เสร็จ!'; title.style.color = '#15803d';
+    sub.innerHTML = opts.count != null ? `สรุปภาพรวมเรียบร้อย — ${opts.count} คน` : 'สรุปภาพรวมเรียบร้อย';
+  } else { // error
+    sp.style.display = 'none'; ic.style.display = 'block'; ic.textContent = '⚠️'; actions.style.display = 'flex';
+    title.textContent = 'เกิดข้อผิดพลาด'; title.style.color = '#b91c1c';
+    sub.innerHTML = opts.msg || 'วิเคราะห์ไม่สำเร็จ ลองใหม่อีกครั้ง';
+  }
+}
+function hideAnalyze() { analyzeModal.style.display = 'none'; }
+document.getElementById('an-close').addEventListener('click', hideAnalyze);
+
+let analyzePolling = false;
+function setAnalyzeBtn(disabled) {
   const btn = document.getElementById('analyze-btn');
-  btn.disabled = true; btn.textContent = '⏳ กำลังวิเคราะห์...';
-  const r = await fetch(TBASE + '/api/company/analyze', { method: 'POST' });
-  const data = await r.json();
-  if (data.ok) { alert(`✓ วิเคราะห์เสร็จ — มี ${data.count} interview ที่ตอบครบ`); await load(); }
-  else { alert('ผิดพลาด: ' + (data.error || 'unknown')); }
-  btn.disabled = false; btn.textContent = '🔍 วิเคราะห์ภาพรวมบริษัท';
+  if (!btn) return;
+  btn.disabled = disabled;
+  btn.textContent = disabled ? '⏳ กำลังวิเคราะห์...' : '🔍 วิเคราะห์ภาพรวมบริษัท';
 }
 
-load();
+// วน poll สถานะจนกว่า job จะ done/error หรือหมดเวลา — ปุ่มรีเซ็ตเสมอไม่ว่าจบทางไหน
+async function pollAnalyze(count) {
+  if (analyzePolling) return;
+  analyzePolling = true;
+  setAnalyzeBtn(true);
+  showAnalyze('analyzing', { count });
+  let tries = 0;
+  const maxTries = 200; // ~10 นาที ที่ 3 วิ/ครั้ง (เผื่อวิเคราะห์คนเยอะบน server จริง)
+  const tick = async () => {
+    tries++;
+    let s;
+    try {
+      const r = await fetch(TBASE + '/api/company/analyze/status');
+      if (!r.ok) throw new Error('status ' + r.status);
+      s = await r.json();
+    } catch {
+      // network สะดุดชั่วคราว — ลองใหม่รอบหน้า ยังไม่ถือว่า fail
+      if (tries < maxTries) { setTimeout(tick, 3000); return; }
+      analyzePolling = false; setAnalyzeBtn(false);
+      showAnalyze('error', { msg: 'เชื่อมต่อไม่สำเร็จ — ตรวจอินเทอร์เน็ตแล้วลองใหม่' });
+      return;
+    }
+    if (typeof s.count === 'number') showAnalyze('analyzing', { count: s.count });
+    if (!s.running) {
+      analyzePolling = false; setAnalyzeBtn(false);
+      if (s.error) { showAnalyze('error', { msg: 'ผิดพลาด: ' + s.error }); return; }
+      if (s.done) {
+        showAnalyze('success', { count: s.count });
+        await load();  // โหลดรายงานล่าสุดมาแสดง
+        setTimeout(hideAnalyze, 1500);
+        return;
+      }
+      // ไม่ running และไม่ done/error (เช่นเพิ่งรีสตาร์ทเซิร์ฟเวอร์) — ปิด popup เฉย ๆ
+      hideAnalyze();
+      return;
+    }
+    if (tries >= maxTries) {
+      analyzePolling = false; setAnalyzeBtn(false);
+      showAnalyze('error', { msg: 'ใช้เวลานานเกินไป — งานอาจยังทำอยู่เบื้องหลัง ลองรีเฟรชหน้าอีกครั้งภายหลัง' });
+      return;
+    }
+    setTimeout(tick, 3000);
+  };
+  tick();
+}
+
+async function runAnalyze() {
+  if (analyzePolling) return;
+  setAnalyzeBtn(true);
+  let data;
+  try {
+    const r = await fetch(TBASE + '/api/company/analyze', { method: 'POST' });
+    data = await r.json().catch(() => ({}));
+    if (r.status === 409) {
+      // มี job กำลังทำอยู่แล้ว — เริ่ม poll ต่อ
+      pollAnalyze(data.job && data.job.count);
+      return;
+    }
+    if (!r.ok || !data.ok) {
+      setAnalyzeBtn(false);
+      showAnalyze('error', { msg: 'ผิดพลาด: ' + (data.error || 'unknown') });
+      return;
+    }
+  } catch {
+    setAnalyzeBtn(false);
+    showAnalyze('error', { msg: 'เชื่อมต่อไม่สำเร็จ — ตรวจอินเทอร์เน็ตแล้วลองใหม่' });
+    return;
+  }
+  pollAnalyze(data.count);
+}
+
+// ตอนโหลดหน้า ถ้ามี job running อยู่ ให้ resume popup + poll ต่อ (เผื่อผู้ใช้รีเฟรชระหว่างวิเคราะห์)
+async function resumeAnalyzeIfRunning() {
+  if (!['admin','executive','manager'].includes(ME?.role)) return;
+  try {
+    const r = await fetch(TBASE + '/api/company/analyze/status');
+    if (!r.ok) return;
+    const s = await r.json();
+    if (s.running) pollAnalyze(s.count);
+  } catch {}
+}
+
+load().then(resumeAnalyzeIfRunning);
 </script>
 </body>
 </html>

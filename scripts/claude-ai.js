@@ -108,7 +108,7 @@ function todayStr() {
 
 // Run a Claude message and return the concatenated text of the response.
 // Uses streaming + finalMessage() so long outputs never hit a request timeout.
-async function runClaude({ system, user, maxTokens = 8000 }) {
+async function runClaude({ system, user, maxTokens = 8000, label = '' }) {
   const client = getClient();
   if (!client) throw new Error('claude client unavailable');
 
@@ -125,6 +125,16 @@ async function runClaude({ system, user, maxTokens = 8000 }) {
 
   if (msg.stop_reason === 'refusal') {
     throw new Error('claude refused the request');
+  }
+
+  // Output ถูกตัดเพราะชนเพดาน max_tokens — ไม่ throw (คืน text เท่าที่ได้)
+  // แต่ warn ให้เห็นใน log เผื่อยังตันอีกจะได้รู้ว่าต้องขยับ maxTokens
+  if (msg.stop_reason === 'max_tokens') {
+    console.warn(
+      '[claude-ai] output truncated at max_tokens for label=' + (label || '?') +
+      ' maxTokens=' + maxTokens +
+      ' output_tokens=' + ((msg.usage && msg.usage.output_tokens) || '?')
+    );
   }
 
   const text = (msg.content || [])
@@ -289,7 +299,9 @@ async function generateDocuments(interview, opts = {}) {
     const { text, usage } = await runClaude({
       system: SYS_DOCS,
       user: buildEmployeeContext(interview),
-      maxTokens: 8000,
+      // เอกสารรายคน 3 ฉบับใน 1 คำตอบ — เพิ่มจาก 8000 เป็น 12000 กันตัดกรณีคนงานละเอียด
+      maxTokens: 12000,
+      label: 'documents:' + ((interview.employee && interview.employee.name) || '?'),
     });
     // Report token usage/cost even if parsing later fails — the tokens were spent.
     if (usage && typeof opts.onUsage === 'function') {
@@ -368,7 +380,10 @@ async function analyzeCompany(interviews, opts = {}) {
     const { text, usage } = await runClaude({
       system: SYS_COMPANY,
       user: buildCompanyContext(list),
-      maxTokens: 8000,
+      // รายงานภาพรวมองค์กร: คนเยอะ (เช่น 27 คน) รายงานยาวเกิน 8000 เลยถูกตัดกลางคัน
+      // ขยับเป็น 20000 ให้พอ + เผื่อ thinking(adaptive) กินงบโทเคนร่วมด้วย
+      maxTokens: 20000,
+      label: 'company:' + list.length + ' คน',
     });
     if (usage && typeof opts.onUsage === 'function') {
       try { opts.onUsage(usageRecord(usage)); } catch (_) {}
