@@ -185,9 +185,9 @@ async function loadReport() {
     </tr>`;
   }).join('');
   const table = `
-    <div style="display:flex; align-items:center; justify-content:space-between; margin:18px 0 8px; gap:10px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin:18px 0 8px; gap:10px; flex-wrap:wrap;">
       <div style="font-weight:500; display:flex; align-items:center; gap:6px;">📋 อัตราการบันทึกรายคน</div>
-      <button class="ghost" id="rp-csv" style="font-size:13px;">⬇️ ดาวน์โหลด CSV</button>
+      <button class="ghost" id="rp-csv" style="font-size:13px; white-space:nowrap;">⬇️ ดาวน์โหลด CSV</button>
     </div>
     <div style="overflow-x:auto;"><table class="rp-table">
       <thead><tr><th>ชื่อ</th><th style="width:74px; text-align:right;">ชั่วโมง</th><th style="width:150px; text-align:center;">วันทำงาน (บันทึก/ทั้งหมด)</th><th style="width:170px;">ความครบเฉลี่ย</th><th style="width:84px; text-align:center;">สถานะ</th></tr></thead>

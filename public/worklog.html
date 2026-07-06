@@ -124,8 +124,8 @@
         <div class="wl-prog-track"><div class="wl-prog-fill" id="wl-progress-fill"></div></div>
         <span id="wl-progress-pct" style="font-weight:600; color:#0284c7;">0%</span>
       </div>
-      <div style="display:flex; gap:8px;">
-        <select id="wl-leave" style="font-size:13px; width:auto; padding:7px 10px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <select id="wl-leave" style="font-size:13px; flex:1 1 200px; min-width:180px; max-width:100%; padding:7px 10px;">
           <option value="">🌴 ทำเครื่องหมายวันหยุด/ลา…</option>
           <option value="สลับวันหยุด">🔄 สลับวันหยุด (มาทำวันหยุด หยุดวันนี้แทน)</option>
           <option value="ลาพักร้อน">ลาพักร้อน</option>
@@ -133,7 +133,7 @@
           <option value="ลาป่วย">ลาป่วย</option>
           <option value="หยุด">หยุด (อื่นๆ)</option>
         </select>
-        <button class="ghost" id="wl-copy" style="font-size:13px;">📋 คัดลอกงานประจำจากเมื่อวาน</button>
+        <button class="ghost" id="wl-copy" style="font-size:13px; white-space:nowrap; flex:0 0 auto;">📋 คัดลอกงานประจำจากเมื่อวาน</button>
       </div>
     </div>
 
