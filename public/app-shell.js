@@ -33,7 +33,7 @@
     // iOS home-screen icon (uses the 192 PWA icon).
     if (!document.querySelector('link[rel="apple-touch-icon"]')) {
       var ai = document.createElement('link');
-      ai.rel = 'apple-touch-icon'; ai.href = '/icon-192.png';
+      ai.rel = 'apple-touch-icon'; ai.href = '/icon-192.png?v=2';
       document.head.appendChild(ai);
     }
     // Register the service worker (scope "/" covers every /t/<tid>/ page).

@@ -45,3 +45,4 @@ tmp-server.log
 # Temp files
 *.tmp
 .~lock.*
+_commitmsg.txt

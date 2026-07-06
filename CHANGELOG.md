@@ -2,6 +2,20 @@
 
 รูปแบบเวอร์ชันตาม [Semantic Versioning](https://semver.org/lang/th/)
 
+## [1.2.2] - 2026-07-06
+
+### เปลี่ยนโลโก้/ไอคอนแอปใหม่
+
+- เปลี่ยนรูปไอคอนของระบบทั้งชุด (favicon บนแท็บเบราว์เซอร์ + ไอคอนแอปบนมือถือ PWA) เป็นโลโก้ HR-Interview ใหม่: `logo.png`, `icon-192.png`, `icon-512.png`, `icon-maskable-512.png` (ไอคอน maskable ทำพื้นน้ำเงินเต็มสำหรับ Android)
+- เพิ่ม cache-busting ให้รูปใหม่แสดงทันทีหลัง deploy: ตั้ง `Cache-Control: no-cache` สำหรับไฟล์ `.png` ด้วย และติดเวอร์ชัน `?v=2` ให้ favicon ทุกหน้า + ไอคอนใน manifest + apple-touch-icon
+
+### สิ่งที่ต้องทำตอน Deploy
+> เวอร์ชันนี้ **ไม่มี dependency ใหม่** — ผู้ใช้บางคนอาจต้องปิด/เปิดแอปที่ติดตั้งบนมือถือใหม่ครั้งเดียวเพื่อให้ไอคอนแอปอัปเดต
+>
+> ```
+> cd /opt/hr-interview && git pull && npm install --omit=dev && pm2 restart hr-interview
+> ```
+
 ## [1.2.1] - 2026-07-04
 
 ### แก้บั๊ก "วิเคราะห์ภาพรวมบริษัท"

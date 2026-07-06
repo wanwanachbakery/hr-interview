@@ -732,9 +732,9 @@ app.disable('x-powered-by');
 app.use(express.json({ limit: '5mb' }));  // bumped for base64-encoded Excel uploads
 app.use(express.static(path.join(ROOT, 'public'), {
   setHeaders: (res, fp) => {
-    // Force revalidation of text assets so updated pages/scripts/styles show
-    // right after a deploy (avoids stale cached HTML/JS/CSS/Markdown/manifest/SW).
-    if (/\.(html|js|css|md|json|webmanifest)$/i.test(fp)) res.setHeader('Cache-Control', 'no-cache');
+    // Force revalidation of text assets + icons so updated pages/scripts/styles/logo
+    // show right after a deploy (avoids stale cached HTML/JS/CSS/Markdown/manifest/SW/PNG).
+    if (/\.(html|js|css|md|json|webmanifest|png)$/i.test(fp)) res.setHeader('Cache-Control', 'no-cache');
   },
 }));
 
@@ -1911,9 +1911,9 @@ tenantRouter.get('/manifest.webmanifest', (req, res) => {
     background_color: '#ffffff',
     lang: 'th',
     icons: [
-      { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-      { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-      { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      { src: '/icon-192.png?v=2', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/icon-512.png?v=2', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: '/icon-maskable-512.png?v=2', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     ],
   });
 });
