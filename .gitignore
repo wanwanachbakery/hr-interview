@@ -50,3 +50,4 @@ tmp-server.log
 *.tmp
 .~lock.*
 _commitmsg.txt
+_cm.txt
