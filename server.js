@@ -12,6 +12,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const xlsx = require('xlsx');
+const csv = require('./scripts/csv');   // serializer กลางสำหรับ CSV ฝั่ง server
 const ai = require('./scripts/mock-ai');
 // Real-Claude layer (Sonnet 4.6) for JD/KPI/Optimization + company report.
 // Safe to require even without the SDK/key — it lazily inits and falls back to
@@ -104,7 +105,9 @@ for (const d of [DATA_DIR, TENANT_DATA_DIR, OUTPUT_DIR, TENANT_OUTPUT_DIR, BACKU
 }
 const ensure = (p, def) => { if (!fs.existsSync(p)) fs.writeFileSync(p, def); };
 ensure(TENANTS_FILE, '[]');
-ensure(SUPER_AUTH_FILE, JSON.stringify({ master: 'super!2026' }, null, 2));
+// FIX 4 — super ที่สร้างด้วยรหัส default ต้องถูกบังคับเปลี่ยน (must_change:true).
+// migrateSuperAuth ด้านล่างจะ hash รหัสและ "คง" flag นี้ไว้.
+ensure(SUPER_AUTH_FILE, JSON.stringify({ master: 'super!2026', must_change: true }, null, 2));
 
 // Production hardening flag — when behind HTTPS proxy (Fly.io / Cloudflare),
 // set SECURE_COOKIES=true so cookies carry the Secure flag.
@@ -141,11 +144,57 @@ if (webpush) {
 const pushEnabled = () => !!(webpush && VAPID);
 
 // ---------- JSON helpers ----------
+// readJson แยกสองกรณีให้ชัด:
+//   1) ไฟล์ไม่มี  → คืน fallback เงียบ ๆ (พฤติกรรมปกติ เช่น ไฟล์ยังไม่ถูกสร้าง)
+//   2) ไฟล์มีอยู่แต่ parse/read ไม่ผ่าน → เตือนดัง ๆ + สำรองไฟล์เสียไว้ก่อน
+//      (กันข้อมูลที่อาจกู้ได้หายเมื่อ writeJson ทับทีหลัง) แล้วค่อยคืน fallback
 function readJson(file, fallback) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return fallback;   // ไฟล์ยังไม่มี = ปกติ
+    // อ่านไม่ได้ด้วยเหตุอื่น (permission ฯลฯ) — เตือนแล้วคืน fallback ห้าม throw
+    console.error(`[readJson] อ่านไฟล์ไม่สำเร็จ: ${file} — ${e.message}`);
+    return fallback;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error(`[readJson] ไฟล์เสีย/parse ไม่ผ่าน: ${file} — ${e.message}`);
+    // R2-2 — สำรองไฟล์เสีย "ครั้งเดียวต่อไฟล์": ภายใต้ FIX3 users.json ถูกอ่านทุก request
+    //         ถ้าไฟล์เสียเดิม copyFileSync ทุกครั้งจะสร้าง .corrupt-* ถล่มทลาย.
+    //         ก่อน copy จึงเช็คว่ามี <basename>.corrupt-* ของไฟล์นี้อยู่แล้วหรือยัง (prefix match).
+    try {
+      const dir = path.dirname(file);
+      const prefix = path.basename(file) + '.corrupt-';
+      const already = fs.readdirSync(dir).some(f => f.startsWith(prefix));
+      if (already) {
+        console.error(`[readJson] มีสำเนาไฟล์เสียของ ${path.basename(file)} อยู่แล้ว — ข้ามการสำรองซ้ำ`);
+      } else {
+        const bak = `${file}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+        fs.copyFileSync(file, bak);   // copy ไม่ใช่ rename — ต้นฉบับยังอยู่ให้กู้เพิ่มได้
+        console.error(`[readJson] สำรองไฟล์เสียไว้ที่: ${bak}`);
+      }
+    } catch (be) {
+      console.error(`[readJson] สำรองไฟล์เสียไม่สำเร็จ: ${be.message}`);
+    }
+    return fallback;
+  }
 }
+// writeJson แบบ atomic: เขียนลง temp ใน dir เดียวกันก่อน แล้ว rename ทับ (atomic บน
+// ระบบไฟล์เดียวกัน) — กันไฟล์พังครึ่ง ๆ กลาง ๆ ถ้าโปรเซสตายระหว่างเขียน
 function writeJson(file, obj) {
-  fs.writeFileSync(file, JSON.stringify(obj, null, 2));
+  const dir = path.dirname(file);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
+    fs.renameSync(tmp, file);   // atomic replace
+  } catch (e) {
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch {}   // เก็บกวาด temp ที่ค้าง
+    throw e;
+  }
 }
 function genId(prefix) {
   return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -169,7 +218,10 @@ function normalizeClaudeUsage(u) {
   if (!raw || typeof raw.master !== 'string') return;
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = crypto.scryptSync(String(raw.master), salt, 64).toString('hex');
-  writeJson(SUPER_AUTH_FILE, { master_salt: salt, master_hash: hash, migrated_at: new Date().toISOString() });
+  const out = { master_salt: salt, master_hash: hash, migrated_at: new Date().toISOString() };
+  if (raw.must_change) out.must_change = true;        // FIX 4 — คง flag บังคับเปลี่ยนรหัส
+  if (raw.tv != null) out.tv = Number(raw.tv) || 0;   // FIX 3 — คง token version ถ้ามี
+  writeJson(SUPER_AUTH_FILE, out);
   console.log('[migration] super-admin password hashed');
 })();
 
@@ -270,7 +322,11 @@ function initTenantFolder(tenantId, initialAdminPassword, companyName) {
     const pw = initialAdminPassword || 'WWN2026!Init';
     const salt = crypto.randomBytes(16).toString('hex');
     const hash = crypto.scryptSync(String(pw), salt, 64).toString('hex');
-    writeJson(db.files.auth, { master_salt: salt, master_hash: hash, created_at: new Date().toISOString() });
+    const authObj = { master_salt: salt, master_hash: hash, created_at: new Date().toISOString() };
+    // FIX 4 — ถ้าใช้รหัส default → บังคับเปลี่ยนตอนแอดมินเข้าใช้ครั้งแรก
+    // (ครอบทั้งกรณี caller ส่ง 'WWN2026!Init' มาตรง ๆ และกรณี default ในบรรทัดบน)
+    if (pw === 'WWN2026!Init') authObj.must_change = true;
+    writeJson(db.files.auth, authObj);
   }
   ensure(path.join(db.intDir, '.gitkeep'), '');
   return db;
@@ -340,6 +396,23 @@ function parseCookie(req, name) {
   const m = raw.match(re);
   return m ? decodeURIComponent(m[1]) : null;
 }
+// Build the signed payload for a named user's session (single source of truth so
+// login and token re-issue after a self password change stay identical, incl. tv).
+function userSessionPayload(u, tenantId) {
+  return {
+    user_id: u.id, username: u.username, name: u.name, role: u.role,
+    tenant_id: tenantId,
+    division_id: u.division_id || null,
+    section_id:  u.section_id  || null,
+    position_id: u.position_id || null,
+    scope_override: u.scope_override || null,
+    tv: Number(u.tv || 0),     // FIX 3 — token version (missing = 0)
+    exp: Date.now() + 7*24*3600*1000,
+  };
+}
+function setAuthCookie(res, req, token) {
+  res.setHeader('Set-Cookie', `auth=${token}; Path=${req.tbase}; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=${7*24*3600}`);
+}
 
 // ---------- tenant-scoped middleware (used inside tenantRouter) ----------
 const PUBLIC_PATHS = new Set([
@@ -354,6 +427,11 @@ function isPublicRequest(req) {
   if (req.method === 'GET' && req.path === '/manifest.webmanifest') return true;
   return false;
 }
+// helper: ปฏิเสธ session (401 สำหรับ API, redirect ไป login สำหรับหน้าเว็บ)
+function rejectAuth(req, res) {
+  if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'unauthorized' });
+  return res.redirect(req.tbase + '/login');
+}
 function authMiddleware(req, res, next) {
   if (isPublicRequest(req)) return next();
   const token = parseCookie(req, 'auth');
@@ -361,8 +439,22 @@ function authMiddleware(req, res, next) {
   // Server-side tenant isolation: a token carries its tenant_id and we reject
   // it if it doesn't match the URL's tenant. Belt-and-braces with cookie Path.
   if (!session || session.tenant_id !== req.tenant.id) {
-    if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'unauthorized' });
-    return res.redirect(req.tbase + '/login');
+    return rejectAuth(req, res);
+  }
+  // FIX 3 — token revocation ผ่าน token version (tv).
+  // "ไม่มี tv = 0" เสมอ → token/ผู้ใช้เดิมที่ยังไม่มี field นี้ต้องยังผ่าน (0===0).
+  // เทียบ tv ในโทเคนกับค่าปัจจุบันของ identity; ไม่ตรง = สิทธิ์/รหัสถูกเปลี่ยน → ปฏิเสธ.
+  const tokenTv = Number(session.tv || 0);
+  if (session.user_id) {
+    // named user — เทียบกับ user.tv (และถ้า lookup ไม่เจอ = ถูกลบ → ปฏิเสธ)
+    const u = req.db.users().find(x => x.id === session.user_id);
+    if (!u) return rejectAuth(req, res);
+    if (Number(u.tv || 0) !== tokenTv) return rejectAuth(req, res);
+  } else {
+    // master admin (ไม่มี user_id) — เทียบกับ auth.tv ของ tenant
+    const auth = req.db.auth() || {};
+    req._tenantAuth = auth;   // R2-1 — เก็บไว้ให้ mustChangeGate ใช้ต่อ (เลี่ยงอ่าน auth.json ซ้ำ)
+    if (Number(auth.tv || 0) !== tokenTv) return rejectAuth(req, res);
   }
   req.session = session;
   next();
@@ -760,6 +852,28 @@ tenantRouter.use((req, res, next) => {
 });
 tenantRouter.use(authMiddleware);
 
+// ---------- R2-1 — Server-side gate: บังคับเปลี่ยนรหัส default ก่อนใช้งาน ----------
+// ปิดช่องโหว่ H-1 ให้จริง: modal ฝั่ง client บล็อก UI ได้อย่างเดียว แต่ session ที่
+// ล็อกอินด้วยรหัส default ยังยิง API ตรงได้ → ต้อง gate ที่เซิร์ฟเวอร์ด้วย.
+// ครอบเฉพาะ tenant admin (role==='admin') ที่ auth.must_change===true เท่านั้น
+// (named user ทั่วไปไม่มี must_change → ผ่านปกติ). บล็อกทุก path ที่ขึ้นต้น /api/
+// ยกเว้น allowlist (เปลี่ยนรหัส/เช็คสถานะ/logout) มิฉะนั้นจะล็อกแอดมินออกจากระบบเอง.
+// static/HTML (admin.html + css/js) ไม่ได้ขึ้นต้น /api/ → โหลดได้ตามปกติ.
+const TENANT_MUST_CHANGE_ALLOW = new Set([
+  'PUT /api/admin/auth',   // เปลี่ยนรหัส master (เคลียร์ flag)
+  'GET /api/admin/auth',   // เช็คสถานะ must_change (modal เรียก)
+  'POST /api/logout',      // ออกจากระบบ
+]);
+tenantRouter.use((req, res, next) => {
+  const s = req.session;
+  if (!s || s.role !== 'admin') return next();          // เฉพาะ tenant admin เท่านั้น
+  if (!req.path.startsWith('/api/')) return next();      // static/HTML ผ่านหมด
+  const auth = req._tenantAuth || req.db.auth() || {};   // reuse ค่าที่ authMiddleware อ่านแล้ว
+  if (!auth.must_change) return next();                  // เปลี่ยนรหัสแล้ว → ใช้งานได้ปกติ
+  if (TENANT_MUST_CHANGE_ALLOW.has(req.method + ' ' + req.path)) return next();
+  return res.status(403).json({ error: 'ต้องเปลี่ยนรหัสผ่านเริ่มต้นก่อนใช้งาน', code: 'must_change' });
+});
+
 // ---------- Login rate limit (in-memory; resets on restart) ----------
 // 10 failed attempts in 5 minutes → block that IP for 2 minutes.
 // (Kept lenient on purpose: legit users mistype; the block is short so a real
@@ -827,7 +941,14 @@ tenantRouter.post('/api/login', (req, res) => {
       return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
     }
     rlOk(ip);
-    const token = signToken({ role: 'admin', username: 'admin', tenant_id: req.tenant.id, exp: Date.now() + 7*24*3600*1000 });
+    // FIX 4 — ตรวจตอน login ว่ายังใช้รหัส default อยู่ไหม (มี plaintext ตรงนี้เท่านั้น).
+    // ถ้าใช่ → ตั้ง must_change เพื่อบังคับเปลี่ยนก่อนใช้งาน (ไม่แตะ tv, ไม่ทำให้ token
+    // ที่เพิ่งออกใช้ไม่ได้). คนที่เปลี่ยนรหัสไปแล้วจะไม่เข้าเงื่อนไขนี้ → ไม่โดน modal.
+    if (password === 'WWN2026!Init' && !auth.must_change) {
+      auth.must_change = true;
+      ctxDb().saveAuth(auth);
+    }
+    const token = signToken({ role: 'admin', username: 'admin', tenant_id: req.tenant.id, tv: Number(auth.tv || 0), exp: Date.now() + 7*24*3600*1000 });
     res.setHeader('Set-Cookie', `auth=${token}; Path=${req.tbase}; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=${7*24*3600}`);
     return res.json({ ok: true, role: 'admin', name: 'ผู้ดูแลระบบ' });
   }
@@ -840,17 +961,8 @@ tenantRouter.post('/api/login', (req, res) => {
     return res.status(401).json({ error: 'username หรือรหัสผ่านไม่ถูกต้อง' });
   }
   rlOk(ip);
-  const payload = {
-    user_id: u.id, username: u.username, name: u.name, role: u.role,
-    tenant_id: req.tenant.id,  // bind session to this tenant — auth middleware verifies match
-    division_id: u.division_id || null,
-    section_id:  u.section_id  || null,
-    position_id: u.position_id || null,
-    scope_override: u.scope_override || null,
-    exp: Date.now() + 7*24*3600*1000,
-  };
-  const token = signToken(payload);
-  res.setHeader('Set-Cookie', `auth=${token}; Path=${req.tbase}; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=${7*24*3600}`);
+  const token = signToken(userSessionPayload(u, req.tenant.id));
+  setAuthCookie(res, req, token);
   res.json({ ok: true, role: u.role, name: u.name });
 });
 
@@ -1185,6 +1297,10 @@ tenantRouter.put('/api/users/:id', requireAdmin, (req, res) => {
   if (!u) return res.status(404).json({ error: 'not found' });
 
   const prevPositionId = u.position_id;
+  const prevRole = u.role;
+  const prevDivision = u.division_id || null;
+  const prevSection = u.section_id || null;
+  const prevScopeOverride = u.scope_override || null;
   const body = req.body || {};
   const next = {
     role: body.role ?? u.role,
@@ -1219,6 +1335,17 @@ tenantRouter.put('/api/users/:id', requireAdmin, (req, res) => {
     u.scope_override = u.role === 'manager' ? (body.scope_override || null) : null;
   } else if (u.role !== 'manager') {
     u.scope_override = null;
+  }
+  // FIX 3 — bump token version เมื่อรหัส/role/scope เปลี่ยน → token เดิมของ user นี้
+  // (ทุกอุปกรณ์) จะโดน 401 ทันที. actor คือ master admin (ไม่ใช่ user นี้) จึงไม่ต้อง
+  // re-issue token ใคร.
+  const scopeChanged = prevRole !== u.role
+    || prevDivision !== (u.division_id || null)
+    || prevSection !== (u.section_id || null)
+    || prevPositionId !== u.position_id
+    || prevScopeOverride !== (u.scope_override || null);
+  if (body.password || scopeChanged) {
+    u.tv = Number(u.tv || 0) + 1;
   }
   u.updated_at = new Date().toISOString();
   save.users(list);
@@ -1274,9 +1401,13 @@ tenantRouter.put('/api/me/profile', (req, res) => {
     const salt = crypto.randomBytes(16).toString('hex');
     u.password_salt = salt;
     u.password_hash = hashPassword(password, salt);
+    // FIX 3 — เปลี่ยนรหัสตัวเอง → bump tv (invalidate session อื่น ๆ ของตัวเอง)
+    // แต่ re-issue token ให้ session ปัจจุบันด้วย จะได้ไม่ถูกเด้งออกทันที.
+    u.tv = Number(u.tv || 0) + 1;
   }
   u.updated_at = new Date().toISOString();
   save.users(list);
+  if (password) setAuthCookie(res, req, signToken(userSessionPayload(u, req.tenant.id)));
   res.json(stripSecret(u));
 });
 
@@ -1348,14 +1479,22 @@ tenantRouter.get('/api/reports/summary', (req, res) => {
 // Hash is never returned — only confirm whether one is set.
 tenantRouter.get('/api/admin/auth', requireAdmin, (req, res) => {
   const a = load.auth();
-  res.json({ master_set: !!(a.master_hash || a.master), updated_at: a.migrated_at || a.updated_at || null });
+  // FIX 4 — must_change บอกหน้า admin ว่าต้องบังคับตั้งรหัสใหม่ (ยังใช้ default อยู่)
+  res.json({ master_set: !!(a.master_hash || a.master), must_change: !!a.must_change, updated_at: a.migrated_at || a.updated_at || null });
 });
 tenantRouter.put('/api/admin/auth', requireAdmin, (req, res) => {
   const { master } = req.body || {};
   if (!master || String(master).length < 6) return res.status(400).json({ error: 'master ต้องยาวอย่างน้อย 6 ตัวอักษร' });
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = crypto.scryptSync(String(master), salt, 64).toString('hex');
-  ctxDb().saveAuth({ master_salt: salt, master_hash: hash, updated_at: new Date().toISOString() });
+  // FIX 3 — bump tv (invalidate token admin เดิมทุกตัว) · FIX 4 — เคลียร์ must_change
+  // (object ใหม่ไม่มี must_change = ถือว่าเปลี่ยนรหัสแล้ว).
+  const prev = load.auth() || {};
+  const newTv = Number(prev.tv || 0) + 1;
+  ctxDb().saveAuth({ master_salt: salt, master_hash: hash, tv: newTv, updated_at: new Date().toISOString() });
+  // re-issue token ให้ admin คนที่เพิ่งเปลี่ยน (session ปัจจุบัน) จะได้ไม่ถูกเด้งออก
+  const token = signToken({ role: 'admin', username: 'admin', tenant_id: req.tenant.id, tv: newTv, exp: Date.now() + 7*24*3600*1000 });
+  setAuthCookie(res, req, token);
   res.json({ ok: true });
 });
 
@@ -1774,7 +1913,9 @@ tenantRouter.get('/api/interview/:id/finish-status', (req, res) => {
 // Daily hourly work log (บันทึกงานประจำวัน) — self-service per user
 // ============================================================
 const WORKLOG_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const todayLocal = () => new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD
+// "วันนี้" ต้องยึด Asia/Bangkok เสมอ ไม่พึ่ง TZ ของเซิร์ฟเวอร์ (nowBangkok เป็น
+// function declaration ด้านล่าง → hoist ได้). ป้องกันบั๊กขอบวันเมื่อ server รันบน UTC.
+const todayLocal = () => nowBangkok().dateStr; // YYYY-MM-DD (Asia/Bangkok)
 
 // ---- Holidays (company calendar) ----------------------------------------
 // weekly: array of weekday numbers 0=Sun..6=Sat that are weekly days off.
@@ -2157,9 +2298,11 @@ function worklogDateRange(from, to) {
   return out;
 }
 
-// Aggregated worklog report over a date range for the viewer's team
-tenantRouter.get('/api/worklog/report', (req, res) => {
-  if (req.session.role === 'officer') return res.json({ applicable: false });
+// Aggregated worklog report over a date range for the viewer's team.
+// แยกออกมาเป็นฟังก์ชัน เพื่อให้ทั้ง JSON และ CSV ใช้ scope/where เดียวกัน (กันยอด
+// รั่วข้าม user ระหว่าง list กับ export).
+function computeWorklogReport(req) {
+  if (req.session.role === 'officer') return { applicable: false };
   const today = todayLocal();
   let to = String(req.query.to || '').trim();
   let from = String(req.query.from || '').trim();
@@ -2232,7 +2375,7 @@ tenantRouter.get('/api/worklog/report', (req, res) => {
     .map(([category, count]) => ({ category, count, pct: totTasks ? Math.round((count / totTasks) * 100) : 0 }))
     .sort((a, b) => b.count - a.count);
 
-  res.json({
+  return {
     applicable: true, from, to, dayCount: dates.length, workDays,
     totals: {
       filledHours: totFilledHours,
@@ -2242,7 +2385,33 @@ tenantRouter.get('/api/worklog/report', (req, res) => {
     },
     byCategory: byCat,
     members,
-  });
+  };
+}
+
+// JSON report (หน้า list)
+tenantRouter.get('/api/worklog/report', (req, res) => {
+  res.json(computeWorklogReport(req));
+});
+
+// CSV report — สร้างฝั่ง server ผ่าน serializer กลาง (formula-injection safe).
+// ใช้ computeWorklogReport ตัวเดียวกับ JSON → scope/row-level ตรงกันเป๊ะ.
+tenantRouter.get('/api/worklog/report/csv', (req, res) => {
+  const rep = computeWorklogReport(req);
+  if (rep.applicable === false) return res.status(403).json({ error: 'forbidden' }); // officer
+  const STATUS_TH = { good: 'ดี', ok: 'พอใช้', low: 'ต่ำ', none: 'ยังไม่บันทึก' };
+  const head = ['ชื่อ', 'ตำแหน่ง', 'ฝ่าย', 'แผนก', 'ชั่วโมงบันทึก', 'วันบันทึก', 'วันทำงานที่คาดหวัง', 'วันลา/หยุด', 'วันขาด', 'ความครบเฉลี่ย%', 'สถานะ'];
+  const rows = [head].concat((rep.members || []).map(m => [
+    m.name, m.position_name, m.division_name, m.section_name,
+    m.filledHours,
+    (m.loggedDays != null ? m.loggedDays : m.daysLogged),
+    (m.expectedDays != null ? m.expectedDays : ''),
+    (m.leaveDays || 0), (m.missingDays || 0),
+    m.avgCompleteness, (STATUS_TH[m.status] || STATUS_TH.none),
+  ]));
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', csv.contentDisposition(`worklog-report_${rep.from}_${rep.to}.csv`));
+  res.send(csv.toCsv(rows));
 });
 
 // Interview JSON — read access via canViewEmployee so hierarchy can inspect subordinates'
@@ -2534,14 +2703,28 @@ tenantRouter.get('/api/admin/import/template/users', requireAdmin, (req, res) =>
   sendWorkbook(res, 'template-users.xlsx', wb);
 });
 
-// Parse uploaded Excel: base64 in req.body.file → array of row objects (uses first sheet)
+// Parse uploaded Excel: base64 in req.body.file → array of row objects (uses first sheet).
+// จำกัดขนาด/จำนวนแถวก่อน parse เพื่อกันไฟล์ใหญ่/ReDoS (เทมเพลตจริงเล็กมาก).
+const MAX_XLSX_BYTES = 2 * 1024 * 1024;   // 2MB (decoded)
+const MAX_XLSX_ROWS = 5000;
 function parseUploadedXlsx(req) {
   const b64 = (req.body || {}).file;
   if (!b64) throw new Error('ไม่พบไฟล์');
   const buf = Buffer.from(b64, 'base64');
+  if (buf.length > MAX_XLSX_BYTES) throw new Error('ไฟล์ใหญ่เกินไป (จำกัด 2MB)');
   const wb = xlsx.read(buf, { type: 'buffer' });
   const sheet = wb.Sheets[wb.SheetNames[0]];
-  return xlsx.utils.sheet_to_json(sheet, { defval: '' });
+  if (!sheet) throw new Error('ไม่พบข้อมูลในไฟล์');
+  // ตรวจจำนวนแถวจาก !ref ก่อนแปลงเป็น JSON (กันไฟล์แถวมหาศาล)
+  if (sheet['!ref']) {
+    const range = xlsx.utils.decode_range(sheet['!ref']);
+    if ((range.e.r - range.s.r + 1) > MAX_XLSX_ROWS) {
+      throw new Error(`ไฟล์มีข้อมูลมากเกินไป (จำกัด ${MAX_XLSX_ROWS} แถว)`);
+    }
+  }
+  const rows = xlsx.utils.sheet_to_json(sheet, { defval: '' });
+  if (rows.length > MAX_XLSX_ROWS) throw new Error(`ไฟล์มีข้อมูลมากเกินไป (จำกัด ${MAX_XLSX_ROWS} แถว)`);
+  return rows;
 }
 
 // Import org structure (Add only — skip duplicates by name within parent)
@@ -2776,10 +2959,14 @@ function writeSuperAuth(o) { writeJson(SUPER_AUTH_FILE, o); }
 function parseSuperSession(req) {
   const token = parseCookie(req, 'super_auth');
   const s = verifyToken(token);
-  return s?.role === 'super' ? s : null;
+  if (s?.role !== 'super') return null;
+  // FIX 3 — เทียบ tv กับ _super_auth ปัจจุบัน (missing = 0) → เปลี่ยนรหัส super แล้ว
+  // token เดิมทุกตัวใช้ไม่ได้.
+  if (Number((readSuperAuth() || {}).tv || 0) !== Number(s.tv || 0)) return null;
+  return s;
 }
 function requireSuperAdmin(req, res, next) {
-  const s = parseSuperSession(req);
+  const s = req.superSession || parseSuperSession(req);   // reuse ถ้า mustChangeGate parse ไว้แล้ว
   if (!s) {
     if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'เฉพาะผู้ดูแลระดับสูง (Super Admin)' });
     return res.redirect('/super/login');
@@ -2787,6 +2974,26 @@ function requireSuperAdmin(req, res, next) {
   req.superSession = s;
   next();
 }
+
+// ---------- R2-1 — Server-side gate: บังคับเปลี่ยนรหัส super default ก่อนใช้งาน ----------
+// เหมือน tenant gate แต่ฝั่ง super: super ที่ _super_auth.must_change===true จะถูกบล็อก
+// ทุก /api/super/* ยกเว้น allowlist. วางก่อน super route ทั้งหมด (app.use ครอบ /api/super).
+// req.path ที่นี่ตัด prefix '/api/super' ออกแล้ว → allowlist ใช้ subpath ล้วน.
+// (super HTML pages เช่น /super/login ไม่ได้ขึ้นต้น /api/super → ไม่โดน gate → โหลดได้).
+const SUPER_MUST_CHANGE_ALLOW = new Set([
+  'PUT /password',   // เปลี่ยนรหัส super (เคลียร์ flag)
+  'GET /me',         // เช็คสถานะ must_change (modal เรียก)
+  'POST /logout',    // ออกจากระบบ
+]);
+app.use('/api/super', (req, res, next) => {
+  const s = req.superSession || parseSuperSession(req);
+  if (!s) return next();                                 // ไม่มี session (รวม /login) → ให้ route/guard ตอบเอง
+  req.superSession = s;                                  // reuse ต่อใน requireSuperAdmin
+  const sa = readSuperAuth() || {};
+  if (!sa.must_change) return next();                    // เปลี่ยนรหัสแล้ว → ใช้งานได้ปกติ
+  if (SUPER_MUST_CHANGE_ALLOW.has(req.method + ' ' + req.path)) return next();
+  return res.status(403).json({ error: 'ต้องเปลี่ยนรหัสผ่านเริ่มต้นก่อนใช้งาน', code: 'must_change' });
+});
 
 app.post('/api/super/login', (req, res) => {
   const ip = req.ip || 'unknown';
@@ -2806,7 +3013,12 @@ app.post('/api/super/login', (req, res) => {
   }
   if (!ok) { rlFail(ip); return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' }); }
   rlOk(ip);
-  const token = signToken({ role: 'super', exp: Date.now() + 7*24*3600*1000 });
+  // FIX 4 — ยังใช้รหัส default super อยู่ไหม (มี plaintext ตรงนี้) → บังคับเปลี่ยน
+  if (password === 'super!2026' && !auth.must_change) {
+    auth.must_change = true;
+    writeSuperAuth(auth);
+  }
+  const token = signToken({ role: 'super', tv: Number(auth.tv || 0), exp: Date.now() + 7*24*3600*1000 });
   res.setHeader('Set-Cookie', `super_auth=${token}; Path=/; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=${7*24*3600}`);
   res.json({ ok: true });
 });
@@ -2816,7 +3028,8 @@ app.post('/api/super/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/super/me', requireSuperAdmin, (req, res) => res.json({ role: 'super' }));
+app.get('/api/super/me', requireSuperAdmin, (req, res) =>
+  res.json({ role: 'super', must_change: !!(readSuperAuth() || {}).must_change }));
 
 // List tenants — enriched with user count
 app.get('/api/super/tenants', requireSuperAdmin, (req, res) => {
@@ -2927,7 +3140,11 @@ app.post('/api/super/tenants/:id/reset-admin-password', requireSuperAdmin, (req,
   const db = tenantDb(req.params.id);
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = hashPassword(password, salt);
-  db.saveAuth({ master_salt: salt, master_hash: hash, updated_at: new Date().toISOString() });
+  // FIX 3 — bump tv → invalidate token admin เดิมของ tenant นี้ (super ตั้งรหัสให้ใหม่)
+  const prev = db.auth() || {};
+  const newTv = Number(prev.tv || 0) + 1;
+  // R2-3 — super เป็นคนตั้งรหัสนี้ (super รู้ค่า) → บังคับ tenant admin เปลี่ยนก่อนใช้งาน
+  db.saveAuth({ master_salt: salt, master_hash: hash, tv: newTv, must_change: true, updated_at: new Date().toISOString() });
   res.json({ ok: true });
 });
 
@@ -2937,7 +3154,13 @@ app.put('/api/super/password', requireSuperAdmin, (req, res) => {
   if (!password || password.length < 6) return res.status(400).json({ error: 'รหัสใหม่ต้องยาวอย่างน้อย 6 ตัว' });
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = hashPassword(password, salt);
-  writeSuperAuth({ master_salt: salt, master_hash: hash, updated_at: new Date().toISOString() });
+  // FIX 3 — bump tv (invalidate super token เดิมทุกตัว) · FIX 4 — เคลียร์ must_change
+  const prev = readSuperAuth() || {};
+  const newTv = Number(prev.tv || 0) + 1;
+  writeSuperAuth({ master_salt: salt, master_hash: hash, tv: newTv, updated_at: new Date().toISOString() });
+  // re-issue super token ให้ session ปัจจุบันไม่หลุด
+  const token = signToken({ role: 'super', tv: newTv, exp: Date.now() + 7*24*3600*1000 });
+  res.setHeader('Set-Cookie', `super_auth=${token}; Path=/; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=${7*24*3600}`);
   res.json({ ok: true });
 });
 
@@ -3201,8 +3424,7 @@ if (process.env.BACKUP_TEST_MODE === '1') {
 } else {
   app.listen(PORT, () => {
     console.log(`\n🚀 HR-Interview (multi-tenant) running at http://localhost:${PORT}\n`);
-    console.log(`   super-admin login → http://localhost:${PORT}/super/login`);
-    console.log(`   default password   → super!2026 (change after first login)\n`);
+    console.log(`   super-admin login → http://localhost:${PORT}/super/login\n`);
 
     startReminderScheduler();   // hourly worklog push reminders (no-op if web-push missing)
     startBackupScheduler();     // whole-system auto-backup (no-op unless enabled in settings)

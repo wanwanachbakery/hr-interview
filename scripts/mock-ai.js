@@ -13,6 +13,8 @@
  *   listSchedules(lang)          -> [{id, label}]  // for UI
  */
 
+const csv = require('./csv');   // serializer กลาง (formula-injection safe)
+
 const pad = (n) => String(n).padStart(2, '0');
 
 // Format a date as DD/MM/YYYY HH:MM in Christian Era (ค.ศ.), not Buddhist Era.
@@ -562,14 +564,8 @@ function buildWorkflowCsv(interview) {
     for (const w of weekly) rows.push(['รายสัปดาห์/เดือน', w, '', '', 'ไม่ใช่ทุกวัน', '']);
   }
 
-  const esc = s => {
-    const str = String(s ?? '');
-    if (str.includes('"') || str.includes(',') || str.includes('\n')) {
-      return '"' + str.replace(/"/g, '""') + '"';
-    }
-    return str;
-  };
-  return '\ufeff' + rows.map(r => r.map(esc).join(',')).join('\n');
+  // \u0e43\u0e0a\u0e49 serializer \u0e01\u0e25\u0e32\u0e07: BOM + CRLF + RFC-4180 + prefix \u0e01\u0e31\u0e19 formula injection
+  return csv.toCsv(rows);
 }
 
 function buildDiagramMd(interview) {

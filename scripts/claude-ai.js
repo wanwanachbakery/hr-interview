@@ -99,11 +99,13 @@ function trunc(s, n) {
   return str.length > n ? str.slice(0, n) + '…' : str;
 }
 
-// Today in YYYY-MM-DD (Christian Era), from the server clock — passed into the
-// prompts so Claude never has to guess/hallucinate the document date.
+// Today in YYYY-MM-DD (Christian Era) anchored to Asia/Bangkok — passed into the
+// prompts so Claude never has to guess/hallucinate the document date (and never
+// drifts a day when the server runs on UTC).
 function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
 }
 
 // Run a Claude message and return the concatenated text of the response.
