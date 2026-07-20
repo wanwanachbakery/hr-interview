@@ -1,0 +1,13 @@
+audit ทั้งระบบ + แก้ความปลอดภัย/ความทนทาน 6 จุด (v1.3.0)
+
+- FIX1 timezone: todayLocal ใช้ Asia/Bangkok (nowBangkok) ทุกจุด กันบันทึกงานเพี้ยนบน UTC
+- FIX2 atomic write (temp+rename) + fail-loud readJson (สำรอง .corrupt ครั้งเดียว)
+- FIX3 token revocation ผ่าน token version (tv) + re-issue cookie ตัวเอง (backward-compatible)
+- FIX4 บังคับเปลี่ยนรหัส default ทั้ง client + server gate (must_change) + ลบ log รหัส default
+- FIX5 CSV formula-injection defense: serializer กลาง scripts/csv.js + endpoint /api/worklog/report/csv
+- FIX6 xlsx 0.18.5 -> 0.20.3 (ปิด CVE) + จำกัดขนาด/แถวไฟล์อัปโหลด
+- QC: reviewer + tester + security ผ่าน (ทดสอบสด + regression 145+ เคส)
+
+Deploy: มี dependency ใหม่ (xlsx) -> ต้อง npm install + เข้าถึง cdn.sheetjs.com
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>

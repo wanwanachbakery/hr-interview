@@ -213,6 +213,52 @@ async function logout() {
 }
 
 load();
+
+// FIX 4 — บังคับเปลี่ยนรหัส super ถ้ายังใช้รหัสเริ่มต้น (must_change=true).
+// แสดงเฉพาะเมื่อ must_change เท่านั้น → เปลี่ยนแล้วจะไม่เห็น modal นี้.
+(async function enforceSuperChange() {
+  let d;
+  try { const r = await fetch('/api/super/me'); if (!r.ok) return; d = await r.json(); }
+  catch { return; }
+  if (!d || !d.must_change) return;
+  const ov = document.createElement('div');
+  ov.id = 'must-change-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;';
+  ov.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+      <div style="font-size:22px;font-weight:700;margin-bottom:6px;">🔐 ตั้งรหัสผ่าน Super Admin ใหม่</div>
+      <p style="color:#475569;font-size:14px;margin:0 0 16px;">บัญชีนี้ยังใช้รหัสผ่านเริ่มต้นอยู่ เพื่อความปลอดภัยต้องตั้งรหัสใหม่ก่อนใช้งานระบบ</p>
+      <input id="mc-pw1" type="password" placeholder="รหัสผ่านใหม่ (อย่างน้อย 6 ตัวอักษร)" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;box-sizing:border-box;margin-bottom:10px;"/>
+      <input id="mc-pw2" type="password" placeholder="ยืนยันรหัสผ่านใหม่" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;box-sizing:border-box;margin-bottom:6px;"/>
+      <div id="mc-err" style="color:#b91c1c;font-size:13px;min-height:18px;margin-bottom:10px;"></div>
+      <button id="mc-save" style="width:100%;padding:11px;border:none;border-radius:8px;background:#2563eb;color:#fff;font-size:15px;font-weight:600;cursor:pointer;">บันทึกรหัสใหม่</button>
+    </div>`;
+  document.body.appendChild(ov);
+  document.body.style.overflow = 'hidden';
+  const err = ov.querySelector('#mc-err');
+  const btn = ov.querySelector('#mc-save');
+  btn.addEventListener('click', async () => {
+    const p1 = ov.querySelector('#mc-pw1').value;
+    const p2 = ov.querySelector('#mc-pw2').value;
+    err.textContent = '';
+    if (p1.length < 6) { err.textContent = 'รหัสต้องยาวอย่างน้อย 6 ตัวอักษร'; return; }
+    if (p1 !== p2) { err.textContent = 'รหัสผ่านทั้งสองช่องไม่ตรงกัน'; return; }
+    if (p1 === 'super!2026') { err.textContent = 'ห้ามใช้รหัสเริ่มต้น'; return; }
+    btn.disabled = true; btn.textContent = 'กำลังบันทึก…';
+    try {
+      const r = await fetch('/api/super/password', {
+        method: 'PUT', headers: {'content-type':'application/json'},
+        body: JSON.stringify({ password: p1 }),
+      });
+      const d2 = await r.json().catch(() => ({}));
+      if (!r.ok) { err.textContent = d2.error || 'บันทึกไม่สำเร็จ'; btn.disabled = false; btn.textContent = 'บันทึกรหัสใหม่'; return; }
+      ov.remove(); document.body.style.overflow = '';
+      alert('ตั้งรหัสผ่านใหม่เรียบร้อย');
+    } catch {
+      err.textContent = 'เกิดข้อผิดพลาด'; btn.disabled = false; btn.textContent = 'บันทึกรหัสใหม่';
+    }
+  });
+})();
 </script>
 </body>
 </html>
