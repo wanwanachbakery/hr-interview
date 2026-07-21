@@ -24,6 +24,7 @@
     <nav>
       <a href="/super">👑 จัดการบริษัท</a>
       <a href="/super/backup">💾 สำรองข้อมูล</a>
+      <a href="#" onclick="document.getElementById('audit-card').scrollIntoView({behavior:'smooth'});loadAudit();return false;">📜 บันทึกการใช้งาน</a>
       <a href="#" onclick="changePassword();return false;">🔑 เปลี่ยนรหัส Super-admin</a>
       <a href="/worklog">📝 บันทึกงาน</a>
       <a href="/worklog-team">👥 บันทึกงานทีม</a>
@@ -45,6 +46,27 @@
       <button class="ghost">เปิดหน้าสำรองข้อมูล →</button>
     </div>
   </a>
+
+  <!-- Group-exec account management -->
+  <div class="card" id="ge-card" style="border-left:4px solid #7c3aed;">
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:240px;">
+        <strong style="color:#6d28d9;">📊 บัญชีผู้บริหารกลุ่ม (Group Exec)</strong>
+        <div class="sub" style="font-size:13px; margin-top:2px;">
+          บัญชีเดียวใช้ร่วม — เห็น <b>เฉพาะรายงานสรุป/ภาพรวมของทุกบริษัท</b> แบบอ่านอย่างเดียว
+          (dashboard สรุป, บันทึกงาน, โครงสร้างองค์กร, รายงานภาพรวม) ·
+          <b>ไม่เห็น</b>คำตอบสัมภาษณ์รายคน / บันทึกงานรายคน / ค่าใช้จ่าย AI ·
+          เข้าใช้ที่ <span class="url-pill" id="ge-url">/exec</span>
+        </div>
+        <div class="sub" style="font-size:13px; margin-top:8px;">สถานะ: <span id="ge-status">กำลังโหลด…</span></div>
+      </div>
+      <div class="tenant-actions">
+        <button class="ghost" onclick="setGroupExecPw()">🔑 ตั้ง/รีเซ็ตรหัส</button>
+        <button class="ghost" style="color:#b91c1c;" onclick="disableGroupExec()">⛔ ปิดใช้งาน</button>
+        <a href="/exec" target="_blank"><button class="ghost">เปิดหน้าผู้บริหารกลุ่ม ↗</button></a>
+      </div>
+    </div>
+  </div>
 
   <!-- Create -->
   <div class="card">
@@ -72,6 +94,29 @@
   <!-- List -->
   <h2>📋 บริษัทที่มีอยู่ <span id="tenant-count" class="sub" style="font-size:14px;"></span></h2>
   <div id="tenant-list"></div>
+
+  <!-- System audit log -->
+  <style>
+    #audit-card table { width:100%; border-collapse:collapse; font-size:13px; }
+    #audit-card th, #audit-card td { text-align:left; padding:7px 9px; border-bottom:1px solid #eef2f7; vertical-align:top; }
+    #audit-card th { background:#f8fafc; color:#475569; font-weight:600; white-space:nowrap; }
+    #audit-card td.mono { font-family:monospace; font-size:12px; }
+    #audit-card .a-ok { color:#166534; }
+    #audit-card .a-fail { color:#b91c1c; }
+    #audit-card .a-wrap { overflow-x:auto; }
+  </style>
+  <div class="card" id="audit-card" style="margin-top:24px; border-top:4px solid #475569;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h2 style="margin:0;">📜 บันทึกการใช้งานระบบ (Audit)</h2>
+        <p class="sub" style="margin:4px 0 0;">เหตุการณ์ระดับระบบ: login super, สร้าง/ลบบริษัท, รีเซ็ต/เปลี่ยนรหัส, สำรอง/กู้คืนทั้งระบบ — ใหม่สุดอยู่บน</p>
+      </div>
+      <button class="ghost" onclick="loadAudit()">↻ รีเฟรช</button>
+    </div>
+    <div class="a-wrap" style="margin-top:12px;">
+      <div id="audit-list"><div class="empty">กด “รีเฟรช” เพื่อโหลดบันทึก</div></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -212,7 +257,83 @@ async function logout() {
   location.href = '/super/login';
 }
 
+// ---------- Group-exec account ----------
+async function loadGroupExec() {
+  const el = document.getElementById('ge-status');
+  document.getElementById('ge-url').textContent = location.origin + '/exec';
+  let d;
+  try { const r = await fetch('/api/super/group-exec'); if (!r.ok) throw 0; d = await r.json(); }
+  catch { el.textContent = 'โหลดสถานะไม่สำเร็จ'; return; }
+  if (!d.enabled) {
+    el.innerHTML = '<span class="pill gray">ปิดใช้งาน</span> — ตั้งรหัสเพื่อเปิดใช้';
+  } else if (d.must_change) {
+    el.innerHTML = '<span class="pill blue">เปิดใช้งาน</span> · <span style="color:#a16207;">รอผู้บริหารกลุ่มตั้งรหัสใหม่ (must change)</span>';
+  } else {
+    el.innerHTML = '<span class="pill green">เปิดใช้งาน</span> · พร้อมใช้';
+  }
+}
+async function setGroupExecPw() {
+  const pw = prompt('ตั้ง/รีเซ็ตรหัสบัญชีผู้บริหารกลุ่ม (อย่างน้อย 6 ตัว):\n\nผู้บริหารกลุ่มจะถูกบังคับให้เปลี่ยนรหัสนี้เมื่อเข้าใช้ครั้งแรก');
+  if (!pw) return;
+  if (pw.length < 6) { alert('รหัสต้องยาวอย่างน้อย 6 ตัว'); return; }
+  const r = await fetch('/api/super/group-exec/password', {
+    method: 'PUT', headers: {'content-type':'application/json'},
+    body: JSON.stringify({ password: pw }),
+  });
+  if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (e.error || 'unknown')); return; }
+  alert('✓ ตั้งรหัสเรียบร้อย — แจ้งผู้บริหารกลุ่มว่ารหัสชั่วคราวคือ: ' + pw + '\n(เข้าใช้ที่ ' + location.origin + '/exec แล้วตั้งรหัสใหม่)');
+  loadGroupExec();
+}
+async function disableGroupExec() {
+  if (!confirm('ปิดใช้งานบัญชีผู้บริหารกลุ่ม?\n\nผู้ที่ล็อกอินอยู่จะถูกตัดออกทันที ต้องตั้งรหัสใหม่จึงจะเปิดใช้ได้อีก')) return;
+  const r = await fetch('/api/super/group-exec/disable', { method: 'POST', headers: {'content-type':'application/json'}, body: '{}' });
+  if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ผิดพลาด: ' + (e.error || 'unknown')); return; }
+  alert('✓ ปิดใช้งานเรียบร้อย');
+  loadGroupExec();
+}
+
+// ---------- System audit log ----------
+const AUDIT_LABEL = {
+  'login.success':'เข้าสู่ระบบ (super)', 'login.fail':'เข้าสู่ระบบล้มเหลว (super)',
+  'tenant.create':'สร้างบริษัท', 'tenant.delete':'ลบบริษัท',
+  'password.change':'เปลี่ยนรหัสผ่าน', 'password.reset':'รีเซ็ตรหัสผ่าน',
+  'backup.create':'สำรองข้อมูล', 'backup.delete':'ลบไฟล์สำรอง', 'backup.restore':'กู้คืนข้อมูล',
+  'group_exec.password.set':'ตั้งรหัสผู้บริหารกลุ่ม', 'group_exec.disable':'ปิดบัญชีผู้บริหารกลุ่ม',
+  'group_exec.view':'ผู้บริหารกลุ่มเข้าดูรายงาน',
+};
+function auditActor(a) {
+  if (!a) return '-';
+  const who = a.username || a.user_id || '';
+  return (a.role || '') + (who ? ' · ' + who : '');
+}
+async function loadAudit() {
+  const box = document.getElementById('audit-list');
+  box.innerHTML = '<div class="empty">กำลังโหลด…</div>';
+  let items;
+  try { const r = await fetch('/api/super/audit?limit=200'); if (!r.ok) throw 0; items = (await r.json()).items || []; }
+  catch { box.innerHTML = '<div class="empty">โหลดบันทึกไม่สำเร็จ</div>'; return; }
+  if (!items.length) { box.innerHTML = '<div class="empty">ยังไม่มีบันทึก</div>'; return; }
+  const rows = items.map(it => {
+    const when = it.ts_bkk ? esc(it.ts_bkk.replace('T',' ').replace('+07:00','')) : '';
+    const act = esc(AUDIT_LABEL[it.action] || it.action || '');
+    const cls = it.result === 'fail' ? 'a-fail' : 'a-ok';
+    const res = it.result === 'fail' ? 'ล้มเหลว' : 'สำเร็จ';
+    return `<tr>
+      <td class="mono">${when}</td>
+      <td>${act}</td>
+      <td>${esc(auditActor(it.actor))}</td>
+      <td class="mono">${esc(it.target || '')}</td>
+      <td class="${cls}">${res}</td>
+      <td class="mono">${esc(it.ip || '')}</td>
+    </tr>`;
+  }).join('');
+  box.innerHTML = `<table>
+    <thead><tr><th>เวลา (ไทย)</th><th>เหตุการณ์</th><th>ผู้ทำ</th><th>เป้าหมาย</th><th>ผล</th><th>IP</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
 load();
+loadGroupExec();
 
 // FIX 4 — บังคับเปลี่ยนรหัส super ถ้ายังใช้รหัสเริ่มต้น (must_change=true).
 // แสดงเฉพาะเมื่อ must_change เท่านั้น → เปลี่ยนแล้วจะไม่เห็น modal นี้.

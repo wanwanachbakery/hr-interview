@@ -116,6 +116,7 @@ async function loadList() {
       </div>
       <div class="bk-actions">
         <a href="/api/super/backup/download?file=${encodeURIComponent(it.file)}"><button class="ghost">⬇ ดาวน์โหลด</button></a>
+        <button class="ghost" style="color:#b45309;" onclick="sysRestore('${esc(it.file)}')">♻ กู้คืน</button>
         <button class="ghost" style="color:#b91c1c;" onclick="del('${esc(it.file)}')">🗑 ลบ</button>
       </div>
     </div>
@@ -133,6 +134,47 @@ async function createNow() {
     else { msg.style.color = '#166534'; msg.textContent = `✓ สำรองสำเร็จ: ${d.file} (${fmtSize(d.size)}) — อย่าลืมดาวน์โหลดไปเก็บนอกเซิร์ฟเวอร์`; loadList(); }
   } catch { msg.style.color = '#b91c1c'; msg.textContent = '✗ เกิดข้อผิดพลาด'; }
   finally { btn.disabled = false; btn.textContent = orig; }
+}
+
+// ---------- Restore ทั้งระบบ — destructive: ต้องพิมพ์ RESTORE ยืนยัน ----------
+function sysRestore(file) {
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;';
+  ov.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:480px;width:100%;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+      <div style="font-size:20px;font-weight:700;margin-bottom:6px;color:#b45309;">♻ กู้คืนข้อมูลทั้งระบบ</div>
+      <p style="color:#334155;font-size:14px;margin:0 0 8px;">กำลังจะกู้คืนทั้งเซิร์ฟเวอร์จากไฟล์:<br><strong style="font-family:monospace;">${esc(file)}</strong></p>
+      <div class="warn-box" style="margin:0 0 12px;">
+        ⚠️ <strong>จะเขียนทับข้อมูลปัจจุบันทั้งหมด (ทุกบริษัท + การตั้งค่าระบบ)</strong> ด้วยข้อมูลในไฟล์สำรอง — ระบบจะสร้างไฟล์สำรองของสถานะปัจจุบันให้อัตโนมัติก่อนกู้ (กู้กลับได้ถ้าผิดพลาด)
+      </div>
+      <label style="font-size:13px;color:#475569;">พิมพ์ <code>RESTORE</code> เพื่อยืนยัน:</label>
+      <input id="rs-confirm" autocomplete="off" placeholder="RESTORE" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;box-sizing:border-box;margin:6px 0 10px;"/>
+      <div id="rs-err" style="color:#b91c1c;font-size:13px;min-height:18px;margin-bottom:10px;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="ghost" id="rs-cancel">ยกเลิก</button>
+        <button id="rs-go" style="background:#b45309;color:#fff;border:none;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer;">กู้คืนทั้งระบบ</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector('#rs-cancel').addEventListener('click', close);
+  const err = ov.querySelector('#rs-err');
+  const go = ov.querySelector('#rs-go');
+  go.addEventListener('click', async () => {
+    if (ov.querySelector('#rs-confirm').value.trim() !== 'RESTORE') { err.textContent = 'ต้องพิมพ์ RESTORE ให้ตรง'; return; }
+    go.disabled = true; go.textContent = '⏳ กำลังกู้คืน…'; err.textContent = '';
+    try {
+      const r = await fetch('/api/super/backup/restore', {
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ filename: file, confirm: 'RESTORE' }),
+      });
+      const d = await r.json().catch(()=>({}));
+      if (!r.ok) { err.textContent = d.error || 'กู้คืนไม่สำเร็จ'; go.disabled = false; go.textContent = 'กู้คืนทั้งระบบ'; return; }
+      close();
+      alert('✓ กู้คืนทั้งระบบเรียบร้อย' + (d.safety_backup ? `\n\nสำรองสถานะเดิมไว้ที่: ${d.safety_backup}` : ''));
+      loadList();
+    } catch { err.textContent = 'เกิดข้อผิดพลาด'; go.disabled = false; go.textContent = 'กู้คืนทั้งระบบ'; }
+  });
 }
 
 async function del(file) {
