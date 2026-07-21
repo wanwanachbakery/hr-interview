@@ -66,6 +66,37 @@ async function generateDocuments(interview, db) {
   }
   return ai.generateDocuments(interview);
 }
+
+// ---------- Analysis version history (snapshot before overwrite) ----------
+// เก็บผลวิเคราะห์เวอร์ชันก่อนหน้าไว้ก่อนเขียนทับ — ทั้งเอกสารรายคนและรายงานภาพรวมบริษัท
+function archiveStamp() {
+  const b = nowBangkok();                         // Asia/Bangkok (function declaration → hoisted)
+  const p = n => String(n).padStart(2, '0');
+  return `${b.dateStr}_${p(b.hour)}-${p(b.minute)}-${p(b.second)}-${crypto.randomBytes(2).toString('hex')}`;
+}
+function stampLabel(stamp) {                       // 'YYYY-MM-DD_HH-MM-SS-xxxx' → 'DD/MM/YYYY HH:MM'
+  const m = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})/.exec(String(stamp || ''));
+  return m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}` : String(stamp || '');
+}
+function archivePersonDocs(outDir) {              // สำรองเอกสารรายคนปัจจุบัน → <outDir>/_history/<stamp>/
+  try {
+    if (!fs.existsSync(outDir)) return;
+    const files = fs.readdirSync(outDir).filter(f => { try { return fs.statSync(path.join(outDir, f)).isFile(); } catch { return false; } });
+    if (!files.length) return;
+    const hist = path.join(outDir, '_history', archiveStamp());
+    fs.mkdirSync(hist, { recursive: true });
+    for (const f of files) fs.copyFileSync(path.join(outDir, f), path.join(hist, f));
+  } catch (e) { console.error('[history] archivePersonDocs:', e.message); }
+}
+function archiveCompanyReport(cmpOutDir) {        // สำรองรายงานภาพรวมปัจจุบัน → <cmpOutDir>/_history/
+  try {
+    const cur = path.join(cmpOutDir, 'optimization-report.md');
+    if (!fs.existsSync(cur)) return;
+    const hist = path.join(cmpOutDir, '_history');
+    fs.mkdirSync(hist, { recursive: true });
+    fs.copyFileSync(cur, path.join(hist, `optimization-report-${archiveStamp()}.md`));
+  } catch (e) { console.error('[history] archiveCompanyReport:', e.message); }
+}
 async function analyzeCompany(interviews, db) {
   if (db && claudeOnForTenant(db)) {
     try {
@@ -1845,6 +1876,7 @@ tenantRouter.post('/api/admin/reanalyze-all', requireAdmin, (req, res) => {
         }
         const outDir = path.join(db.outDir, emp.id);
         if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+        archivePersonDocs(outDir);                 // เก็บเวอร์ชันเก่าก่อนสร้างทับ
         const docs = await generateDocuments(iv, db);
         for (const [n, content] of Object.entries(docs)) fs.writeFileSync(path.join(outDir, n), content);
         job.done++;
@@ -1863,6 +1895,7 @@ tenantRouter.post('/api/admin/reanalyze-all', requireAdmin, (req, res) => {
       if (interviews.length) {
         const md = await analyzeCompany(interviews, db);
         if (!fs.existsSync(db.cmpOutDir)) fs.mkdirSync(db.cmpOutDir, { recursive: true });
+        archiveCompanyReport(db.cmpOutDir);        // เก็บเวอร์ชันเก่าก่อนสร้างทับ
         fs.writeFileSync(path.join(db.cmpOutDir, 'optimization-report.md'), md);
       }
     } catch (e) { console.error('[reanalyze-all] company report:', e.message); }
@@ -2153,6 +2186,7 @@ tenantRouter.post('/api/interview/:id/finish', (req, res) => {
       }
       const outDir = path.join(db.outDir, iv.id);
       if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+      archivePersonDocs(outDir);                   // เก็บเวอร์ชันเก่าก่อนสร้างทับ
       const docs = await generateDocuments(iv, db);
       for (const [name, content] of Object.entries(docs)) {
         fs.writeFileSync(path.join(outDir, name), content);
@@ -2787,6 +2821,7 @@ tenantRouter.post('/api/company/analyze', requireRoles('admin', 'executive', 'ma
     try {
       const md = await analyzeCompany(interviews, db);
       if (!fs.existsSync(db.cmpOutDir)) fs.mkdirSync(db.cmpOutDir, { recursive: true });
+      archiveCompanyReport(db.cmpOutDir);          // เก็บเวอร์ชันเก่าก่อนสร้างทับ
       fs.writeFileSync(path.join(db.cmpOutDir, 'optimization-report.md'), md);
       job.done = true;
     } catch (e) {
@@ -2805,6 +2840,62 @@ tenantRouter.get('/api/company/analyze/status', requireRoles('admin', 'executive
     || { running: false, done: false, error: null, count: 0, startedAt: null, finishedAt: null };
   const hasReport = fs.existsSync(path.join(ctxDb().cmpOutDir, 'optimization-report.md'));
   res.json({ ...job, hasReport });
+});
+
+// ---------- Analysis version history (ดูผลวิเคราะห์เวอร์ชันเก่า) ----------
+// literal routes ต้อง register ก่อน param routes (/:id/:file) — ลำดับสำคัญ (standards §1)
+const HIST_STAMP_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9a-f]{4}$/;
+const HIST_FILE_RE = /^[A-Za-z0-9._-]+$/;
+// company report history — รายการเวอร์ชัน
+tenantRouter.get('/api/outputs/_company/history', requireRoles('admin', 'executive', 'manager'), (req, res) => {
+  const dir = path.join(ctxDb().cmpOutDir, '_history');
+  let versions = [];
+  try {
+    if (fs.existsSync(dir)) {
+      versions = fs.readdirSync(dir).filter(f => f.endsWith('.md')).map(f => {
+        const stamp = (f.match(/optimization-report-(.+)\.md$/) || [])[1] || f;
+        let size = 0; try { size = fs.statSync(path.join(dir, f)).size; } catch {}
+        return { file: f, stamp, label: stampLabel(stamp), size };
+      }).sort((a, b) => b.stamp.localeCompare(a.stamp));
+    }
+  } catch (e) { console.error('[history] company list:', e.message); }
+  res.json({ versions });
+});
+// company report history — เปิด/ดาวน์โหลดเวอร์ชันที่เลือก
+tenantRouter.get('/api/outputs/_company/history/:file', requireRoles('admin', 'executive', 'manager'), (req, res) => {
+  const file = req.params.file;
+  if (!HIST_FILE_RE.test(file)) return res.status(400).send('bad filename');
+  const p = path.join(ctxDb().cmpOutDir, '_history', file);
+  if (!fs.existsSync(p)) return res.status(404).send('not found');
+  res.sendFile(p);
+});
+// per-employee doc history — รายการเวอร์ชัน (แต่ละเวอร์ชันมีเอกสารครบชุด)
+tenantRouter.get('/api/outputs/:id/history', (req, res) => {
+  const emp = load.employees().find(e => e.id === req.params.id);
+  if (!canViewEmployee(req.session, emp)) return res.status(403).send('forbidden');
+  const safeId = String(req.params.id).replace(/[^a-zA-Z0-9_]/g, '');
+  const dir = path.join(ctxDb().outDir, safeId, '_history');
+  let versions = [];
+  try {
+    if (fs.existsSync(dir)) {
+      versions = fs.readdirSync(dir).filter(s => { try { return fs.statSync(path.join(dir, s)).isDirectory(); } catch { return false; } }).map(stamp => {
+        let files = []; try { files = fs.readdirSync(path.join(dir, stamp)).filter(f => { try { return fs.statSync(path.join(dir, stamp, f)).isFile(); } catch { return false; } }); } catch {}
+        return { stamp, label: stampLabel(stamp), files };
+      }).sort((a, b) => b.stamp.localeCompare(a.stamp));
+    }
+  } catch (e) { console.error('[history] person list:', e.message); }
+  res.json({ versions });
+});
+// per-employee doc history — เปิด/ดาวน์โหลดเอกสารในเวอร์ชันที่เลือก
+tenantRouter.get('/api/outputs/:id/history/:stamp/:file', (req, res) => {
+  const { id, stamp, file } = req.params;
+  if (!HIST_STAMP_RE.test(stamp) || !HIST_FILE_RE.test(file)) return res.status(400).send('bad path');
+  const emp = load.employees().find(e => e.id === id);
+  if (!canViewEmployee(req.session, emp)) return res.status(403).send('forbidden');
+  const safeId = String(id).replace(/[^a-zA-Z0-9_]/g, '');
+  const p = path.join(ctxDb().outDir, safeId, '_history', stamp, file);
+  if (!fs.existsSync(p)) return res.status(404).send('not found');
+  res.sendFile(p);
 });
 
 // Download company-wide report — admin + executive + manager
