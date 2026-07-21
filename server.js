@@ -4,7 +4,8 @@
  *
  * Phase 1+2: Per-user accounts, 5-tier RBAC, full org tree
  *   Company -> Divisions (ฝ่าย) -> Sections (แผนก) -> Positions (ตำแหน่ง)
- *   Roles: admin, executive, manager, division_head, section_head, officer
+ *   Roles: admin, executive, manager, division_head, section_head, supervisor, officer
+ *   ('supervisor' = หัวหน้างาน: ดูเจ้าหน้าที่ในแผนกตัวเองแบบ read-only, ใต้ section_head)
  */
 const express = require('express');
 const fs = require('fs');
@@ -583,8 +584,9 @@ function canView(session, target) {
   if (r === 'division_head') {
     return !!target.division_id && target.division_id === myDiv;
   }
-  if (r === 'section_head') {
-    // Own section (and anything carrying our section_id — positions/emps in it)
+  if (r === 'section_head' || r === 'supervisor') {
+    // section_head + supervisor(หัวหน้างาน) เห็น scope เดียวกัน (แผนกตัวเอง) — ต่างกันที่
+    // supervisor แก้ไขไม่ได้ (canEdit คืน false). Own section (and anything carrying our section_id)
     if (target.section_id && target.section_id === mySec) return true;
     // Parent division — only when target is "about" a division (no section_id specified).
     // Lets the dashboard render the parent ฝ่าย so the tree has a root.
@@ -607,7 +609,7 @@ function canEdit(session, target) {
   if (!session) return false;
   const r = session.role;
   if (r === 'admin' || r === 'executive') return true;
-  if (r === 'officer') return false;
+  if (r === 'officer' || r === 'supervisor') return false;   // supervisor(หัวหน้างาน) = read-only
   if (r === 'manager') {
     if (target.division_id && target.division_id === session.division_id) return true;
     const ov = session.scope_override || {};
@@ -1220,7 +1222,7 @@ tenantRouter.get('/api/positions/:id/history', (req, res) => {
 });
 
 // ---------- Users ----------
-const ROLES = ['executive', 'manager', 'division_head', 'section_head', 'officer'];
+const ROLES = ['executive', 'manager', 'division_head', 'section_head', 'supervisor', 'officer'];
 const stripSecret = ({ password_hash, password_salt, ...rest }) => rest;
 
 tenantRouter.get('/api/users', requireAdmin, (req, res) => {
@@ -2636,6 +2638,7 @@ function buildReferenceSheet({ includeRoles }) {
     rows.push(['manager', 'ผู้จัดการ']);
     rows.push(['division_head', 'หัวหน้าฝ่าย']);
     rows.push(['section_head', 'หัวหน้าแผนก']);
+    rows.push(['supervisor', 'หัวหน้างาน']);
     rows.push(['officer', 'เจ้าหน้าที่']);
     rows.push(['']);
   }
@@ -2784,6 +2787,7 @@ const ROLE_ALIASES = {
   'manager': 'manager',         'ผู้จัดการ': 'manager',
   'division_head': 'division_head', 'หัวหน้าฝ่าย': 'division_head',
   'section_head': 'section_head',   'หัวหน้าแผนก': 'section_head',
+  'supervisor': 'supervisor',   'หัวหน้างาน': 'supervisor',
   'officer': 'officer',         'เจ้าหน้าที่': 'officer',
 };
 tenantRouter.post('/api/admin/import/users', requireAdmin, (req, res) => {
