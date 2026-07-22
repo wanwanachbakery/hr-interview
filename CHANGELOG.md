@@ -2,6 +2,20 @@
 
 รูปแบบเวอร์ชันตาม [Semantic Versioning](https://semver.org/lang/th/)
 
+## [1.4.1] - 2026-07-22
+
+### เสริมความปลอดภัย + ops (ทำได้เองระหว่างรอเพิ่มวงเงิน)
+
+- **Security headers** ทุก response: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` (กัน clickjacking/ฝัง iframe), `Referrer-Policy: strict-origin-when-cross-origin` — ตามที่ audit ชี้ (ยังไม่ใส่ CSP scriptSrc เต็ม เพราะหน้าเว็บยังใช้ inline script; เป็น backlog งานใหญ่ที่ต้องรื้อ inline ก่อน)
+- **Health check endpoint** `GET /healthz` (สาธารณะ ไม่ต้องล็อกอิน) คืน `{ok, service, uptime_sec}` — ไว้ให้ระบบ monitoring/Cloudflare เช็กว่าเซิร์ฟเวอร์ยังทำงาน ไม่เผยข้อมูลลับ
+
+### สิ่งที่ต้องทำตอน Deploy
+> ไม่มี dependency ใหม่
+>
+> ```
+> cd /opt/hr-interview && git pull && npm install --omit=dev && pm2 restart hr-interview
+> ```
+
 ## [1.4.0] - 2026-07-22
 
 ### บัญชีผู้บริหารกลุ่ม + กู้คืนข้อมูล + Audit log + ประวัติผลวิเคราะห์

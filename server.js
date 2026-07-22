@@ -1101,6 +1101,22 @@ const app = express();
 // reflect the real client, not 127.0.0.1.
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+
+// Security headers (safe subset). ไม่ใส่ CSP scriptSrc เต็ม เพราะหน้าเว็บยังใช้ inline
+// <script>/onclick อยู่ (การใส่ CSP เข้มต้องรื้อ inline ก่อน = backlog งานใหญ่).
+// nosniff + กัน clickjacking (DENY) + จำกัด referrer — ปลอดภัย ไม่ทำหน้าเดิมพัง.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
+// Health check (public, no auth) — สำหรับ uptime monitoring; ไม่เผยข้อมูลลับ
+app.get('/healthz', (req, res) => {
+  res.json({ ok: true, service: 'hr-interview', uptime_sec: Math.round(process.uptime()) });
+});
+
 app.use(express.json({ limit: '5mb' }));  // bumped for base64-encoded Excel uploads
 app.use(express.static(path.join(ROOT, 'public'), {
   setHeaders: (res, fp) => {
