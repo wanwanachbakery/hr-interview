@@ -301,7 +301,9 @@ function openEdit(id) {
   f.role.value = u.role;
   populateSelects();
   f.division_id.value = u.division_id || '';
+  fillSections();                              // เติมแผนกของฝ่ายนี้
   f.section_id.value  = u.section_id  || '';
+  fillPositions();                             // เติมตำแหน่งของแผนกนี้
   f.position_id.value = u.position_id || '';
   f.work_start.value = u.work_start;
   f.work_end.value   = u.work_end;
@@ -317,20 +319,30 @@ function closeModal() {
   document.getElementById('form-err').style.display = 'none';
 }
 
+// แผนก/ตำแหน่ง เลือกได้เฉพาะของ "ฝ่าย/แผนก" ที่เลือกไว้ (cascade เข้ม — ยังไม่เลือกพ่อ = ยังไม่มีให้เลือก)
+function fillSections() {
+  const did = document.getElementById('sel-div').value;
+  const sSel = document.getElementById('sel-sec');
+  const cur = sSel.value;
+  const opts = did ? SECS.filter(s => s.division_id === did) : [];
+  const ph = did ? '<option value="">— ไม่ระบุ —</option>' : '<option value="">— เลือกฝ่ายก่อน —</option>';
+  sSel.innerHTML = ph + opts.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  sSel.value = opts.some(s => s.id === cur) ? cur : '';
+  fillPositions();
+}
+function fillPositions() {
+  const sid = document.getElementById('sel-sec').value;
+  const pSel = document.getElementById('sel-pos');
+  const cur = pSel.value;
+  const opts = sid ? POSS.filter(p => p.section_id === sid) : [];
+  const ph = sid ? '<option value="">— ไม่ระบุ —</option>' : '<option value="">— เลือกแผนกก่อน —</option>';
+  pSel.innerHTML = ph + opts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  pSel.value = opts.some(p => p.id === cur) ? cur : '';
+}
 function populateSelects() {
   const dSel = document.getElementById('sel-div');
-  const sSel = document.getElementById('sel-sec');
-  const pSel = document.getElementById('sel-pos');
   dSel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + DIVS.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
-  sSel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + SECS.map(s => {
-    const div = DIVS.find(x => x.id === s.division_id);
-    return `<option value="${s.id}">${esc(s.name)} (${esc(div?.name || '?')})</option>`;
-  }).join('');
-  pSel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + POSS.map(p => {
-    const sec = SECS.find(x => x.id === p.section_id);
-    const div = sec ? DIVS.find(x => x.id === sec.division_id) : null;
-    return `<option value="${p.id}">${esc(p.name)} (${esc(sec?.name || '?')} / ${esc(div?.name || '?')})</option>`;
-  }).join('');
+  fillSections();   // แผนก/ตำแหน่ง เริ่มว่างจนกว่าจะเลือกฝ่าย
 }
 
 function populateOverride(divIds, secIds, posIds) {
@@ -359,25 +371,9 @@ function onRoleChange() {
 }
 document.getElementById('role-select').addEventListener('change', onRoleChange);
 
-// Auto-narrow section dropdown to selected division (UX nicety)
-document.getElementById('sel-div').addEventListener('change', () => {
-  const did = document.getElementById('sel-div').value;
-  const sSel = document.getElementById('sel-sec');
-  const cur = sSel.value;
-  const opts = SECS.filter(s => !did || s.division_id === did);
-  sSel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + opts.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
-  if (opts.some(s => s.id === cur)) sSel.value = cur;
-  // cascade to positions
-  document.getElementById('sel-sec').dispatchEvent(new Event('change'));
-});
-document.getElementById('sel-sec').addEventListener('change', () => {
-  const sid = document.getElementById('sel-sec').value;
-  const pSel = document.getElementById('sel-pos');
-  const cur = pSel.value;
-  const opts = POSS.filter(p => !sid || p.section_id === sid);
-  pSel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + opts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
-  if (opts.some(p => p.id === cur)) pSel.value = cur;
-});
+// เลือกฝ่าย → กรองแผนกเฉพาะในฝ่ายนั้น → เลือกแผนก → กรองตำแหน่งเฉพาะในแผนกนั้น
+document.getElementById('sel-div').addEventListener('change', fillSections);
+document.getElementById('sel-sec').addEventListener('change', fillPositions);
 
 // --- Submit ---
 document.getElementById('user-form').addEventListener('submit', async e => {
