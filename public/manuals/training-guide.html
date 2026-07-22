@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>คู่มือสอนการใช้งาน | HR-Interview</title>
+<style>
+  :root{
+    --brand:#1D5EF0; --brand-d:#1743b0; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0;
+    --bg:#f1f5f9; --card:#ffffff; --ok:#16a34a; --warn:#b45309; --warnbg:#fef3c7;
+    --tipbg:#eff6ff; --tipbd:#bfdbfe;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Segoe UI",Tahoma,"Sarabun",system-ui,sans-serif; line-height:1.65; font-size:16px;}
+  .wrap{max-width:900px; margin:0 auto; padding:0 16px 60px;}
+  header.hero{background:linear-gradient(135deg,var(--brand),#0ea5e9); color:#fff; padding:34px 16px; text-align:center;}
+  header.hero h1{margin:0 0 6px; font-size:30px;}
+  header.hero p{margin:0; opacity:.95;}
+  .toolbar{position:sticky; top:0; z-index:20; background:#fff; border-bottom:1px solid var(--line);
+    display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:space-between; padding:10px 16px;}
+  .toolbar .t-title{font-weight:700; color:var(--brand-d);}
+  .btn{background:var(--brand); color:#fff; border:0; border-radius:9px; padding:9px 16px; font-size:15px; cursor:pointer;}
+  .btn:hover{background:var(--brand-d);}
+  h2.sec{font-size:23px; margin:34px 0 4px; padding-top:10px; border-top:3px solid var(--brand); color:var(--brand-d);}
+  h3{font-size:19px; margin:26px 0 8px;}
+  h4{font-size:16px; margin:18px 0 6px; color:var(--brand-d);}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px 22px; margin:14px 0; box-shadow:0 1px 2px rgba(0,0,0,.03);}
+  .lead{color:var(--muted); margin:2px 0 14px;}
+  ul,ol{padding-left:22px;} li{margin:4px 0;}
+  .tip,.warn,.note{border-radius:10px; padding:12px 15px; margin:12px 0; font-size:15px;}
+  .tip{background:var(--tipbg); border:1px solid var(--tipbd);}
+  .warn{background:var(--warnbg); border:1px solid #fcd34d; color:#7c4a03;}
+  .note{background:#f0fdf4; border:1px solid #bbf7d0; color:#166534;}
+  table{width:100%; border-collapse:collapse; margin:12px 0; font-size:15px;}
+  th,td{border:1px solid var(--line); padding:9px 11px; text-align:left; vertical-align:top;}
+  th{background:#f8fafc; color:#334155;}
+  .steps{list-style:none; padding:0; margin:14px 0; counter-reset:st;}
+  .steps>li{position:relative; padding:12px 14px 12px 52px; margin:10px 0; background:#f8fafc; border:1px solid var(--line); border-radius:10px;}
+  .steps>li::before{counter-increment:st; content:counter(st); position:absolute; left:12px; top:12px;
+    width:28px; height:28px; background:var(--brand); color:#fff; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:15px;}
+  .pill{display:inline-block; font-size:12px; font-weight:600; padding:2px 10px; border-radius:999px; margin:2px 4px 2px 0;}
+  .p-exec{background:#e0e7ff;color:#3730a3;} .p-mgr{background:#dbeafe;color:#1e40af;}
+  .p-div{background:#ede9fe;color:#6d28d9;} .p-sec{background:#bbf7d0;color:#166534;}
+  .p-sup{background:#fed7aa;color:#9a3412;} .p-off{background:#f1f5f9;color:#475569;} .p-all{background:#fce7f3;color:#9d174d;}
+  /* ---- mock screen ---- */
+  .mock{border:1px solid #cbd5e1; border-radius:12px; overflow:hidden; margin:14px 0; box-shadow:0 6px 18px rgba(2,8,23,.08);}
+  .mock .bar{background:#0f172a; color:#fff; font-size:13px; padding:7px 12px; display:flex; gap:8px; align-items:center;}
+  .mock .dot{width:9px;height:9px;border-radius:50%;background:#f87171;} .mock .dot.y{background:#fbbf24;} .mock .dot.g{background:#34d399;}
+  .mock .body{background:#fff; padding:16px;}
+  .mock .toprow{display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px; margin-bottom:12px;}
+  .mock .logo{font-weight:700; color:var(--brand-d);}
+  .fld{border:1px solid #cbd5e1; border-radius:8px; padding:9px 11px; color:#475569; background:#fff; margin:6px 0;}
+  .fld.sel::after{content:"▾"; float:right; color:#94a3b8;}
+  .mbtn{display:inline-block; background:var(--brand); color:#fff; border-radius:8px; padding:8px 14px; font-size:14px; font-weight:600;}
+  .mbtn.ghost{background:#fff; color:#334155; border:1px solid #cbd5e1;}
+  .callout{position:relative; display:inline-flex; align-items:center; justify-content:center; width:24px;height:24px;border-radius:50%;background:#ef4444;color:#fff;font-weight:700;font-size:13px;margin-right:6px;}
+  .hourrow{display:flex; gap:8px; align-items:center; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:6px 0; background:#f8fafc; font-size:14px;}
+  .hourrow .hh{font-weight:700; color:#334155; min-width:96px;}
+  /* ---- phone frame ---- */
+  .phones{display:flex; gap:20px; flex-wrap:wrap; justify-content:center; margin:16px 0;}
+  .phone{width:250px; border:9px solid #0f172a; border-radius:30px; overflow:hidden; background:#fff; box-shadow:0 10px 26px rgba(2,8,23,.18);}
+  .phone .notch{background:#0f172a; height:16px;}
+  .phone .pscr{padding:12px; min-height:340px; font-size:13px;}
+  .phone .pttl{font-weight:700; text-align:center; margin-bottom:8px;}
+  .os{display:inline-block; font-size:12px; font-weight:700; padding:3px 10px; border-radius:6px; margin-bottom:6px;}
+  .os.a{background:#dcfce7;color:#166534;} .os.i{background:#e0f2fe;color:#075985;}
+  .menu-item{border:1px dashed #cbd5e1; border-radius:8px; padding:7px 9px; margin:5px 0; background:#fff;}
+  .menu-item.hi{border:2px solid var(--brand); background:#eff6ff; font-weight:600;}
+  .arrow{color:#94a3b8; text-align:center; font-size:18px;}
+  .flow{display:flex; gap:8px; flex-wrap:wrap; align-items:stretch; margin:14px 0;}
+  .flow .fbox{flex:1; min-width:120px; background:#eff6ff; border:1px solid var(--tipbd); border-radius:10px; padding:12px; text-align:center; font-size:14px; font-weight:600; color:var(--brand-d); display:flex; align-items:center; justify-content:center;}
+  .flow .farr{display:flex; align-items:center; color:#94a3b8; font-size:22px;}
+  .toc{columns:2; gap:20px;}
+  .toc a{color:var(--brand-d); text-decoration:none; display:block; padding:3px 0;}
+  .toc a:hover{text-decoration:underline;}
+  footer{color:var(--muted); text-align:center; font-size:13px; margin-top:30px;}
+  @media (max-width:600px){ .toc{columns:1;} body{font-size:15px;} header.hero h1{font-size:24px;} }
+  @media print{
+    body{background:#fff;} .toolbar,.btn{display:none!important;}
+    .card{box-shadow:none; break-inside:avoid;} h2.sec{break-before:page;}
+    header.hero{background:var(--brand)!important; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+    .mock,.phone{break-inside:avoid;}
+  }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <span class="t-title">📖 คู่มือสอนการใช้งาน HR-Interview</span>
+  <button class="btn" onclick="window.print()">🖨 พิมพ์ / บันทึกเป็น PDF</button>
+</div>
+
+<header class="hero">
+  <h1>📖 คู่มือสอนการใช้งานระบบ HR-Interview</h1>
+  <p>สำหรับพนักงานทุกระดับ · ใช้งานผ่านเว็บไซต์ และมือถือ</p>
+</header>
+
+<div class="wrap">
+
+  <div class="card">
+    <h3 style="margin-top:0;">สารบัญ</h3>
+    <div class="toc">
+      <a href="#roles">• ระดับผู้ใช้งาน (ใครทำอะไรได้)</a>
+      <a href="#login">• การเข้าสู่ระบบ</a>
+      <a href="#p1">ส่วนที่ 1 — ใช้งานผ่านเว็บไซต์</a>
+      <a href="#s11">&nbsp;&nbsp;1.1 การสัมภาษณ์งานรอบแรก</a>
+      <a href="#s12">&nbsp;&nbsp;1.2 บันทึกงานประจำวัน / ลา / สลับวันหยุด</a>
+      <a href="#s13">&nbsp;&nbsp;1.3 อื่น ๆ ที่ควรรู้ในเว็บ</a>
+      <a href="#p2">ส่วนที่ 2 — ใช้งานผ่านมือถือ</a>
+      <a href="#s21a">&nbsp;&nbsp;2.1 ติดตั้งบน Android</a>
+      <a href="#s21i">&nbsp;&nbsp;2.1 ติดตั้งบน iPhone (iOS)</a>
+      <a href="#s21n">&nbsp;&nbsp;การเปิดแจ้งเตือน</a>
+      <a href="#byrole">• สรุปสั้น ๆ ตามบทบาท</a>
+    </div>
+  </div>
+
+  <!-- ========== ROLES ========== -->
+  <h2 class="sec" id="roles">👥 ระดับผู้ใช้งาน (ใครทำอะไรได้)</h2>
+  <div class="card">
+    <p class="lead">ทุกคนใช้ระบบเดียวกัน แต่ "เห็นข้อมูล" และ "ทำอะไรได้" ต่างกันตามบทบาทที่ผู้ดูแลกำหนดให้ · ทุกบทบาท <b>ตอบสัมภาษณ์ของตัวเอง + บันทึกงานประจำวันของตัวเอง</b> ได้เหมือนกัน ต่างกันที่ "การดูข้อมูลของคนอื่น" และ "การวิเคราะห์"</p>
+    <table>
+      <tr><th>บทบาท</th><th>เห็นข้อมูลของ</th><th>สิ่งที่ทำได้เพิ่ม</th></tr>
+      <tr><td><span class="pill p-off">เจ้าหน้าที่</span></td><td>ของตัวเองเท่านั้น</td><td>ตอบสัมภาษณ์ + บันทึกงานของตน</td></tr>
+      <tr><td><span class="pill p-sup">หัวหน้างาน</span></td><td>ทีมในแผนกตน (อ่านอย่างเดียว)</td><td>ดูบันทึก/สถานะของทีม — แก้ไขไม่ได้</td></tr>
+      <tr><td><span class="pill p-sec">หัวหน้าแผนก</span></td><td>ทั้งแผนกของตน</td><td>ดู + ดูแลลูกทีมในแผนก</td></tr>
+      <tr><td><span class="pill p-div">หัวหน้าฝ่าย</span></td><td>ทั้งฝ่ายของตน (ทุกแผนก)</td><td>ดูภาพรวมทั้งฝ่าย</td></tr>
+      <tr><td><span class="pill p-mgr">ผู้จัดการ</span></td><td>ฝ่ายตน + ที่ได้รับอนุญาตเพิ่ม</td><td>ดูแลทีม + <b>กดวิเคราะห์ภาพรวม</b></td></tr>
+      <tr><td><span class="pill p-exec">ผู้บริหาร</span></td><td>ทั้งบริษัท (อ่าน)</td><td>ดูภาพรวมทั้งองค์กร + วิเคราะห์</td></tr>
+    </table>
+    <div class="tip">💡 ในคู่มือนี้ แต่ละหัวข้อจะมีป้ายบอกว่า "ใครใช้" — ถ้าไม่มีป้าย แปลว่า <b>ทุกคนใช้เหมือนกัน</b></div>
+  </div>
+
+  <!-- ========== LOGIN ========== -->
+  <h2 class="sec" id="login">🔑 การเข้าสู่ระบบ</h2>
+  <div class="card">
+    <ol class="steps">
+      <li>เปิดเว็บของบริษัท (ผู้ดูแลจะส่งลิงก์ให้ เช่น <b>https://ชื่อเว็บบริษัท</b>)</li>
+      <li>กรอก <b>ชื่อผู้ใช้ (Username)</b> และ <b>รหัสผ่าน</b> ที่ได้รับจากผู้ดูแล</li>
+      <li>กด <b>เข้าสู่ระบบ</b> → เข้าหน้าแรก</li>
+    </ol>
+    <div class="mock">
+      <div class="bar"><span class="dot"></span><span class="dot y"></span><span class="dot g"></span> เข้าสู่ระบบ</div>
+      <div class="body" style="max-width:340px;margin:0 auto;">
+        <div class="logo" style="text-align:center;margin-bottom:12px;">HR-Interview</div>
+        <div class="fld">ชื่อผู้ใช้</div>
+        <div class="fld">รหัสผ่าน</div>
+        <div class="mbtn" style="width:100%;text-align:center;margin-top:8px;">เข้าสู่ระบบ →</div>
+      </div>
+    </div>
+    <div class="warn">⚠️ ครั้งแรกที่เข้า แนะนำให้เปลี่ยนรหัสผ่านเป็นของตัวเองที่เมนู <b>โปรไฟล์</b> · เมื่อใช้เสร็จทุกครั้งควรกด <b>ออกจากระบบ</b> (มุมขวาบน)</div>
+  </div>
+
+  <!-- ================= PART 1 : WEB ================= -->
+  <h2 class="sec" id="p1">💻 ส่วนที่ 1 — ใช้งานผ่านเว็บไซต์</h2>
+
+  <!-- 1.1 INTERVIEW -->
+  <h3 id="s11">1.1 การสัมภาษณ์งานรอบแรก</h3>
+  <div class="card">
+    <p class="lead">เป็นการ "สัมภาษณ์ตัวเอง" เกี่ยวกับงานที่ทำ เพื่อให้ระบบ AI สร้างเอกสารสรุปงานให้ (ใบพรรณนางาน / KPI / แนวทางปรับปรุง ฯลฯ) — <b>ทุกคนต้องทำของตัวเอง 1 ครั้ง</b></p>
+
+    <h4>ขั้นตอนการทำ</h4>
+    <div class="flow">
+      <div class="fbox">1. เริ่มสัมภาษณ์</div><div class="farr">→</div>
+      <div class="fbox">2. ตอบคำถามตามช่วงเวลา</div><div class="farr">→</div>
+      <div class="fbox">3. กด "เสร็จสิ้น"</div><div class="farr">→</div>
+      <div class="fbox">4. รอ AI วิเคราะห์</div><div class="farr">→</div>
+      <div class="fbox">5. ดูเอกสาร 6 ฉบับ</div>
+    </div>
+    <ol class="steps">
+      <li>ที่ <b>หน้าแรก</b> หรือ <b>Dashboard Job</b> กดเริ่ม/ตอบสัมภาษณ์ของตำแหน่งตัวเอง</li>
+      <li>ตอบคำถามไปตามช่วงเวลาทำงาน — หัวข้อที่ถามมีเช่น
+        <ul>
+          <li><b>งานที่ทำในช่วงเวลานั้น</b> (ทำอะไรบ้าง)</li>
+          <li><b>เครื่องมือ/โปรแกรม</b> ที่ใช้</li>
+          <li><b>คนที่ต้องประสานงาน</b> ด้วย (ทีม/แผนกอื่น)</li>
+          <li><b>ปัญหา/อุปสรรค</b> ที่เจอ</li>
+          <li>รายละเอียดอื่น ๆ ของงานประจำ</li>
+        </ul>
+      </li>
+      <li>ตอบให้ครบทุกช่วง แล้วกด <b>"เสร็จสิ้น"</b></li>
+      <li>รอสักครู่จนขึ้นข้อความ <b>"วิเคราะห์สำเร็จ"</b> (ระบบกำลังให้ AI สรุปงาน)</li>
+      <li>เปิดดู <b>เอกสาร 6 ฉบับ</b> ที่ระบบสร้างให้ (ผังงาน, ไดอะแกรม, ใบพรรณนางาน/JD, KPI, แนวทางปรับปรุง/Optimization และไฟล์ตาราง)</li>
+    </ol>
+    <div class="tip">💡 ตอบตามความจริงและให้รายละเอียดมากที่สุด — ยิ่งละเอียด เอกสารที่ AI สรุปให้จะยิ่งตรงและมีประโยชน์</div>
+
+    <h4><span class="pill p-mgr">ผู้จัดการ</span><span class="pill p-exec">ผู้บริหาร</span> การกดวิเคราะห์ภาพรวมบริษัท</h4>
+    <p class="lead">นอกจากเอกสารรายคน ระบบยังสรุป "ภาพรวมทั้งบริษัท" ได้ (เฉพาะผู้จัดการ/ผู้บริหาร/ผู้ดูแล)</p>
+    <ol class="steps">
+      <li>เข้าเมนู <b>Dashboard Job</b></li>
+      <li>กดปุ่ม <b>"🔍 วิเคราะห์ภาพรวมบริษัท"</b></li>
+      <li>จะมี <b>ป็อปอัปแสดงความคืบหน้า</b> ("กำลังวิเคราะห์... X คน") — รอสักครู่ อาจใช้เวลาถ้าคนเยอะ · ปิดหน้าไปแล้วกลับมาดูต่อได้</li>
+      <li>เสร็จแล้วรายงานจะขึ้นด้านล่าง · กด <b>"📄 เปิดรายงาน"</b> เพื่อดูฉบับเต็ม</li>
+      <li>ดูผลเก่าย้อนหลังได้ที่ปุ่ม <b>"📚 เวอร์ชันเก่า"</b> (ระบบเก็บประวัติทุกครั้งที่วิเคราะห์)</li>
+    </ol>
+    <div class="warn">⚠️ อย่ากดปุ่มวิเคราะห์ซ้ำ ๆ ระหว่างรอ — ถ้ากดตอนกำลังทำอยู่ ระบบจะพากลับไปดูงานเดิมให้ (ไม่เริ่มใหม่)</div>
+  </div>
+
+  <!-- 1.2 WORKLOG -->
+  <h3 id="s12">1.2 การบันทึกงานประจำวัน / การลา / การสลับวันหยุด</h3>
+  <div class="card">
+    <p class="lead">บันทึกว่าแต่ละชั่วโมงในวันนั้นทำงานอะไร — <b>ทุกคนควรทำทุกวัน</b> (ข้อมูลนี้ช่วยให้รายงาน/KPI แม่นยำ)</p>
+
+    <h4>ก. บันทึกงานรายชั่วโมง</h4>
+    <div class="mock">
+      <div class="bar"><span class="dot"></span><span class="dot y"></span><span class="dot g"></span> 📝 บันทึกงานประจำวัน</div>
+      <div class="body">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <span>วันที่ <b>วันนี้</b></span>
+          <span class="mbtn ghost">📋 คัดลอกงานประจำจากเมื่อวาน</span>
+        </div>
+        <div class="hourrow"><span class="hh">09:00–10:00</span><span class="fld" style="flex:1;margin:0;">พิมพ์งานที่ทำ...</span><span class="fld sel" style="width:120px;margin:0;">หมวดหมู่</span></div>
+        <div class="hourrow"><span class="hh">10:00–11:00</span><span class="fld" style="flex:1;margin:0;">พิมพ์งานที่ทำ...</span><span class="fld sel" style="width:120px;margin:0;">หมวดหมู่</span></div>
+        <div style="text-align:right;margin-top:6px;"><span class="fld" style="display:inline-block;font-size:13px;">+ เพิ่มงานในชั่วโมงนี้</span></div>
+        <div class="mbtn" style="margin-top:10px;">💾 บันทึกงานวันนี้</div>
+      </div>
+    </div>
+    <ol class="steps">
+      <li>เข้าเมนู <b>บันทึกงาน</b> → เลือก <b>วันที่</b> (ปกติเป็นวันนี้)</li>
+      <li>พิมพ์งานที่ทำในแต่ละชั่วโมง แล้วเลือก <b>หมวดหมู่</b></li>
+      <li>ถ้าชั่วโมงเดียวทำหลายงาน กด <b>"+ เพิ่มงานในชั่วโมงนี้"</b></li>
+      <li>งานที่ทำซ้ำทุกวัน ติ๊ก <b>"งานประจำ"</b> — วันถัดไปกด <b>"คัดลอกงานประจำจากเมื่อวาน"</b> ได้เลย ไม่ต้องพิมพ์ใหม่</li>
+      <li>กด <b>"💾 บันทึกงานวันนี้"</b></li>
+    </ol>
+
+    <h4>ข. การลา / วันหยุด / สลับวันหยุด</h4>
+    <p class="lead">ที่หน้าบันทึกงาน จะมีเมนู <b>"🌴 ทำเครื่องหมายวันหยุด/ลา…"</b> ให้เลือก</p>
+    <div class="mock">
+      <div class="bar"><span class="dot"></span><span class="dot y"></span><span class="dot g"></span> เมนูวันหยุด/ลา</div>
+      <div class="body" style="max-width:420px;">
+        <div class="fld sel">🌴 ทำเครื่องหมายวันหยุด/ลา…</div>
+        <div class="menu-item">🔄 สลับวันหยุด (มาทำวันหยุด แล้วไปหยุดวันนี้แทน)</div>
+        <div class="menu-item">ลาพักร้อน</div>
+        <div class="menu-item">ลากิจ</div>
+        <div class="menu-item">ลาป่วย</div>
+        <div class="menu-item">หยุด (อื่น ๆ)</div>
+      </div>
+    </div>
+    <ul>
+      <li><b>ลาพักร้อน / ลากิจ / ลาป่วย / หยุด</b> — เลือกวันที่นั้น แล้วเลือกประเภท → ระบบจะไม่นับว่า "ลืมกรอกงาน" ในวันนั้น</li>
+      <li><b>🔄 สลับวันหยุด</b> — ใช้เมื่อคุณ <b>มาทำงานในวันหยุด</b> แล้วขอ <b>ไปหยุดชดเชยวันอื่นแทน</b> · เลือกที่วันที่ต้องการ แล้วเลือก "สลับวันหยุด"</li>
+    </ul>
+    <div class="note">✅ ถ้าวันไหนเป็นวันหยุดบริษัท หรือคุณทำเครื่องหมายลา/หยุดไว้ ระบบจะ <b>ไม่เตือน</b> ให้กรอกงานในวันนั้น</div>
+  </div>
+
+  <!-- 1.3 OTHER -->
+  <h3 id="s13">1.3 อื่น ๆ ที่ควรรู้ในเว็บ</h3>
+  <div class="card">
+    <table>
+      <tr><th>เมนู</th><th>ทำอะไร</th><th>ใครใช้</th></tr>
+      <tr><td><b>Dashboard Job</b></td><td>ดูสถานะการสัมภาษณ์ของแต่ละตำแหน่ง · ใครกรอก/ยังไม่กรอก · เปิดดูเอกสารรายคน · ดูประวัติการวิเคราะห์</td><td><span class="pill p-sec">หัวหน้าแผนกขึ้นไป</span></td></tr>
+      <tr><td><b>บันทึกงานทีม</b></td><td>ดูบันทึกงานประจำวันของลูกทีม (อ่านอย่างเดียว)</td><td><span class="pill p-sup">หัวหน้างานขึ้นไป</span></td></tr>
+      <tr><td><b>สรุปบันทึกงาน</b></td><td>รายงานสรุปการกรอกงานของทีม + ดาวน์โหลด CSV</td><td><span class="pill p-sup">หัวหน้างานขึ้นไป</span></td></tr>
+      <tr><td><b>รายงาน</b></td><td>ดูเอกสาร/สถานะของพนักงานในขอบเขตของตน</td><td><span class="pill p-sup">หัวหน้างานขึ้นไป</span></td></tr>
+      <tr><td><b>โปรไฟล์</b></td><td>เปลี่ยนรหัสผ่านของตัวเอง + ตั้งเวลาเข้า-ออกงาน/พักเที่ยง</td><td>ทุกคน</td></tr>
+      <tr><td><b>คู่มือ</b></td><td>เปิดคู่มือการใช้งาน</td><td>ทุกคน</td></tr>
+      <tr><td><b>ออกจากระบบ</b></td><td>ปุ่มมุมขวาบน — กดทุกครั้งเมื่อใช้เสร็จ</td><td>ทุกคน</td></tr>
+    </table>
+    <div class="tip">💡 <span class="pill p-sup">หัวหน้างาน</span> ดูข้อมูลทีมได้แต่ <b>แก้ไขไม่ได้</b> (อ่านอย่างเดียว) — เหมาะกับการติดตามงานลูกทีม</div>
+  </div>
+
+  <!-- ================= PART 2 : MOBILE ================= -->
+  <h2 class="sec" id="p2">📱 ส่วนที่ 2 — ใช้งานผ่านมือถือ</h2>
+  <div class="card">
+    <p class="lead">ระบบนี้ติดตั้งเป็น "แอป" บนมือถือได้เลย โดยไม่ต้องโหลดจาก App Store/Play Store — แค่เพิ่มเว็บลงหน้าจอโฮม จะได้ไอคอนแอปเปิดใช้เต็มจอ + รับแจ้งเตือนได้</p>
+    <div class="flow">
+      <div class="fbox">เปิดเว็บบนมือถือ</div><div class="farr">→</div>
+      <div class="fbox">เพิ่มลงหน้าจอโฮม</div><div class="farr">→</div>
+      <div class="fbox">เปิดจากไอคอนแอป</div><div class="farr">→</div>
+      <div class="fbox">เปิดแจ้งเตือน</div>
+    </div>
+  </div>
+
+  <!-- 2.1 ANDROID -->
+  <h3 id="s21a">2.1 ติดตั้งบนมือถือ Android</h3>
+  <div class="card">
+    <div class="phones">
+      <div class="phone"><div class="notch"></div><div class="pscr">
+        <span class="os a">ANDROID · Chrome</span>
+        <div class="pttl">1) เปิดเว็บใน Chrome</div>
+        <div class="fld" style="font-size:12px;">🔒 https://ชื่อเว็บบริษัท</div>
+        <div style="text-align:right;margin-top:14px;font-size:20px;">⋮ <span style="font-size:12px;color:#64748b;">← กดปุ่มนี้ (มุมขวาบน)</span></div>
+      </div></div>
+      <div class="phone"><div class="notch"></div><div class="pscr">
+        <span class="os a">ANDROID · Chrome</span>
+        <div class="pttl">2) เลือกจากเมนู</div>
+        <div class="menu-item">แชร์</div>
+        <div class="menu-item hi">➕ เพิ่มลงในหน้าจอหลัก</div>
+        <div class="menu-item">การตั้งค่า</div>
+        <div class="arrow">▼</div>
+        <div class="pttl">3) กด "เพิ่ม" / "ติดตั้ง"</div>
+        <div class="mbtn" style="width:100%;text-align:center;">เพิ่ม</div>
+      </div></div>
+      <div class="phone"><div class="notch"></div><div class="pscr">
+        <span class="os a">ANDROID</span>
+        <div class="pttl">4) ได้ไอคอนแอป</div>
+        <div style="text-align:center;margin-top:30px;">
+          <div style="width:64px;height:64px;border-radius:16px;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;margin:0 auto;font-size:12px;">HR</div>
+          <div style="margin-top:8px;font-size:12px;">HR-Interview</div>
+        </div>
+        <div class="note" style="margin-top:20px;font-size:12px;">เปิดจากไอคอนนี้ = ใช้เหมือนแอป</div>
+      </div></div>
+    </div>
+    <ol class="steps">
+      <li>เปิดเว็บบริษัทด้วย <b>Chrome</b></li>
+      <li>กดปุ่ม <b>⋮</b> (จุดสามจุด มุมขวาบน)</li>
+      <li>เลือก <b>"เพิ่มลงในหน้าจอหลัก" (Add to Home screen)</b> แล้วกด <b>เพิ่ม/ติดตั้ง</b></li>
+      <li>จะได้ไอคอนแอปบนหน้าจอ — เปิดใช้จากไอคอนนี้ได้เลย</li>
+    </ol>
+  </div>
+
+  <!-- 2.1 iOS -->
+  <h3 id="s21i">2.1 ติดตั้งบนมือถือ iPhone / iPad (iOS)</h3>
+  <div class="card">
+    <div class="phones">
+      <div class="phone"><div class="notch"></div><div class="pscr">
+        <span class="os i">iOS · Safari</span>
+        <div class="pttl">1) เปิดเว็บใน Safari</div>
+        <div class="fld" style="font-size:12px;">🔒 https://ชื่อเว็บบริษัท</div>
+        <div style="text-align:center;margin-top:30px;font-size:26px;">⬆️</div>
+        <div style="text-align:center;font-size:12px;color:#64748b;">กดปุ่ม "แชร์" (ล่างกลางจอ)</div>
+      </div></div>
+      <div class="phone"><div class="notch"></div><div class="pscr">
+        <span class="os i">iOS · Safari</span>
+        <div class="pttl">2) เลื่อนหาแล้วกด</div>
+        <div class="menu-item">คัดลอก</div>
+        <div class="menu-item">เพิ่มไปยังรายการโปรด</div>
+        <div class="menu-item hi">➕ เพิ่มไปยังหน้าจอโฮม</div>
+        <div class="arrow">▼</div>
+        <div class="pttl">3) กด "เพิ่ม" (มุมขวาบน)</div>
+      </div></div>
+      <div class="phone"><div class="notch"></div><div class="pscr">
+        <span class="os i">iOS</span>
+        <div class="pttl">4) ได้ไอคอนแอป</div>
+        <div style="text-align:center;margin-top:30px;">
+          <div style="width:64px;height:64px;border-radius:16px;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;margin:0 auto;font-size:12px;">HR</div>
+          <div style="margin-top:8px;font-size:12px;">HR-Interview</div>
+        </div>
+        <div class="warn" style="margin-top:16px;font-size:12px;">ต้องเปิดจากไอคอนนี้ก่อน จึงจะเปิดแจ้งเตือนได้</div>
+      </div></div>
+    </div>
+    <ol class="steps">
+      <li>เปิดเว็บบริษัทด้วย <b>Safari</b> (ต้องเป็น Safari เท่านั้น ไม่ใช่ Chrome บน iPhone)</li>
+      <li>กดปุ่ม <b>"แชร์" ⬆️</b> (ไอคอนสี่เหลี่ยมมีลูกศรขึ้น — อยู่ล่างกลางจอ)</li>
+      <li>เลื่อนลงหา <b>"เพิ่มไปยังหน้าจอโฮม" (Add to Home Screen)</b> แล้วกด <b>เพิ่ม</b></li>
+      <li>จะได้ไอคอนแอป — <b>เปิดใช้จากไอคอนนี้เสมอ</b></li>
+    </ol>
+    <div class="warn">⚠️ iPhone: ต้องเป็น <b>iOS เวอร์ชัน 16.4 ขึ้นไป</b> จึงจะรับแจ้งเตือนได้ และ <b>ต้องเปิดแอปจากไอคอนบนหน้าจอโฮม</b> (เปิดจาก Safari ธรรมดาจะเปิดแจ้งเตือนไม่ได้)</div>
+  </div>
+
+  <!-- NOTIFICATIONS -->
+  <h3 id="s21n">การเปิดแจ้งเตือนกรอกงานเข้ามือถือ</h3>
+  <div class="card">
+    <p class="lead">เปิดแล้วระบบจะเตือนเมื่อ "ถึงเวลาแต่ยังไม่ได้กรอกงาน" — เตือนเฉพาะชั่วโมงที่ผ่านไปแล้วยังไม่กรอก</p>
+    <ol class="steps">
+      <li><b>ติดตั้งเว็บเป็นแอปก่อน</b> (ตามขั้นตอนด้านบน) แล้ว <b>เปิดแอปจากไอคอนบนหน้าจอ</b></li>
+      <li>เข้าเมนู <b>บันทึกงาน</b></li>
+      <li>กดปุ่ม <b>"🔔 เปิดแจ้งเตือนบนมือถือนี้"</b></li>
+      <li>เมื่อมือถือถาม "อนุญาตการแจ้งเตือน?" ให้กด <b>อนุญาต (Allow)</b></li>
+      <li>เสร็จแล้ว! จากนี้จะมีแจ้งเตือนเด้งเข้ามือถือเมื่อลืมกรอกงาน</li>
+    </ol>
+    <div class="mock">
+      <div class="bar"><span class="dot"></span><span class="dot y"></span><span class="dot g"></span> การ์ดแจ้งเตือน (หน้าบันทึกงาน)</div>
+      <div class="body" style="max-width:420px;">
+        <div style="font-weight:700;color:#0c4a6e;">🔔 แจ้งเตือนกรอกงานเข้ามือถือ</div>
+        <div style="color:#64748b;font-size:14px;margin:4px 0 10px;">ยังไม่ได้เปิดแจ้งเตือนบนเครื่องนี้</div>
+        <div class="mbtn">เปิดแจ้งเตือนบนมือถือนี้</div>
+      </div>
+    </div>
+    <div class="tip">💡 ต้องเปิดแจ้งเตือน <b>1 ครั้งต่อ 1 เครื่อง</b> · ถ้าเปลี่ยนมือถือใหม่ ให้ทำขั้นตอนนี้ซ้ำบนเครื่องใหม่</div>
+    <div class="note">✅ ระบบจะไม่เตือนในวัน <b>หยุด/ลา</b> ที่คุณทำเครื่องหมายไว้ หรือวันหยุดบริษัท</div>
+  </div>
+
+  <!-- ========== BY ROLE SUMMARY ========== -->
+  <h2 class="sec" id="byrole">📋 สรุปสั้น ๆ ตามบทบาท</h2>
+  <div class="card">
+    <h4><span class="pill p-off">เจ้าหน้าที่</span></h4>
+    <ul><li>ตอบสัมภาษณ์ของตัวเอง 1 ครั้ง → ดูเอกสาร 6 ฉบับ</li><li>บันทึกงานประจำวันทุกวัน · ทำเครื่องหมายลา/สลับวันหยุดเมื่อจำเป็น</li><li>ติดตั้งแอปมือถือ + เปิดแจ้งเตือนกันลืมกรอก</li></ul>
+
+    <h4><span class="pill p-sup">หัวหน้างาน</span></h4>
+    <ul><li>ทำทุกอย่างเหมือนเจ้าหน้าที่ (ของตัวเอง)</li><li>เพิ่ม: ดูบันทึกงาน/สถานะของ <b>ทีมในแผนกตน</b> ผ่าน "บันทึกงานทีม / สรุปบันทึกงาน / Dashboard" — <b>อ่านอย่างเดียว แก้ไขไม่ได้</b></li></ul>
+
+    <h4><span class="pill p-sec">หัวหน้าแผนก</span> <span class="pill p-div">หัวหน้าฝ่าย</span></h4>
+    <ul><li>ทำของตัวเอง + ดูแล/ติดตามลูกทีม (หัวหน้าแผนก = ทั้งแผนก · หัวหน้าฝ่าย = ทั้งฝ่าย)</li><li>ใช้ Dashboard Job / บันทึกงานทีม / สรุปบันทึกงาน เพื่อติดตามงาน</li></ul>
+
+    <h4><span class="pill p-mgr">ผู้จัดการ</span> <span class="pill p-exec">ผู้บริหาร</span></h4>
+    <ul><li>ดูภาพรวม (ผู้จัดการ = ฝ่ายตน+ที่ได้รับอนุญาต · ผู้บริหาร = ทั้งบริษัท)</li><li>เพิ่ม: <b>กดวิเคราะห์ภาพรวมบริษัท</b> + ดูรายงาน Optimization + ประวัติเวอร์ชันเก่า</li></ul>
+  </div>
+
+  <footer>
+    คู่มือสอนการใช้งานระบบ HR-Interview · สำหรับใช้ภายในองค์กร<br>
+    ภาพในคู่มือเป็นภาพจำลองหน้าจอเพื่อความเข้าใจ — หน้าจอจริงอาจต่างเล็กน้อยตามการตั้งค่าของแต่ละบริษัท
+  </footer>
+
+</div>
+</body>
+</html>
