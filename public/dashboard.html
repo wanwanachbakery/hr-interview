@@ -195,8 +195,10 @@ async function load() {
       <a id="report-link" href="/api/outputs/_company/optimization-report.md" target="_blank" style="margin-left:8px; display:none;">
         <button class="ghost">📄 เปิดรายงาน</button>
       </a>
+      <button class="ghost" id="hist-btn" style="margin-left:8px;">📚 เวอร์ชันเก่า</button>
     `;
     document.getElementById('analyze-btn').addEventListener('click', runAnalyze);
+    document.getElementById('hist-btn').addEventListener('click', openCompanyHistory);
   }
 
   renderTree();
@@ -225,7 +227,7 @@ async function load() {
 function statusActions(e) {
   const statusKey = e.interviewStatus || 'not_started';
   const link = statusKey === 'completed'
-    ? `<a href="/review?id=${esc(e.id)}" style="font-size:12px; margin-left:8px;">📄 ดูเอกสาร</a>`
+    ? `<a href="/review?id=${esc(e.id)}" style="font-size:12px; margin-left:8px;">📄 ดูเอกสาร</a> <a href="#" class="hist-person" data-id="${esc(e.id)}" data-name="${esc(e.name)}" style="font-size:12px; margin-left:6px;">📜 ประวัติ</a>`
     : (e.user_id === ME.user_id ? `<a href="/interview?id=${esc(e.id)}" style="font-size:12px; margin-left:8px;">▶ ตอบของฉัน</a>` : '');
   const delBtn = (ME.role === 'admin' && statusKey !== 'not_started')
     ? `<button class="ghost del-btn" style="font-size:12px; padding:2px 8px; margin-left:8px;" data-id="${esc(e.id)}" data-name="${esc(e.name)}" title="ล้างคำตอบและเอกสาร กลับเป็นยังไม่ตอบ">↺ รีเซ็ต</button>`
@@ -454,6 +456,67 @@ async function resumeAnalyzeIfRunning() {
     if (s.running) pollAnalyze(s.count);
   } catch {}
 }
+
+// ---- ประวัติการวิเคราะห์ (เวอร์ชันเก่า) — รายบริษัท + รายคน ----
+function histModal() {
+  let m = document.getElementById('hist-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'hist-modal';
+  m.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:9998; align-items:center; justify-content:center;';
+  m.innerHTML = '<div style="background:#fff; border-radius:14px; padding:22px; max-width:560px; width:92%; max-height:80vh; overflow:auto; box-shadow:0 20px 50px rgba(0,0,0,.3);">'
+    + '<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">'
+    + '<h2 id="hist-title" style="margin:0; font-size:18px;">ประวัติการวิเคราะห์</h2>'
+    + '<button class="ghost" onclick="document.getElementById(\'hist-modal\').style.display=\'none\'">✕ ปิด</button></div>'
+    + '<div id="hist-body" class="sub">กำลังโหลด...</div></div>';
+  m.addEventListener('click', (e) => { if (e.target === m) m.style.display = 'none'; });
+  document.body.appendChild(m);
+  return m;
+}
+async function openCompanyHistory() {
+  histModal().style.display = 'flex';
+  document.getElementById('hist-title').textContent = '📚 ประวัติรายงานภาพรวมบริษัท';
+  const body = document.getElementById('hist-body'); body.innerHTML = 'กำลังโหลด...';
+  let d; try { d = await fetch(TBASE + '/api/outputs/_company/history').then(r => r.json()); } catch { body.innerHTML = 'โหลดไม่สำเร็จ'; return; }
+  const vs = (d && d.versions) || [];
+  if (!vs.length) { body.innerHTML = '<p class="sub">ยังไม่มีเวอร์ชันเก่า — ระบบจะเริ่มเก็บอัตโนมัติเมื่อกด "วิเคราะห์" ครั้งถัดไป</p>'; return; }
+  body.innerHTML = vs.map(v =>
+    `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 4px; border-bottom:1px solid #f1f5f9;">
+      <span>🕒 ${esc(v.label)}</span>
+      <span><a href="#" onclick="viewCompanyVersion('${esc(v.file)}');return false;" style="margin-right:12px;">ดู</a>
+      <a href="${TBASE}/api/outputs/_company/history/${encodeURIComponent(v.file)}" target="_blank">เปิดไฟล์ ↗</a></span>
+    </div>`).join('');
+}
+async function viewCompanyVersion(file) {
+  try {
+    const txt = await fetch(TBASE + '/api/outputs/_company/history/' + encodeURIComponent(file)).then(r => r.text());
+    const prev = document.getElementById('report-preview');
+    document.getElementById('report-card').style.display = 'block';
+    prev.className = 'md-body'; prev.style.cssText = 'max-height:640px; overflow:auto;';
+    prev.innerHTML = window.renderMarkdown ? window.renderMarkdown(txt) : `<pre style="white-space:pre-wrap;">${esc(txt)}</pre>`;
+    document.getElementById('hist-modal').style.display = 'none';
+    document.getElementById('report-card').scrollIntoView({ behavior: 'smooth' });
+  } catch {}
+}
+async function openPersonHistory(id, name) {
+  histModal().style.display = 'flex';
+  document.getElementById('hist-title').textContent = '📜 ประวัติเอกสาร: ' + name;
+  const body = document.getElementById('hist-body'); body.innerHTML = 'กำลังโหลด...';
+  let d; try { d = await fetch(TBASE + '/api/outputs/' + encodeURIComponent(id) + '/history').then(r => r.json()); } catch { body.innerHTML = 'โหลดไม่สำเร็จ'; return; }
+  const vs = (d && d.versions) || [];
+  if (!vs.length) { body.innerHTML = '<p class="sub">ยังไม่มีเวอร์ชันเก่า — ระบบจะเริ่มเก็บอัตโนมัติเมื่อวิเคราะห์คนนี้ครั้งถัดไป</p>'; return; }
+  const LB = { 'workflow.md':'ผังงาน', 'workflow.csv':'ผังงาน(CSV)', 'workflow-diagram.md':'ไดอะแกรม', 'job-description.md':'JD', 'kpi.md':'KPI', 'optimization.md':'Optimization' };
+  body.innerHTML = vs.map(v =>
+    `<div style="padding:9px 4px; border-bottom:1px solid #f1f5f9;">
+      <div style="font-weight:600; margin-bottom:4px;">🕒 ${esc(v.label)}</div>
+      <div style="display:flex; flex-wrap:wrap; gap:8px;">${(v.files || []).map(f =>
+        `<a href="${TBASE}/api/outputs/${encodeURIComponent(id)}/history/${encodeURIComponent(v.stamp)}/${encodeURIComponent(f)}" target="_blank" style="font-size:12px;">${esc(LB[f] || f)} ↗</a>`).join('')}</div>
+    </div>`).join('');
+}
+document.addEventListener('click', (ev) => {
+  const a = ev.target.closest && ev.target.closest('.hist-person');
+  if (a) { ev.preventDefault(); openPersonHistory(a.dataset.id, a.dataset.name); }
+});
 
 load().then(resumeAnalyzeIfRunning);
 </script>

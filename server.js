@@ -67,6 +67,37 @@ async function generateDocuments(interview, db) {
   }
   return ai.generateDocuments(interview);
 }
+
+// ---------- Analysis version history (snapshot before overwrite) ----------
+// เก็บผลวิเคราะห์เวอร์ชันก่อนหน้าไว้ก่อนเขียนทับ — ทั้งเอกสารรายคนและรายงานภาพรวมบริษัท
+function archiveStamp() {
+  const b = nowBangkok();                         // Asia/Bangkok (function declaration → hoisted)
+  const p = n => String(n).padStart(2, '0');
+  return `${b.dateStr}_${p(b.hour)}-${p(b.minute)}-${p(b.second)}-${crypto.randomBytes(2).toString('hex')}`;
+}
+function stampLabel(stamp) {                       // 'YYYY-MM-DD_HH-MM-SS-xxxx' → 'DD/MM/YYYY HH:MM'
+  const m = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})/.exec(String(stamp || ''));
+  return m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}` : String(stamp || '');
+}
+function archivePersonDocs(outDir) {              // สำรองเอกสารรายคนปัจจุบัน → <outDir>/_history/<stamp>/
+  try {
+    if (!fs.existsSync(outDir)) return;
+    const files = fs.readdirSync(outDir).filter(f => { try { return fs.statSync(path.join(outDir, f)).isFile(); } catch { return false; } });
+    if (!files.length) return;
+    const hist = path.join(outDir, '_history', archiveStamp());
+    fs.mkdirSync(hist, { recursive: true });
+    for (const f of files) fs.copyFileSync(path.join(outDir, f), path.join(hist, f));
+  } catch (e) { console.error('[history] archivePersonDocs:', e.message); }
+}
+function archiveCompanyReport(cmpOutDir) {        // สำรองรายงานภาพรวมปัจจุบัน → <cmpOutDir>/_history/
+  try {
+    const cur = path.join(cmpOutDir, 'optimization-report.md');
+    if (!fs.existsSync(cur)) return;
+    const hist = path.join(cmpOutDir, '_history');
+    fs.mkdirSync(hist, { recursive: true });
+    fs.copyFileSync(cur, path.join(hist, `optimization-report-${archiveStamp()}.md`));
+  } catch (e) { console.error('[history] archiveCompanyReport:', e.message); }
+}
 async function analyzeCompany(interviews, db) {
   if (db && claudeOnForTenant(db)) {
     try {
@@ -87,6 +118,11 @@ const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
 const TENANT_DATA_DIR = path.join(DATA_DIR, 'tenants');
 const OUTPUT_DIR = process.env.OUTPUT_DIR || path.join(ROOT, 'outputs');
 const TENANT_OUTPUT_DIR = path.join(OUTPUT_DIR, 'tenants');
+// Top-level folder name each store lives under inside a backup archive
+// ("data"/"outputs" by default). Used by restore to validate/relocate entries
+// even when DATA_DIR/OUTPUT_DIR are overridden onto a volume.
+const DATA_BASE = path.basename(DATA_DIR);
+const OUT_BASE = path.basename(OUTPUT_DIR);
 const TENANTS_FILE = path.join(DATA_DIR, '_tenants.json');
 const SUPER_AUTH_FILE = path.join(DATA_DIR, '_super_auth.json');
 const SECRET_FILE = path.join(DATA_DIR, '_secret');
@@ -96,7 +132,7 @@ const SECRET_FILE = path.join(DATA_DIR, '_secret');
 // only via the auth-checked download endpoints below. `backups/` is gitignored.
 //   backups/system/<YYYYMMDD-HHMMSS>.tar.gz          (whole-system, super-admin)
 //   backups/tenants/<tid>/<YYYYMMDD-HHMMSS>.tar.gz   (one company, that tenant only)
-const BACKUP_DIR = path.join(ROOT, 'backups');
+const BACKUP_DIR = process.env.BACKUP_DIR || path.join(ROOT, 'backups');
 const BACKUP_SYSTEM_DIR = path.join(BACKUP_DIR, 'system');
 const BACKUP_TENANTS_DIR = path.join(BACKUP_DIR, 'tenants');
 const BACKUP_SETTINGS_FILE = path.join(DATA_DIR, '_backup-settings.json');
@@ -199,6 +235,116 @@ function writeJson(file, obj) {
 }
 function genId(prefix) {
   return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+// ---------- readJsonCached (hot-path cache) — งาน A1 ----------
+// อ่าน JSON แบบแคชในหน่วยความจำ โดยใช้ key = mtimeMs + ':' + size ของไฟล์.
+// ทุกการเขียนไฟล์ผ่าน writeJson (temp+rename) และการ restore (rename โฟลเดอร์)
+// ทำให้ mtime/size เปลี่ยน → key เปลี่ยน → แคชถูก invalidate อัตโนมัติ.
+// ใช้เฉพาะ hot path (authMiddleware อ่าน users/auth ทุก request เพื่อเช็ค tv) —
+// ห้ามนำไปใช้แทน readJson ทั่วไป และ **ห้าม mutate object ที่ได้คืน**
+// (แชร์ข้ามหลาย request แบบ read-only; caller ปัจจุบันแค่ .find()/อ่าน field เท่านั้น).
+const _jsonCache = new Map();                 // file -> { key, data }
+const _cacheStats = { hits: 0, misses: 0 };   // สำหรับเทสต์/ดีบั๊ก
+function readJsonCached(file, fallback) {
+  let st;
+  try {
+    st = fs.statSync(file);
+  } catch {
+    // ไฟล์หาย/stat ไม่ได้ → ทิ้ง cache entry แล้วอ่านสด (readJson จัดการ ENOENT เอง)
+    _jsonCache.delete(file);
+    _cacheStats.misses++;
+    return readJson(file, fallback);
+  }
+  const key = st.mtimeMs + ':' + st.size;
+  const hit = _jsonCache.get(file);
+  if (hit && hit.key === key) { _cacheStats.hits++; return hit.data; }
+  _cacheStats.misses++;
+  const data = readJson(file, fallback);
+  _jsonCache.set(file, { key, data });
+  return data;
+}
+
+// ---------- Audit log (append-only NDJSON) — งาน A2 ----------
+// เขียนทีละบรรทัด JSON ด้วย fs.appendFileSync (append-only จริง + ถูกกว่า rewrite
+// ทั้งไฟล์ + กัน corruption). ไฟล์ระบบ = data/_audit-log.ndjson · ราย tenant =
+// data/tenants/<tid>/audit-log.ndjson. rotate ตามขนาด (~5MB → .1/.2).
+const AUDIT_SYSTEM_FILE = path.join(DATA_DIR, '_audit-log.ndjson');
+const AUDIT_MAX_BYTES = 5 * 1024 * 1024;      // เกินขนาดนี้ → rotate
+// คีย์ที่ถือว่า "อ่อนไหว" — ตัดทิ้งเด็ดขาด (กัน log รหัส/hash/salt/token/secret)
+const AUDIT_SENSITIVE_RE = /pass|hash|salt|secret|token|cookie|master|credential|authorization/i;
+function auditFileFor(scope) {
+  if (!scope || scope === 'system') return AUDIT_SYSTEM_FILE;
+  return path.join(TENANT_DATA_DIR, String(scope), 'audit-log.ndjson');
+}
+// redact (deep) — ตัดคีย์อ่อนไหว + จำกัดความยาว string · กันเผลอ log ค่าที่กรอก
+function redactAudit(val, depth) {
+  depth = depth || 0;
+  if (depth > 6) return undefined;
+  if (Array.isArray(val)) return val.slice(0, 50).map(v => redactAudit(v, depth + 1));
+  if (val && typeof val === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(val)) {
+      if (AUDIT_SENSITIVE_RE.test(k)) continue;   // คีย์อ่อนไหว → ทิ้ง
+      const rv = redactAudit(v, depth + 1);
+      if (rv !== undefined) out[k] = rv;
+    }
+    return out;
+  }
+  if (typeof val === 'string') return val.length > 500 ? val.slice(0, 500) : val;
+  return val;
+}
+// rotate: current → .1, .1 → .2 (เก็บ 2 รุ่น) · เรียกก่อน append เมื่อไฟล์เกินขนาด
+function rotateAuditIfNeeded(file) {
+  let sz = 0;
+  try { sz = fs.statSync(file).size; } catch { return; }   // ไฟล์ยังไม่มี = ไม่ต้อง rotate
+  if (sz < AUDIT_MAX_BYTES) return;
+  try { if (fs.existsSync(file + '.2')) fs.unlinkSync(file + '.2'); } catch {}
+  try { if (fs.existsSync(file + '.1')) fs.renameSync(file + '.1', file + '.2'); } catch {}
+  try { fs.renameSync(file, file + '.1'); } catch (e) { console.warn('[audit] rotate failed:', e.message); }
+}
+// helper กลาง — endpoint อื่นเรียกได้ง่าย · ครอบ try/catch (audit ล้ม ≠ request หลักพัง)
+function writeAudit(scope, record) {
+  try {
+    const rec = redactAudit(Object.assign({}, record)) || {};
+    let ts_bkk = '';
+    try {
+      const n = nowBangkok();
+      const pad = (x) => String(x).padStart(2, '0');
+      ts_bkk = `${n.dateStr}T${pad(n.hour)}:${pad(n.minute)}:${pad(n.second)}+07:00`;
+    } catch {}
+    rec.ts = Date.now();
+    rec.ts_bkk = ts_bkk;
+    const file = auditFileFor(scope);
+    const dir = path.dirname(file);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    rotateAuditIfNeeded(file);
+    fs.appendFileSync(file, JSON.stringify(rec) + '\n');
+  } catch (e) {
+    console.warn('[audit] write failed:', e && e.message);
+  }
+}
+// อ่าน audit ล่าสุด N รายการ (ใหม่สุดก่อน). อ่านไฟล์ปัจจุบัน + เติมจาก .1 ถ้าไม่พอ.
+function readAuditTail(scope, limit) {
+  const lim = Math.min(1000, Math.max(1, Number(limit) || 100));
+  const file = auditFileFor(scope);
+  const readLines = (f) => {
+    try { return fs.readFileSync(f, 'utf8').split('\n').filter(Boolean); }
+    catch { return []; }
+  };
+  let lines = readLines(file);
+  if (lines.length < lim) lines = readLines(file + '.1').concat(lines);
+  const out = [];
+  const start = Math.max(0, lines.length - lim);
+  for (let i = lines.length - 1; i >= start; i--) {
+    try { out.push(JSON.parse(lines[i])); } catch {}
+  }
+  return out;
+}
+// สร้าง actor object จาก tenant session (ไม่รวมค่าอ่อนไหว)
+function tenantActor(req) {
+  const s = req.session || {};
+  return { role: s.role, user_id: s.user_id || null, username: s.username || null };
 }
 
 // Claude usage ledger: ensure the {totals,runs} shape exists (handles old/empty files).
@@ -448,12 +594,15 @@ function authMiddleware(req, res, next) {
   const tokenTv = Number(session.tv || 0);
   if (session.user_id) {
     // named user — เทียบกับ user.tv (และถ้า lookup ไม่เจอ = ถูกลบ → ปฏิเสธ)
-    const u = req.db.users().find(x => x.id === session.user_id);
+    // งาน A1 — อ่านผ่าน cache (mtime+size) แทนอ่านไฟล์สดทุก request. writeJson ใช้
+    // temp+rename → mtime เปลี่ยนเมื่อ user ถูกแก้/ลบ (tv bump) → cache invalidate เอง
+    // → หลังเปลี่ยน role/รหัส token เก่าโดนปฏิเสธทันที (พิสูจน์ในเทสต์).
+    const u = readJsonCached(req.db.files.users, []).find(x => x.id === session.user_id);
     if (!u) return rejectAuth(req, res);
     if (Number(u.tv || 0) !== tokenTv) return rejectAuth(req, res);
   } else {
-    // master admin (ไม่มี user_id) — เทียบกับ auth.tv ของ tenant
-    const auth = req.db.auth() || {};
+    // master admin (ไม่มี user_id) — เทียบกับ auth.tv ของ tenant (อ่านผ่าน cache เช่นกัน)
+    const auth = readJsonCached(req.db.files.auth, { master: '' }) || {};
     req._tenantAuth = auth;   // R2-1 — เก็บไว้ให้ mustChangeGate ใช้ต่อ (เลี่ยงอ่าน auth.json ซ้ำ)
     if (Number(auth.tv || 0) !== tokenTv) return rejectAuth(req, res);
   }
@@ -817,6 +966,135 @@ function readBackupSettings() {
 }
 function writeBackupSettings(s) { writeJson(BACKUP_SETTINGS_FILE, s); }
 
+// ---------- Restore (กู้คืนข้อมูลจากไฟล์สำรอง) — งาน A3 ----------
+// atomic folder swap: target → .old → ย้าย src เข้าที่ → ลบ .old · ถ้า rename ข้าม
+// volume ไม่ได้ (EXDEV) หรือ handle ค้างบน Windows → fallback เป็น cpSync แล้วลบ src.
+function swapDir(srcDir, targetDir, stamp) {
+  const oldDir = targetDir + '.old-' + stamp;
+  fs.mkdirSync(path.dirname(targetDir), { recursive: true });
+  let movedOld = false;
+  if (fs.existsSync(targetDir)) { fs.renameSync(targetDir, oldDir); movedOld = true; }
+  try {
+    fs.renameSync(srcDir, targetDir);
+  } catch (e) {
+    if (['EXDEV', 'EPERM', 'ENOTEMPTY', 'EACCES', 'EBUSY'].includes(e.code)) {
+      fs.cpSync(srcDir, targetDir, { recursive: true });
+      try { fs.rmSync(srcDir, { recursive: true, force: true }); } catch {}
+    } else {
+      // rename ล้มด้วยเหตุอื่น → กู้ target เดิมกลับก่อน throw
+      if (movedOld) {
+        try { if (fs.existsSync(targetDir)) fs.rmSync(targetDir, { recursive: true, force: true }); } catch {}
+        try { fs.renameSync(oldDir, targetDir); } catch {}
+      }
+      throw e;
+    }
+  }
+  return movedOld ? oldDir : null;
+}
+
+// restoreArchive: กู้คืนจากไฟล์ .tar.gz ที่มีอยู่แล้วในโฟลเดอร์ backup ของ scope นั้น.
+//   opts = { scope:'tenant'|'system', tenantId? }
+// ขั้นตอน (ปลอดภัยก่อน destructive): validate entry-list → safety-backup ปัจจุบัน →
+// extract ลง staging → atomic swap ทีละ subtree (มี rollback). คืน { ok, safetyFile, restored }.
+async function restoreArchive(archiveFile, opts) {
+  const scope = (opts && opts.scope) || 'tenant';
+  const tenantId = opts && opts.tenantId;
+  if (scope === 'tenant' && !/^[a-z0-9][a-z0-9-]{0,31}$/.test(String(tenantId || ''))) {
+    throw new Error('tenant id ไม่ถูกต้อง');
+  }
+  const scopeKey = scope === 'system' ? null : tenantId;
+  const backupDir = backupDirFor(scopeKey);
+  const abs = path.join(backupDir, archiveFile);
+  if (!fs.existsSync(abs)) throw new Error('ไม่พบไฟล์สำรอง');
+
+  // 1) list entries (ตรวจก่อนแตกจริง — ไม่พึ่ง tar อย่างเดียว) · cwd=backupDir + ชื่อ
+  //    ไฟล์แบบ relative (กันปัญหา drive-colon ของ tar บน Windows เหมือน runTar เดิม)
+  let listOut;
+  try { listOut = await runTar(['-tzf', archiveFile], backupDir); }
+  catch (e) { throw new Error('อ่านรายการไฟล์ในไฟล์สำรองไม่สำเร็จ: ' + e.message); }
+  const entries = String(listOut.stdout || '')
+    .split('\n').map(s => s.trim()).filter(Boolean)
+    .map(s => s.replace(/^\.\//, ''));                 // normalize ./ นำหน้า
+  if (!entries.length) throw new Error('ไฟล์สำรองว่างเปล่า');
+
+  const allowedPrefixes = scope === 'system'
+    ? [DATA_BASE + '/', OUT_BASE + '/']
+    : [`${DATA_BASE}/tenants/${tenantId}/`, `${OUT_BASE}/tenants/${tenantId}/`];
+  const allowedExact = scope === 'system'
+    ? [DATA_BASE, OUT_BASE]
+    : [`${DATA_BASE}/tenants/${tenantId}`, `${OUT_BASE}/tenants/${tenantId}`];
+
+  for (const e of entries) {
+    // กัน path traversal / absolute / drive-letter / null-byte
+    if (e.includes('..') || e.startsWith('/') || e.startsWith('\\') || /^[A-Za-z]:/.test(e) || e.includes('\0')) {
+      throw new Error('ไฟล์สำรองมี path ไม่ปลอดภัย — ปฏิเสธการกู้คืน');
+    }
+    // isolation: ทุก entry ต้องอยู่ใน subtree ที่อนุญาตเท่านั้น (กันเขียนทับ tenant อื่น/ไฟล์ system)
+    const eNorm = e.replace(/\/+$/, '');
+    const inScope = allowedPrefixes.some(p => e.startsWith(p)) || allowedExact.includes(eNorm);
+    if (!inScope) {
+      throw new Error('ไฟล์สำรองมีข้อมูลนอกขอบเขตที่อนุญาต — ปฏิเสธการกู้คืน (isolation)');
+    }
+  }
+
+  // 2) extract ลง staging ก่อน (อยู่ใน backupDir → volume เดียวกับ FS ของ backup) · relative path เท่านั้น
+  //    สำคัญ: แตกไฟล์ต้นฉบับ "ก่อน" สร้าง safety-backup เพราะ backupStamp มีความละเอียด
+  //    ระดับวินาที — ถ้า restore เกิดในวินาทีเดียวกับที่เพิ่งสร้าง backup ชื่อ safety จะชน
+  //    และทับไฟล์ต้นฉบับ; แตกลง staging ก่อนจึงกันความถูกต้องไว้ไม่ให้ขึ้นกับไฟล์ต้นฉบับ.
+  const stamp = backupStamp() + '-' + Math.random().toString(36).slice(2, 6);
+  const stagingName = '_restore-staging-' + stamp;
+  const stagingRoot = path.join(backupDir, stagingName);
+  fs.mkdirSync(stagingRoot, { recursive: true });
+  try {
+    await runTar(['-xzf', archiveFile, '-C', stagingName], backupDir);
+
+    // 3) safety-backup ของสถานะปัจจุบันก่อน swap (destructive แต่กู้กลับได้)
+    let safetyFile = null;
+    if (scope === 'system') {
+      safetyFile = (await createSystemBackup()).file;
+    } else {
+      const tDir = path.join(TENANT_DATA_DIR, tenantId);
+      const hasCurrent = fs.existsSync(tDir) && fs.readdirSync(tDir).length > 0;
+      if (hasCurrent) safetyFile = (await createTenantBackup(tenantId)).file;   // ไม่มีข้อมูลเดิม = ไม่มีอะไรต้องปกป้อง
+    }
+
+    // 4) atomic swap ทีละ subtree
+    const swaps = scope === 'system'
+      ? [
+          { src: path.join(stagingRoot, DATA_BASE), dest: DATA_DIR },
+          { src: path.join(stagingRoot, OUT_BASE),  dest: OUTPUT_DIR },
+        ]
+      : [
+          { src: path.join(stagingRoot, DATA_BASE, 'tenants', tenantId), dest: path.join(TENANT_DATA_DIR, tenantId) },
+          { src: path.join(stagingRoot, OUT_BASE, 'tenants', tenantId),  dest: path.join(TENANT_OUTPUT_DIR, tenantId) },
+        ];
+    const done = [];
+    try {
+      for (const s of swaps) {
+        if (!fs.existsSync(s.src)) continue;           // subtree ไม่มีใน archive (เช่นยังไม่มี outputs) → ข้าม
+        const oldDir = swapDir(s.src, s.dest, stamp);
+        done.push({ dest: s.dest, oldDir });
+      }
+    } catch (err) {
+      // rollback สิ่งที่ swap ไปแล้ว (best-effort)
+      for (const d of done.reverse()) {
+        try {
+          if (fs.existsSync(d.dest)) fs.rmSync(d.dest, { recursive: true, force: true });
+          if (d.oldDir && fs.existsSync(d.oldDir)) fs.renameSync(d.oldDir, d.dest);
+        } catch (re) { console.error('[restore] rollback failed:', re.message); }
+      }
+      throw err;
+    }
+    // สำเร็จ → ลบ .old
+    for (const d of done) {
+      if (d.oldDir) { try { fs.rmSync(d.oldDir, { recursive: true, force: true }); } catch {} }
+    }
+    return { ok: true, safetyFile, restored: swaps.map(s => path.basename(s.dest)) };
+  } finally {
+    try { if (fs.existsSync(stagingRoot)) fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch {}
+  }
+}
+
 // ---------- app ----------
 const app = express();
 // Trust the first proxy (Fly.io / Cloudflare / similar) so req.ip and req.secure
@@ -940,6 +1218,7 @@ tenantRouter.post('/api/login', (req, res) => {
     }
     if (!ok) {
       rlFail(ip);
+      writeAudit(req.tenant.id, { actor: { role: 'admin', username: 'admin' }, action: 'login.fail', ip, result: 'fail' });
       return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
     }
     rlOk(ip);
@@ -952,6 +1231,7 @@ tenantRouter.post('/api/login', (req, res) => {
     }
     const token = signToken({ role: 'admin', username: 'admin', tenant_id: req.tenant.id, tv: Number(auth.tv || 0), exp: Date.now() + 7*24*3600*1000 });
     res.setHeader('Set-Cookie', `auth=${token}; Path=${req.tbase}; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=${7*24*3600}`);
+    writeAudit(req.tenant.id, { actor: { role: 'admin', username: 'admin' }, action: 'login.success', ip, result: 'ok' });
     return res.json({ ok: true, role: 'admin', name: 'ผู้ดูแลระบบ' });
   }
 
@@ -960,11 +1240,13 @@ tenantRouter.post('/api/login', (req, res) => {
   const u = users.find(x => x.username === username);
   if (!u || !verifyPassword(password, u.password_salt, u.password_hash)) {
     rlFail(ip);
+    writeAudit(req.tenant.id, { actor: { username: String(username).slice(0, 60) }, action: 'login.fail', ip, result: 'fail' });
     return res.status(401).json({ error: 'username หรือรหัสผ่านไม่ถูกต้อง' });
   }
   rlOk(ip);
   const token = signToken(userSessionPayload(u, req.tenant.id));
   setAuthCookie(res, req, token);
+  writeAudit(req.tenant.id, { actor: { role: u.role, user_id: u.id, username: u.username }, action: 'login.success', ip, result: 'ok' });
   res.json({ ok: true, role: u.role, name: u.name });
 });
 
@@ -1026,6 +1308,7 @@ tenantRouter.post('/api/divisions', requireAdmin, (req, res) => {
   };
   list.push(div);
   save.divisions(list);
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'org.division.create', target: div.id, ip: req.ip, result: 'ok', meta: { name: div.name } });
   res.json(div);
 });
 tenantRouter.put('/api/divisions/:id', (req, res) => {
@@ -1045,6 +1328,7 @@ tenantRouter.put('/api/divisions/:id', (req, res) => {
   if (color !== undefined) d.color = color;
   d.updated_at = new Date().toISOString();
   save.divisions(list);
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'org.division.update', target: d.id, ip: req.ip, result: 'ok', meta: { name: d.name } });
   res.json(d);
 });
 tenantRouter.delete('/api/divisions/:id', requireAdmin, (req, res) => {
@@ -1054,8 +1338,10 @@ tenantRouter.delete('/api/divisions/:id', requireAdmin, (req, res) => {
   const id = req.params.id;
   if (load.sections().some(s => s.division_id === id)) return res.status(400).json({ error: 'ลบไม่ได้: มีแผนกในฝ่ายนี้อยู่' });
   if (load.users().some(u => u.division_id === id)) return res.status(400).json({ error: 'ลบไม่ได้: มี user ในฝ่ายนี้อยู่' });
+  const removed = list[idx];
   list.splice(idx, 1);
   save.divisions(list);
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'org.division.delete', target: id, ip: req.ip, result: 'ok', meta: { name: removed && removed.name } });
   res.json({ ok: true });
 });
 
@@ -1087,6 +1373,7 @@ tenantRouter.post('/api/sections', requireAdmin, (req, res) => {
   };
   list.push(sec);
   save.sections(list);
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'org.section.create', target: sec.id, ip: req.ip, result: 'ok', meta: { name: sec.name, division_id: sec.division_id } });
   res.json(sec);
 });
 tenantRouter.put('/api/sections/:id', (req, res) => {
@@ -1112,6 +1399,7 @@ tenantRouter.put('/api/sections/:id', (req, res) => {
   }
   sec.updated_at = new Date().toISOString();
   save.sections(list);
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'org.section.update', target: sec.id, ip: req.ip, result: 'ok', meta: { name: sec.name } });
   res.json(sec);
 });
 tenantRouter.delete('/api/sections/:id', requireAdmin, (req, res) => {
@@ -1121,8 +1409,10 @@ tenantRouter.delete('/api/sections/:id', requireAdmin, (req, res) => {
   const id = req.params.id;
   if (load.positions().some(p => p.section_id === id)) return res.status(400).json({ error: 'ลบไม่ได้: มีตำแหน่งในแผนกนี้อยู่' });
   if (load.users().some(u => u.section_id === id)) return res.status(400).json({ error: 'ลบไม่ได้: มี user ในแผนกนี้อยู่' });
+  const removed = list[idx];
   list.splice(idx, 1);
   save.sections(list);
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'org.section.delete', target: id, ip: req.ip, result: 'ok', meta: { name: removed && removed.name } });
   res.json({ ok: true });
 });
 
@@ -1162,6 +1452,7 @@ tenantRouter.post('/api/positions', requireAdmin, (req, res) => {
   };
   list.push(pos);
   save.positions(list);
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'org.position.create', target: pos.id, ip: req.ip, result: 'ok', meta: { name: pos.name, section_id: pos.section_id } });
   res.json(pos);
 });
 tenantRouter.put('/api/positions/:id', (req, res) => {
@@ -1187,6 +1478,7 @@ tenantRouter.put('/api/positions/:id', (req, res) => {
   }
   p.updated_at = new Date().toISOString();
   save.positions(list);
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'org.position.update', target: p.id, ip: req.ip, result: 'ok', meta: { name: p.name } });
   res.json(p);
 });
 tenantRouter.delete('/api/positions/:id', requireAdmin, (req, res) => {
@@ -1201,8 +1493,10 @@ tenantRouter.delete('/api/positions/:id', requireAdmin, (req, res) => {
   if (load.employees().some(e => e.position_id === req.params.id)) {
     return res.status(400).json({ error: 'ลบไม่ได้: ตำแหน่งนี้มีประวัติ interview ค้างอยู่ (active หรือ archived)' });
   }
+  const removed = list[idx];
   list.splice(idx, 1);
   save.positions(list);
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'org.position.delete', target: req.params.id, ip: req.ip, result: 'ok', meta: { name: removed && removed.name } });
   res.json({ ok: true });
 });
 
@@ -1290,6 +1584,7 @@ tenantRouter.post('/api/users', requireAdmin, (req, res) => {
   save.users(list);
   // Auto-create the user's anchor employee record (position-anchored model).
   autoCreateEmployeeForUser(user);
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'user.create', target: user.id, ip: req.ip, result: 'ok', meta: { username: user.username, role: user.role } });
   res.json(stripSecret(user));
 });
 
@@ -1357,6 +1652,8 @@ tenantRouter.put('/api/users/:id', requireAdmin, (req, res) => {
     archiveEmployeeForUser(u.id, 'position_change');
     autoCreateEmployeeForUser(u);
   }
+  // meta บันทึกเฉพาะฟิลด์ที่เปลี่ยน (ไม่เก็บค่ารหัส) · password:true = มีการเปลี่ยนรหัส
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'user.update', target: u.id, ip: req.ip, result: 'ok', meta: { username: u.username, role: u.role, pw_changed: !!body.password, scope_changed: scopeChanged } });
   res.json(stripSecret(u));
 });
 
@@ -1369,6 +1666,7 @@ tenantRouter.delete('/api/users/:id', requireAdmin, (req, res) => {
   save.users(list);
   // Archive the user's emp record (keep interview answers as position history).
   archiveEmployeeForUser(removed.id, 'user_deleted');
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'user.delete', target: removed.id, ip: req.ip, result: 'ok', meta: { username: removed.username, role: removed.role } });
   res.json({ ok: true });
 });
 
@@ -1497,6 +1795,7 @@ tenantRouter.put('/api/admin/auth', requireAdmin, (req, res) => {
   // re-issue token ให้ admin คนที่เพิ่งเปลี่ยน (session ปัจจุบัน) จะได้ไม่ถูกเด้งออก
   const token = signToken({ role: 'admin', username: 'admin', tenant_id: req.tenant.id, tv: newTv, exp: Date.now() + 7*24*3600*1000 });
   setAuthCookie(res, req, token);
+  writeAudit(req.tenant.id, { actor: { role: 'admin', username: 'admin' }, action: 'password.change', target: 'admin', ip: req.ip, result: 'ok' });
   res.json({ ok: true });
 });
 
@@ -1579,6 +1878,7 @@ tenantRouter.post('/api/admin/reanalyze-all', requireAdmin, (req, res) => {
         }
         const outDir = path.join(db.outDir, emp.id);
         if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+        archivePersonDocs(outDir);                 // เก็บเวอร์ชันเก่าก่อนสร้างทับ
         const docs = await generateDocuments(iv, db);
         for (const [n, content] of Object.entries(docs)) fs.writeFileSync(path.join(outDir, n), content);
         job.done++;
@@ -1597,6 +1897,7 @@ tenantRouter.post('/api/admin/reanalyze-all', requireAdmin, (req, res) => {
       if (interviews.length) {
         const md = await analyzeCompany(interviews, db);
         if (!fs.existsSync(db.cmpOutDir)) fs.mkdirSync(db.cmpOutDir, { recursive: true });
+        archiveCompanyReport(db.cmpOutDir);        // เก็บเวอร์ชันเก่าก่อนสร้างทับ
         fs.writeFileSync(path.join(db.cmpOutDir, 'optimization-report.md'), md);
       }
     } catch (e) { console.error('[reanalyze-all] company report:', e.message); }
@@ -1887,6 +2188,7 @@ tenantRouter.post('/api/interview/:id/finish', (req, res) => {
       }
       const outDir = path.join(db.outDir, iv.id);
       if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+      archivePersonDocs(outDir);                   // เก็บเวอร์ชันเก่าก่อนสร้างทับ
       const docs = await generateDocuments(iv, db);
       for (const [name, content] of Object.entries(docs)) {
         fs.writeFileSync(path.join(outDir, name), content);
@@ -2300,29 +2602,31 @@ function worklogDateRange(from, to) {
   return out;
 }
 
-// Aggregated worklog report over a date range for the viewer's team.
-// แยกออกมาเป็นฟังก์ชัน เพื่อให้ทั้ง JSON และ CSV ใช้ scope/where เดียวกัน (กันยอด
-// รั่วข้าม user ระหว่าง list กับ export).
-function computeWorklogReport(req) {
-  if (req.session.role === 'officer') return { applicable: false };
+// Aggregated worklog report over a date range.
+// core = รับ db + ตัวเลือก (from/to/แผนก + userFilter) ตรง ๆ → ใช้ where/สูตรเดียวกัน
+// ทั้งหน้า tenant (scope รายทีมของ viewer) และช่องทางผู้บริหารกลุ่ม /api/exec
+// (scope = ทั้งบริษัท) — กันยอดรั่ว/ไม่ตรงกันระหว่าง list, CSV และรายงานภาพรวม.
+// db มาจาก ctxDb() (tenant request) หรือ tenantDb(tid) ตรง ๆ (exec, ไม่มี ALS context).
+function computeWorklogReportFor(db, opts) {
+  opts = opts || {};
+  const userFilter = typeof opts.userFilter === 'function' ? opts.userFilter : () => true;
   const today = todayLocal();
-  let to = String(req.query.to || '').trim();
-  let from = String(req.query.from || '').trim();
+  let to = String(opts.toRaw || '').trim();
+  let from = String(opts.fromRaw || '').trim();
   if (!WORKLOG_DATE_RE.test(to) || to > today) to = today;
   if (!WORKLOG_DATE_RE.test(from)) from = today.slice(0, 8) + '01'; // default: 1st of this month
   if (from > to) from = to;
   let dates = worklogDateRange(from, to);
   if (dates.length > 92) dates = dates.slice(-92); // cap ~3 months of file reads
 
-  const fDiv = String(req.query.division_id || '').trim();
-  const fSec = String(req.query.section_id || '').trim();
-  const db = ctxDb();
-  const divMap = Object.fromEntries(load.divisions().map(d => [d.id, d.name]));
-  const secMap = Object.fromEntries(load.sections().map(s => [s.id, s.name]));
-  const posMap = Object.fromEntries(load.positions().map(p => [p.id, p.name]));
+  const fDiv = String(opts.fDiv || '').trim();
+  const fSec = String(opts.fSec || '').trim();
+  const divMap = Object.fromEntries(db.divisions().map(d => [d.id, d.name]));
+  const secMap = Object.fromEntries(db.sections().map(s => [s.id, s.name]));
+  const posMap = Object.fromEntries(db.positions().map(p => [p.id, p.name]));
 
-  const users = load.users().filter(u =>
-    u.id !== req.session.user_id && canViewUserWorklog(req.session, u) &&
+  const users = db.users().filter(u =>
+    userFilter(u) &&
     (!fDiv || u.division_id === fDiv) && (!fSec || u.section_id === fSec));
 
   const byCategory = {};
@@ -2388,6 +2692,17 @@ function computeWorklogReport(req) {
     byCategory: byCat,
     members,
   };
+}
+
+// wrapper สำหรับ tenant route — สกัด scope จาก session/req (พฤติกรรมเดิมไม่เปลี่ยน):
+// ตัด officer ออก, ไม่นับตัวเอง, และ row-level ผ่าน canViewUserWorklog เหมือนเดิม.
+function computeWorklogReport(req) {
+  if (req.session.role === 'officer') return { applicable: false };
+  return computeWorklogReportFor(ctxDb(), {
+    fromRaw: req.query.from, toRaw: req.query.to,
+    fDiv: req.query.division_id, fSec: req.query.section_id,
+    userFilter: (u) => u.id !== req.session.user_id && canViewUserWorklog(req.session, u),
+  });
 }
 
 // JSON report (หน้า list)
@@ -2508,6 +2823,7 @@ tenantRouter.post('/api/company/analyze', requireRoles('admin', 'executive', 'ma
     try {
       const md = await analyzeCompany(interviews, db);
       if (!fs.existsSync(db.cmpOutDir)) fs.mkdirSync(db.cmpOutDir, { recursive: true });
+      archiveCompanyReport(db.cmpOutDir);          // เก็บเวอร์ชันเก่าก่อนสร้างทับ
       fs.writeFileSync(path.join(db.cmpOutDir, 'optimization-report.md'), md);
       job.done = true;
     } catch (e) {
@@ -2526,6 +2842,62 @@ tenantRouter.get('/api/company/analyze/status', requireRoles('admin', 'executive
     || { running: false, done: false, error: null, count: 0, startedAt: null, finishedAt: null };
   const hasReport = fs.existsSync(path.join(ctxDb().cmpOutDir, 'optimization-report.md'));
   res.json({ ...job, hasReport });
+});
+
+// ---------- Analysis version history (ดูผลวิเคราะห์เวอร์ชันเก่า) ----------
+// literal routes ต้อง register ก่อน param routes (/:id/:file) — ลำดับสำคัญ (standards §1)
+const HIST_STAMP_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9a-f]{4}$/;
+const HIST_FILE_RE = /^[A-Za-z0-9._-]+$/;
+// company report history — รายการเวอร์ชัน
+tenantRouter.get('/api/outputs/_company/history', requireRoles('admin', 'executive', 'manager'), (req, res) => {
+  const dir = path.join(ctxDb().cmpOutDir, '_history');
+  let versions = [];
+  try {
+    if (fs.existsSync(dir)) {
+      versions = fs.readdirSync(dir).filter(f => f.endsWith('.md')).map(f => {
+        const stamp = (f.match(/optimization-report-(.+)\.md$/) || [])[1] || f;
+        let size = 0; try { size = fs.statSync(path.join(dir, f)).size; } catch {}
+        return { file: f, stamp, label: stampLabel(stamp), size };
+      }).sort((a, b) => b.stamp.localeCompare(a.stamp));
+    }
+  } catch (e) { console.error('[history] company list:', e.message); }
+  res.json({ versions });
+});
+// company report history — เปิด/ดาวน์โหลดเวอร์ชันที่เลือก
+tenantRouter.get('/api/outputs/_company/history/:file', requireRoles('admin', 'executive', 'manager'), (req, res) => {
+  const file = req.params.file;
+  if (!HIST_FILE_RE.test(file)) return res.status(400).send('bad filename');
+  const p = path.join(ctxDb().cmpOutDir, '_history', file);
+  if (!fs.existsSync(p)) return res.status(404).send('not found');
+  res.sendFile(p);
+});
+// per-employee doc history — รายการเวอร์ชัน (แต่ละเวอร์ชันมีเอกสารครบชุด)
+tenantRouter.get('/api/outputs/:id/history', (req, res) => {
+  const emp = load.employees().find(e => e.id === req.params.id);
+  if (!canViewEmployee(req.session, emp)) return res.status(403).send('forbidden');
+  const safeId = String(req.params.id).replace(/[^a-zA-Z0-9_]/g, '');
+  const dir = path.join(ctxDb().outDir, safeId, '_history');
+  let versions = [];
+  try {
+    if (fs.existsSync(dir)) {
+      versions = fs.readdirSync(dir).filter(s => { try { return fs.statSync(path.join(dir, s)).isDirectory(); } catch { return false; } }).map(stamp => {
+        let files = []; try { files = fs.readdirSync(path.join(dir, stamp)).filter(f => { try { return fs.statSync(path.join(dir, stamp, f)).isFile(); } catch { return false; } }); } catch {}
+        return { stamp, label: stampLabel(stamp), files };
+      }).sort((a, b) => b.stamp.localeCompare(a.stamp));
+    }
+  } catch (e) { console.error('[history] person list:', e.message); }
+  res.json({ versions });
+});
+// per-employee doc history — เปิด/ดาวน์โหลดเอกสารในเวอร์ชันที่เลือก
+tenantRouter.get('/api/outputs/:id/history/:stamp/:file', (req, res) => {
+  const { id, stamp, file } = req.params;
+  if (!HIST_STAMP_RE.test(stamp) || !HIST_FILE_RE.test(file)) return res.status(400).send('bad path');
+  const emp = load.employees().find(e => e.id === id);
+  if (!canViewEmployee(req.session, emp)) return res.status(403).send('forbidden');
+  const safeId = String(id).replace(/[^a-zA-Z0-9_]/g, '');
+  const p = path.join(ctxDb().outDir, safeId, '_history', stamp, file);
+  if (!fs.existsSync(p)) return res.status(404).send('not found');
+  res.sendFile(p);
 });
 
 // Download company-wide report — admin + executive + manager
@@ -2563,6 +2935,7 @@ tenantRouter.post('/api/admin/backup/create', requireAdmin, async (req, res) => 
   backupInProgress.add(key);
   try {
     const result = await createTenantBackup(req.tenant.id);
+    writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'backup.create', target: result.file, ip: req.ip, result: 'ok', meta: { size: result.size } });
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message || 'สำรองข้อมูลไม่สำเร็จ' });
@@ -2588,8 +2961,43 @@ tenantRouter.post('/api/admin/backup/delete', requireAdmin, (req, res) => {
   if (!BACKUP_FILE_RE.test(file)) return res.status(400).json({ error: 'ชื่อไฟล์ไม่ถูกต้อง' });
   const p = path.join(backupDirFor(req.tenant.id), file);
   if (!fs.existsSync(p)) return res.status(404).json({ error: 'ไม่พบไฟล์' });
-  try { fs.unlinkSync(p); res.json({ ok: true }); }
+  try {
+    fs.unlinkSync(p);
+    writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'backup.delete', target: file, ip: req.ip, result: 'ok' });
+    res.json({ ok: true });
+  }
   catch (e) { res.status(500).json({ error: 'ลบไฟล์ไม่สำเร็จ: ' + e.message }); }
+});
+
+// ---------- Restore (กู้คืนข้อมูล) — งาน A3 · destructive ----------
+// กู้คืนของ "บริษัทนี้เท่านั้น": tenant มาจาก req.tenant.id (session/URL) ไม่ใช่ body.
+// มี safety-backup อัตโนมัติก่อน → validate entry-list → atomic swap (ดู restoreArchive).
+tenantRouter.post('/api/admin/backup/restore', requireAdmin, async (req, res) => {
+  const body = req.body || {};
+  const file = String(body.filename || body.file || '');
+  if (!BACKUP_FILE_RE.test(file)) return res.status(400).json({ error: 'ชื่อไฟล์ไม่ถูกต้อง' });
+  if (body.confirm !== 'RESTORE') {
+    return res.status(400).json({ error: 'ต้องส่ง confirm: "RESTORE" เพื่อยืนยันการเขียนทับข้อมูลปัจจุบัน' });
+  }
+  const tid = req.tenant.id;                 // ⚠️ จาก session ไม่ใช่ body (กันกู้ข้าม tenant)
+  const key = 'restore-tenant:' + tid;
+  if (backupInProgress.has(key)) return res.status(409).json({ error: 'กำลังกู้คืนอยู่ กรุณารอสักครู่' });
+  backupInProgress.add(key);
+  try {
+    const result = await restoreArchive(file, { scope: 'tenant', tenantId: tid });
+    writeAudit(tid, { actor: tenantActor(req), action: 'backup.restore', target: file, ip: req.ip, result: 'ok', meta: { safety: result.safetyFile } });
+    res.json({ ok: true, safety_backup: result.safetyFile });
+  } catch (e) {
+    writeAudit(tid, { actor: tenantActor(req), action: 'backup.restore', target: file, ip: req.ip, result: 'fail', meta: { error: String(e && e.message || '').slice(0, 200) } });
+    res.status(400).json({ error: e.message || 'กู้คืนไม่สำเร็จ' });
+  } finally {
+    backupInProgress.delete(key);
+  }
+});
+
+// ---------- Audit view (admin — เห็นเฉพาะ tenant ตัวเอง) — งาน A2 ----------
+tenantRouter.get('/api/admin/audit', requireAdmin, (req, res) => {
+  res.json({ items: readAuditTail(req.tenant.id, req.query.limit) });
 });
 
 // ---------- Static page routes ----------
@@ -2904,6 +3312,7 @@ tenantRouter.post('/api/admin/wipe/users', requireAdmin, requireConfirmDelete, (
     }
   }
   save.employees(emps);
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'danger.wipe.users', ip: req.ip, result: 'ok' });
   res.json({ ok: true, message: 'ลบ user ทั้งหมด · emp records ถูก archive ไว้เป็นประวัติ' });
 });
 
@@ -2916,6 +3325,7 @@ tenantRouter.post('/api/admin/wipe/org', requireAdmin, requireConfirmDelete, (re
   save.employees([]);
   wipeInterviewsFolder();
   wipeOutputsFolder();
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'danger.wipe.org', ip: req.ip, result: 'ok' });
   res.json({ ok: true, message: 'ลบโครงสร้างองค์กร + users + emp + interviews · เก็บ admin + ชื่อบริษัท' });
 });
 
@@ -2931,6 +3341,7 @@ tenantRouter.post('/api/admin/wipe/interviews', requireAdmin, requireConfirmDele
     }
   }
   save.employees(emps);
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'danger.wipe.interviews', ip: req.ip, result: 'ok' });
   res.json({ ok: true, message: 'ลบคำตอบ interview + เอกสาร JD/KPI · reset สถานะเป็น not_started' });
 });
 
@@ -2946,6 +3357,7 @@ tenantRouter.post('/api/admin/wipe/all', requireAdmin, requireConfirmDelete, (re
   // Preserve the company name across a factory reset (don't revert to placeholder).
   const keepCompany = load.company();
   save.company({ name: keepCompany.name || 'บริษัทตัวอย่าง จำกัด', name_en: keepCompany.name_en || 'Sample Company Ltd.', updated_at: new Date().toISOString() });
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'danger.wipe.all', ip: req.ip, result: 'ok' });
   res.json({ ok: true, message: 'Factory reset เรียบร้อย · เก็บแค่ admin password' });
 });
 
@@ -3015,7 +3427,11 @@ app.post('/api/super/login', (req, res) => {
   } else if (auth.master) {
     ok = password === auth.master;
   }
-  if (!ok) { rlFail(ip); return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' }); }
+  if (!ok) {
+    rlFail(ip);
+    writeAudit('system', { actor: { role: 'super' }, action: 'login.fail', ip, result: 'fail' });
+    return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
+  }
   rlOk(ip);
   // FIX 4 — ยังใช้รหัส default super อยู่ไหม (มี plaintext ตรงนี้) → บังคับเปลี่ยน
   if (password === 'super!2026' && !auth.must_change) {
@@ -3024,6 +3440,7 @@ app.post('/api/super/login', (req, res) => {
   }
   const token = signToken({ role: 'super', tv: Number(auth.tv || 0), exp: Date.now() + 7*24*3600*1000 });
   res.setHeader('Set-Cookie', `super_auth=${token}; Path=/; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=${7*24*3600}`);
+  writeAudit('system', { actor: { role: 'super' }, action: 'login.success', ip, result: 'ok' });
   res.json({ ok: true });
 });
 
@@ -3060,6 +3477,7 @@ app.post('/api/super/tenants', requireSuperAdmin, (req, res) => {
   tenants.push(newTenant);
   saveTenants(tenants);
   initTenantFolder(cleanId, admin_password || 'WWN2026!Init', newTenant.name);
+  writeAudit('system', { actor: { role: 'super' }, action: 'tenant.create', target: cleanId, ip: req.ip, result: 'ok', meta: { name: newTenant.name } });
   res.json({ ...newTenant, url_path: '/t/' + cleanId });
 });
 
@@ -3099,6 +3517,7 @@ app.delete('/api/super/tenants/:id', requireSuperAdmin, (req, res) => {
   if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
   const out = path.join(TENANT_OUTPUT_DIR, req.params.id);
   if (fs.existsSync(out)) fs.rmSync(out, { recursive: true, force: true });
+  writeAudit('system', { actor: { role: 'super' }, action: 'tenant.delete', target: req.params.id, ip: req.ip, result: 'ok' });
   res.json({ ok: true });
 });
 
@@ -3149,6 +3568,9 @@ app.post('/api/super/tenants/:id/reset-admin-password', requireSuperAdmin, (req,
   const newTv = Number(prev.tv || 0) + 1;
   // R2-3 — super เป็นคนตั้งรหัสนี้ (super รู้ค่า) → บังคับ tenant admin เปลี่ยนก่อนใช้งาน
   db.saveAuth({ master_salt: salt, master_hash: hash, tv: newTv, must_change: true, updated_at: new Date().toISOString() });
+  // บันทึกทั้ง 2 มุม: system (super ทำอะไร) + tenant (บริษัทนั้นถูกรีเซ็ตรหัส admin)
+  writeAudit('system', { actor: { role: 'super' }, action: 'password.reset', target: 'admin@' + req.params.id, ip: req.ip, result: 'ok' });
+  writeAudit(req.params.id, { actor: { role: 'super' }, action: 'password.reset', target: 'admin', ip: req.ip, result: 'ok' });
   res.json({ ok: true });
 });
 
@@ -3165,6 +3587,7 @@ app.put('/api/super/password', requireSuperAdmin, (req, res) => {
   // re-issue super token ให้ session ปัจจุบันไม่หลุด
   const token = signToken({ role: 'super', tv: newTv, exp: Date.now() + 7*24*3600*1000 });
   res.setHeader('Set-Cookie', `super_auth=${token}; Path=/; HttpOnly; SameSite=Lax${cookieSuffix}; Max-Age=${7*24*3600}`);
+  writeAudit('system', { actor: { role: 'super' }, action: 'password.change', target: 'super', ip: req.ip, result: 'ok' });
   res.json({ ok: true });
 });
 
@@ -3179,6 +3602,7 @@ app.post('/api/super/backup/create', requireSuperAdmin, async (req, res) => {
   backupInProgress.add(key);
   try {
     const result = await createSystemBackup();
+    writeAudit('system', { actor: { role: 'super' }, action: 'backup.create', target: result.file, ip: req.ip, result: 'ok', meta: { size: result.size } });
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message || 'สำรองข้อมูลไม่สำเร็จ' });
@@ -3204,8 +3628,41 @@ app.post('/api/super/backup/delete', requireSuperAdmin, (req, res) => {
   if (!BACKUP_FILE_RE.test(file)) return res.status(400).json({ error: 'ชื่อไฟล์ไม่ถูกต้อง' });
   const p = path.join(BACKUP_SYSTEM_DIR, file);
   if (!fs.existsSync(p)) return res.status(404).json({ error: 'ไม่พบไฟล์' });
-  try { fs.unlinkSync(p); res.json({ ok: true }); }
+  try {
+    fs.unlinkSync(p);
+    writeAudit('system', { actor: { role: 'super' }, action: 'backup.delete', target: file, ip: req.ip, result: 'ok' });
+    res.json({ ok: true });
+  }
   catch (e) { res.status(500).json({ error: 'ลบไฟล์ไม่สำเร็จ: ' + e.message }); }
+});
+
+// Restore whole-system backup (super-admin only) — งาน A3 · destructive
+// safety-backup ก่อน → validate entry-list → atomic swap ทั้ง data/+outputs/
+app.post('/api/super/backup/restore', requireSuperAdmin, async (req, res) => {
+  const body = req.body || {};
+  const file = String(body.filename || body.file || '');
+  if (!BACKUP_FILE_RE.test(file)) return res.status(400).json({ error: 'ชื่อไฟล์ไม่ถูกต้อง' });
+  if (body.confirm !== 'RESTORE') {
+    return res.status(400).json({ error: 'ต้องส่ง confirm: "RESTORE" เพื่อยืนยันการเขียนทับข้อมูลทั้งระบบ' });
+  }
+  const key = 'restore-system';
+  if (backupInProgress.has(key)) return res.status(409).json({ error: 'กำลังกู้คืนอยู่ กรุณารอสักครู่' });
+  backupInProgress.add(key);
+  try {
+    const result = await restoreArchive(file, { scope: 'system' });
+    writeAudit('system', { actor: { role: 'super' }, action: 'backup.restore', target: file, ip: req.ip, result: 'ok', meta: { scope: 'system', safety: result.safetyFile } });
+    res.json({ ok: true, safety_backup: result.safetyFile });
+  } catch (e) {
+    writeAudit('system', { actor: { role: 'super' }, action: 'backup.restore', target: file, ip: req.ip, result: 'fail', meta: { error: String(e && e.message || '').slice(0, 200) } });
+    res.status(400).json({ error: e.message || 'กู้คืนไม่สำเร็จ' });
+  } finally {
+    backupInProgress.delete(key);
+  }
+});
+
+// Audit view (super — system log)
+app.get('/api/super/audit', requireSuperAdmin, (req, res) => {
+  res.json({ items: readAuditTail('system', req.query.limit) });
 });
 
 // Auto-backup settings (whole-system). Returns/accepts { enabled, time, retention }.
@@ -3233,6 +3690,320 @@ app.get('/super/login',   (req, res) => res.sendFile(path.join(ROOT, 'public', '
 app.get('/super',         requireSuperAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'super-tenants.html')));
 app.get('/super/tenants', requireSuperAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'super-tenants.html')));
 app.get('/super/backup',  requireSuperAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'super-backup.html')));
+
+// ============================================================
+// Group-exec realm (บัญชีผู้บริหารกลุ่ม) — batch2 ช่วง B
+// ============================================================
+// "ช่องทางแยกจริง": บัญชีเดียวใช้ร่วม อ่านได้ทุกบริษัทแบบ read-only เฉพาะรายงาน
+// สรุป/ภาพรวม. เจตนาออกแบบให้ปลอดภัยสุด:
+//   - cookie แยก `group_auth` (Path=/, SameSite=Strict, HttpOnly) · token role='group_exec'
+//     ไม่มี tenant_id — ไม่แตะ authMiddleware/tenant isolation เดิมเลย.
+//   - endpoint แยก /api/exec/* เรียก tenantDb(tid) read method ตรง ๆ → ไม่มี write/
+//     analyze/backup/admin ให้เรียกตั้งแต่ต้น (ปลอดภัยกว่า block ทีละอัน).
+//   - default-disabled: ไม่มีไฟล์ = ปิด · super เป็นคนตั้งรหัสเปิดใช้ (ไม่ ensure ตอน boot).
+//   - tv revocation + must_change gate + rate-limit (rlCheck/rlFail/rlOk) reuse ของเดิม.
+const GROUP_EXEC_AUTH_FILE = path.join(DATA_DIR, '_group_exec_auth.json');
+const TENANT_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;   // กัน path traversal + ตรงกับ id ที่ super สร้าง
+// อ่าน credential — ไม่มีไฟล์ = null (บัญชียัง "ไม่มีตัวตน" จนกว่า super จะเปิด)
+function readGroupAuth() { return readJson(GROUP_EXEC_AUTH_FILE, null); }
+function writeGroupAuth(o) { writeJson(GROUP_EXEC_AUTH_FILE, o); }
+
+// parse session จาก group_auth cookie — คืน payload เฉพาะเมื่อ enabled + tv ตรง.
+// เช็ค enabled ทุก request (fail-safe: super สั่งปิด = ตายทันที ไม่พึ่ง tv อย่างเดียว).
+// ไม่เช็ค must_change ที่นี่ (ให้ gate จัดการ) เพื่อให้ /me และ /password ยังทำงานได้.
+function parseGroupSession(req) {
+  const token = parseCookie(req, 'group_auth');
+  const s = verifyToken(token);
+  if (!s || s.role !== 'group_exec') return null;
+  const ga = readGroupAuth();
+  if (!ga || ga.enabled !== true) return null;                    // default-disabled / ปิดใช้งาน
+  if (Number(ga.tv || 0) !== Number(s.tv || 0)) return null;      // revoke ผ่าน token version
+  return s;
+}
+function requireGroupExec(req, res, next) {
+  const s = req.groupSession || parseGroupSession(req);
+  if (!s) return res.status(401).json({ error: 'เฉพาะบัญชีผู้บริหารกลุ่ม (Group Exec)' });
+  req.groupSession = s;
+  next();
+}
+function setGroupCookie(res, token) {
+  // SameSite=Strict — บัญชี god-view (เห็นทุกบริษัท) จึงเข้มสุด
+  res.setHeader('Set-Cookie', `group_auth=${token}; Path=/; HttpOnly; SameSite=Strict${cookieSuffix}; Max-Age=${7*24*3600}`);
+}
+function clearGroupCookie(res) {
+  res.setHeader('Set-Cookie', `group_auth=; Path=/; HttpOnly; SameSite=Strict${cookieSuffix}; Max-Age=0`);
+}
+
+// ---------- must_change gate (mirror super gate) ----------
+// ขณะ must_change===true บล็อกทุก /api/exec/* ยกเว้น allowlist. req.path ที่นี่ถูกตัด
+// prefix '/api/exec' แล้ว (พฤติกรรม app.use(path, fn) ของ express) → ใช้ subpath ล้วน.
+const EXEC_MUST_CHANGE_ALLOW = new Set([
+  'PUT /password',   // เปลี่ยนรหัส (เคลียร์ flag)
+  'GET /me',         // เช็คสถานะ must_change (modal เรียก)
+  'POST /logout',    // ออกจากระบบ
+]);
+app.use('/api/exec', (req, res, next) => {
+  const s = parseGroupSession(req);
+  if (!s) return next();                                 // ไม่มี session (รวม /login) → ให้ route/guard ตอบเอง
+  req.groupSession = s;                                   // reuse ต่อใน requireGroupExec
+  const ga = readGroupAuth() || {};
+  if (!ga.must_change) return next();
+  if (EXEC_MUST_CHANGE_ALLOW.has(req.method + ' ' + req.path)) return next();
+  return res.status(403).json({ error: 'ต้องเปลี่ยนรหัสผ่านเริ่มต้นก่อนใช้งาน', code: 'must_change' });
+});
+
+// ---------- Provisioning (super เท่านั้น) ----------
+app.get('/api/super/group-exec', requireSuperAdmin, (req, res) => {
+  const ga = readGroupAuth() || {};
+  res.json({ enabled: ga.enabled === true, must_change: !!ga.must_change, updated_at: ga.updated_at || null });
+});
+// ตั้ง/รีเซ็ตรหัส → enabled=true, must_change=true (super รู้ค่า), bump tv (kill token เก่า)
+app.put('/api/super/group-exec/password', requireSuperAdmin, (req, res) => {
+  const { password } = req.body || {};
+  if (!password || String(password).length < 6) return res.status(400).json({ error: 'รหัสใหม่ต้องยาวอย่างน้อย 6 ตัว' });
+  const prev = readGroupAuth() || {};
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = hashPassword(password, salt);
+  const newTv = Number(prev.tv || 0) + 1;
+  writeGroupAuth({ enabled: true, master_salt: salt, master_hash: hash, tv: newTv, must_change: true, updated_at: new Date().toISOString() });
+  writeAudit('system', { actor: { role: 'super' }, action: 'group_exec.password.set', target: 'group_exec', ip: req.ip, result: 'ok' });
+  res.json({ ok: true });
+});
+// ปิดใช้งาน → enabled=false + bump tv (session ปัจจุบันตายทันที) · คง hash ไว้
+app.post('/api/super/group-exec/disable', requireSuperAdmin, (req, res) => {
+  const prev = readGroupAuth() || {};
+  const newTv = Number(prev.tv || 0) + 1;
+  writeGroupAuth(Object.assign({}, prev, { enabled: false, tv: newTv, updated_at: new Date().toISOString() }));
+  writeAudit('system', { actor: { role: 'super' }, action: 'group_exec.disable', target: 'group_exec', ip: req.ip, result: 'ok' });
+  res.json({ ok: true });
+});
+
+// ---------- Login / logout / me / self password ----------
+app.post('/api/exec/login', (req, res) => {
+  const ip = req.ip || 'unknown';
+  const gate = rlCheck(ip);
+  if (!gate.allowed) {
+    res.setHeader('Retry-After', String(gate.retryAfter));
+    return res.status(429).json({ error: `เข้าสู่ระบบล้มเหลวบ่อยเกินไป — ลองใหม่อีก ${gate.retryAfter} วินาที` });
+  }
+  const { password } = req.body || {};
+  if (!password) return res.status(400).json({ error: 'กรอกรหัสผ่าน' });
+  const ga = readGroupAuth();
+  if (!ga || ga.enabled !== true) {
+    // default-disabled → ปฏิเสธก่อนเทียบรหัส (ไม่มีบัญชีให้เข้า)
+    return res.status(403).json({ error: 'บัญชีผู้บริหารกลุ่มยังไม่เปิดใช้งาน' });
+  }
+  if (!verifyPassword(password, ga.master_salt, ga.master_hash)) {
+    rlFail(ip);
+    writeAudit('system', { actor: { role: 'group_exec' }, action: 'login.fail', ip, result: 'fail' });
+    return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
+  }
+  rlOk(ip);
+  const token = signToken({ role: 'group_exec', tv: Number(ga.tv || 0), exp: Date.now() + 7*24*3600*1000 });
+  setGroupCookie(res, token);
+  writeAudit('system', { actor: { role: 'group_exec' }, action: 'login.success', ip, result: 'ok' });
+  res.json({ ok: true, must_change: !!ga.must_change });
+});
+
+app.post('/api/exec/logout', (req, res) => {
+  clearGroupCookie(res);
+  res.json({ ok: true });
+});
+
+app.get('/api/exec/me', requireGroupExec, (req, res) => {
+  const ga = readGroupAuth() || {};
+  res.json({ role: 'group_exec', readonly: true, must_change: !!ga.must_change });
+});
+
+// เปลี่ยนรหัสตัวเอง → เคลียร์ must_change + bump tv + re-issue cookie (ไม่เด้งตัวเอง)
+app.put('/api/exec/password', requireGroupExec, (req, res) => {
+  const { password } = req.body || {};
+  if (!password || String(password).length < 6) return res.status(400).json({ error: 'รหัสใหม่ต้องยาวอย่างน้อย 6 ตัว' });
+  const prev = readGroupAuth() || {};
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = hashPassword(password, salt);
+  const newTv = Number(prev.tv || 0) + 1;
+  writeGroupAuth(Object.assign({}, prev, { enabled: true, master_salt: salt, master_hash: hash, tv: newTv, must_change: false, updated_at: new Date().toISOString() }));
+  const token = signToken({ role: 'group_exec', tv: newTv, exp: Date.now() + 7*24*3600*1000 });
+  setGroupCookie(res, token);   // re-issue ให้ session ปัจจุบัน (tv ใหม่)
+  writeAudit('system', { actor: { role: 'group_exec' }, action: 'password.change', target: 'group_exec', ip: req.ip, result: 'ok' });
+  res.json({ ok: true });
+});
+
+// ---------- Read endpoints (requireGroupExec, GET เท่านั้น) ----------
+// audit "เข้าดูบริษัท" แบบ throttle ต่อ tid (กัน log ท่วมเวลา portal โหลดหลาย panel/รีเฟรช)
+const _execViewSeen = new Map();                 // key(tid|all) -> lastTs
+const EXEC_VIEW_THROTTLE_MS = 2 * 60 * 1000;
+function auditExecView(req, tid) {
+  const key = tid || 'all';
+  const now = Date.now();
+  if (now - (_execViewSeen.get(key) || 0) < EXEC_VIEW_THROTTLE_MS) return;
+  _execViewSeen.set(key, now);
+  writeAudit('system', { actor: { role: 'group_exec' }, action: 'group_exec.view', target: tid || 'all', tenant_id: tid || null, ip: req.ip, result: 'ok' });
+}
+// validate :tid (regex กัน traversal + findTenant) → คืน tenant หรือ ส่ง 4xx แล้วคืน null.
+// ยิง view audit ทุกครั้งที่เข้าดูบริษัทหนึ่ง ๆ (throttled).
+function execResolveTenant(req, res) {
+  const tid = String(req.params.tid || '');
+  if (!TENANT_ID_RE.test(tid)) { res.status(400).json({ error: 'tenant id ไม่ถูกต้อง' }); return null; }
+  const t = findTenant(tid);
+  if (!t) { res.status(404).json({ error: 'ไม่พบบริษัทนี้' }); return null; }
+  auditExecView(req, tid);
+  return t;
+}
+// นับสถานะสัมภาษณ์ของ emp active
+function interviewStatCount(emps) {
+  const c = { total: emps.length, not_started: 0, in_progress: 0, completed: 0 };
+  for (const e of emps) { const s = e.interviewStatus || 'not_started'; if (c[s] == null) c[s] = 0; c[s]++; }
+  return c;
+}
+// % คนที่กรอกงานวันนี้ (บันทึกอย่างน้อย 1 งาน หรือแจ้งลา) — ไม่นับ admin
+function worklogTodayStat(db, users, today) {
+  const workUsers = users.filter(u => u.role !== 'admin');
+  let logged = 0;
+  for (const u of workUsers) {
+    try {
+      const wl = db.loadWorklog(u.id, today);
+      if (wl && (wl.dayOff || (Array.isArray(wl.entries) && wl.entries.some(e => e.task && String(e.task).trim())))) logged++;
+    } catch {}
+  }
+  return { total: workUsers.length, logged, pct: workUsers.length ? Math.round(logged / workUsers.length * 100) : 0 };
+}
+
+// รายการทุกบริษัท + สถิติสรุปต่อบริษัท · try/catch รายบริษัท (1 บริษัทพัง ≠ ล้มทั้ง response)
+app.get('/api/exec/tenants', requireGroupExec, (req, res) => {
+  const today = todayLocal();
+  const tenants = [];
+  for (const t of loadTenants()) {
+    try {
+      const db = tenantDb(t.id);
+      const emps = db.employees().filter(e => !e.archived);
+      const users = db.users();
+      const iv = interviewStatCount(emps);
+      const wl = worklogTodayStat(db, users, today);
+      tenants.push({
+        id: t.id, name: t.name,
+        user_count: users.length,
+        employee_count: emps.length,
+        interview: iv,
+        interview_pct: iv.total ? Math.round(iv.completed / iv.total * 100) : 0,
+        worklog: wl,
+      });
+    } catch (e) {
+      console.error('[exec/tenants]', t.id, '-', e && e.message);
+      tenants.push({ id: t.id, name: t.name, error: true });   // บริษัทว่าง/พัง = แสดง error flag ไม่ล้มทั้งก้อน
+    }
+  }
+  auditExecView(req, null);   // เข้าดูภาพรวม (throttled key='all')
+  res.json({ tenants });
+});
+
+// สรุป dashboard ของบริษัทหนึ่ง (นับ/สถานะ ไม่ใช่ transcript รายคน)
+app.get('/api/exec/tenant/:tid/summary', requireGroupExec, (req, res) => {
+  const t = execResolveTenant(req, res); if (!t) return;
+  try {
+    const db = tenantDb(t.id);
+    const today = todayLocal();
+    const emps = db.employees().filter(e => !e.archived);
+    const users = db.users();
+    const iv = interviewStatCount(emps);
+    const company = db.company() || {};
+    res.json({
+      tenant: { id: t.id, name: t.name },
+      company: { name: company.name || t.name, name_en: company.name_en || '' },
+      employees: emps.length,
+      users: users.length,
+      interview: iv,
+      interview_pct: iv.total ? Math.round(iv.completed / iv.total * 100) : 0,
+      org: { divisions: db.divisions().length, sections: db.sections().length, positions: db.positions().length },
+      worklog: worklogTodayStat(db, users, today),
+      hasOptimizationReport: fs.existsSync(path.join(db.cmpOutDir, 'optimization-report.md')),
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'อ่านข้อมูลบริษัทไม่สำเร็จ' });
+  }
+});
+
+// worklog report ของทั้งบริษัท (compute เดียวกับหน้า tenant, scope=ทั้งบริษัท) · JSON หรือ CSV
+app.get('/api/exec/tenant/:tid/report', requireGroupExec, (req, res) => {
+  const t = execResolveTenant(req, res); if (!t) return;
+  let rep;
+  try {
+    const db = tenantDb(t.id);
+    rep = computeWorklogReportFor(db, {
+      fromRaw: req.query.from, toRaw: req.query.to,
+      fDiv: req.query.division_id, fSec: req.query.section_id,
+      userFilter: () => true,   // ทั้งบริษัท (ไม่มี viewer scope)
+    });
+  } catch (e) {
+    return res.status(500).json({ error: 'สร้างรายงานไม่สำเร็จ' });
+  }
+  if (String(req.query.format || '').toLowerCase() === 'csv') {
+    const STATUS_TH = { good: 'ดี', ok: 'พอใช้', low: 'ต่ำ', none: 'ยังไม่บันทึก' };
+    const head = ['ชื่อ', 'ตำแหน่ง', 'ฝ่าย', 'แผนก', 'ชั่วโมงบันทึก', 'วันบันทึก', 'วันทำงานที่คาดหวัง', 'วันลา/หยุด', 'วันขาด', 'ความครบเฉลี่ย%', 'สถานะ'];
+    const rows = [head].concat((rep.members || []).map(m => [
+      m.name, m.position_name, m.division_name, m.section_name,
+      m.filledHours,
+      (m.loggedDays != null ? m.loggedDays : m.daysLogged),
+      (m.expectedDays != null ? m.expectedDays : ''),
+      (m.leaveDays || 0), (m.missingDays || 0),
+      m.avgCompleteness, (STATUS_TH[m.status] || STATUS_TH.none),
+    ]));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', csv.contentDisposition(`worklog-${t.id}-${rep.from}_${rep.to}.csv`));
+    return res.send(csv.toCsv(rows));
+  }
+  res.json(rep);
+});
+
+// รายงานภาพรวม optimization-report.md (ถ้ามี) — คืน markdown ให้ portal render ด้วย md.js
+app.get('/api/exec/tenant/:tid/optimization', requireGroupExec, (req, res) => {
+  const t = execResolveTenant(req, res); if (!t) return;
+  try {
+    const db = tenantDb(t.id);
+    const p = path.join(db.cmpOutDir, 'optimization-report.md');
+    if (!fs.existsSync(p)) return res.json({ hasReport: false, markdown: '' });
+    return res.json({ hasReport: true, markdown: fs.readFileSync(p, 'utf8') });
+  } catch (e) {
+    res.status(500).json({ error: 'อ่านรายงานไม่สำเร็จ' });
+  }
+});
+
+// โครงสร้างฝ่าย/แผนก/ตำแหน่ง + จำนวนคน + สถานะสัมภาษณ์ (ไม่มี username/ข้อมูลส่วนตัว)
+app.get('/api/exec/tenant/:tid/org', requireGroupExec, (req, res) => {
+  const t = execResolveTenant(req, res); if (!t) return;
+  try {
+    const db = tenantDb(t.id);
+    const divisions = db.divisions();
+    const sections = db.sections();
+    const positions = db.positions();
+    const emps = db.employees().filter(e => !e.archived);
+    const empByPos = {};
+    for (const e of emps) (empByPos[e.position_id] = empByPos[e.position_id] || []).push(e);
+
+    const tree = divisions.map(d => {
+      const divEmps = [];
+      const secs = sections.filter(s => s.division_id === d.id).map(s => {
+        const secEmps = [];
+        const poss = positions.filter(p => p.section_id === s.id).map(p => {
+          const list = empByPos[p.id] || [];
+          secEmps.push(...list);
+          return { id: p.id, name: p.name, stat: interviewStatCount(list) };
+        });
+        divEmps.push(...secEmps);
+        return { id: s.id, name: s.name, stat: interviewStatCount(secEmps), positions: poss };
+      });
+      return { id: d.id, name: d.name, stat: interviewStatCount(divEmps), sections: secs };
+    });
+    res.json({ tenant: { id: t.id, name: t.name }, total: interviewStatCount(emps), divisions: tree });
+  } catch (e) {
+    res.status(500).json({ error: 'อ่านโครงสร้างองค์กรไม่สำเร็จ' });
+  }
+});
+
+// Portal — หน้าเดียวจัดการทั้ง login + รายการบริษัท + drill-in (read-only)
+app.get('/exec', (req, res) => res.sendFile(path.join(ROOT, 'public', 'exec.html')));
+app.get('/exec/login', (req, res) => res.sendFile(path.join(ROOT, 'public', 'exec.html')));
 
 // Root → super-admin
 app.get('/', (req, res) => {
@@ -3424,6 +4195,14 @@ if (process.env.BACKUP_TEST_MODE === '1') {
     createSystemBackup, createTenantBackup, listBackups, pruneBackups,
     readBackupSettings, writeBackupSettings, checkAndRunAutoBackup,
     BACKUP_SYSTEM_DIR, BACKUP_TENANTS_DIR, BACKUP_SETTINGS_FILE,
+    // batch2a — helpers ให้ E2E เทสต์ตรง ๆ
+    readJsonCached, _cacheStats,
+    writeAudit, readAuditTail, auditFileFor,
+    restoreArchive,
+    DATA_DIR, TENANT_DATA_DIR, OUTPUT_DIR, TENANT_OUTPUT_DIR,
+    // batch2b — group-exec helpers ให้ E2E เทสต์ตรง ๆ
+    readGroupAuth, writeGroupAuth, GROUP_EXEC_AUTH_FILE,
+    computeWorklogReportFor, tenantDb, loadTenants, findTenant,
   };
 } else {
   app.listen(PORT, () => {

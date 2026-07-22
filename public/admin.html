@@ -288,6 +288,29 @@
     <div id="bk-list"><div class="empty">กำลังโหลด…</div></div>
   </div>
 
+  <!-- Audit log (บันทึกการใช้งาน) -->
+  <style>
+    #audit-card table { width:100%; border-collapse:collapse; font-size:13px; }
+    #audit-card th, #audit-card td { text-align:left; padding:7px 9px; border-bottom:1px solid #eef2f7; vertical-align:top; }
+    #audit-card th { background:#f8fafc; color:#475569; font-weight:600; white-space:nowrap; }
+    #audit-card td.mono { font-family:monospace; font-size:12px; }
+    #audit-card .a-ok { color:#166534; }
+    #audit-card .a-fail { color:#b91c1c; }
+    #audit-card .a-wrap { overflow-x:auto; }
+  </style>
+  <div class="card" id="audit-card" style="margin-top:24px; border-top:4px solid #475569;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h2 style="margin:0;">📜 บันทึกการใช้งาน (Audit)</h2>
+        <p class="sub" style="margin:4px 0 0;">เหตุการณ์สำคัญของบริษัทนี้ (login, จัดการ user/องค์กร, เปลี่ยนรหัส, สำรอง/กู้คืน, ลบข้อมูล) — ใหม่สุดอยู่บน</p>
+      </div>
+      <button class="ghost" onclick="loadAudit()">↻ รีเฟรช</button>
+    </div>
+    <div class="a-wrap" style="margin-top:12px;">
+      <div id="audit-list"><div class="empty">กำลังโหลด…</div></div>
+    </div>
+  </div>
+
   <!-- Danger Zone -->
   <div class="card" style="margin-top:24px; background:#fef2f2; border-color:#fecaca;">
     <h2 style="margin-top:0; color:#991b1b;">🛑 Danger Zone — ลบข้อมูล</h2>
@@ -626,6 +649,7 @@ async function bkLoad() {
       </div>
       <div class="bk-actions">
         <a href="${TBASE}/api/admin/backup/download?file=${encodeURIComponent(it.file)}"><button class="ghost">⬇ ดาวน์โหลด</button></a>
+        <button class="ghost" style="color:#b45309;" onclick="bkRestore('${bkEsc(it.file)}')">♻ กู้คืน</button>
         <button class="ghost" style="color:#b91c1c;" onclick="bkDel('${bkEsc(it.file)}')">🗑 ลบ</button>
       </div>
     </div>
@@ -652,7 +676,93 @@ async function bkDel(file) {
   bkLoad();
 }
 
+// ---------- Restore (กู้คืน) — destructive: ต้องพิมพ์ RESTORE ยืนยัน ----------
+function bkRestore(file) {
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;';
+  ov.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:460px;width:100%;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+      <div style="font-size:20px;font-weight:700;margin-bottom:6px;color:#b45309;">♻ กู้คืนข้อมูลบริษัท</div>
+      <p style="color:#334155;font-size:14px;margin:0 0 8px;">กำลังจะกู้คืนจากไฟล์:<br><strong style="font-family:monospace;">${bkEsc(file)}</strong></p>
+      <div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:12px;">
+        ⚠️ <strong>จะเขียนทับข้อมูลปัจจุบันทั้งหมดของบริษัทนี้</strong> ด้วยข้อมูลในไฟล์สำรอง — ระบบจะสร้างไฟล์สำรองของสถานะปัจจุบันให้อัตโนมัติก่อนกู้ (กู้กลับได้ถ้าผิดพลาด)
+      </div>
+      <label style="font-size:13px;color:#475569;">พิมพ์ <code>RESTORE</code> เพื่อยืนยัน:</label>
+      <input id="rs-confirm" autocomplete="off" placeholder="RESTORE" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;box-sizing:border-box;margin:6px 0 10px;"/>
+      <div id="rs-err" style="color:#b91c1c;font-size:13px;min-height:18px;margin-bottom:10px;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="ghost" id="rs-cancel">ยกเลิก</button>
+        <button id="rs-go" style="background:#b45309;color:#fff;border:none;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer;">กู้คืน</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const close = () => { ov.remove(); };
+  ov.querySelector('#rs-cancel').addEventListener('click', close);
+  const err = ov.querySelector('#rs-err');
+  const go = ov.querySelector('#rs-go');
+  go.addEventListener('click', async () => {
+    const typed = ov.querySelector('#rs-confirm').value.trim();
+    if (typed !== 'RESTORE') { err.textContent = 'ต้องพิมพ์ RESTORE ให้ตรง'; return; }
+    go.disabled = true; go.textContent = '⏳ กำลังกู้คืน…'; err.textContent = '';
+    try {
+      const r = await fetch(TBASE + '/api/admin/backup/restore', {
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ filename: file, confirm: 'RESTORE' }),
+      });
+      const d = await r.json().catch(()=>({}));
+      if (!r.ok) { err.textContent = d.error || 'กู้คืนไม่สำเร็จ'; go.disabled = false; go.textContent = 'กู้คืน'; return; }
+      close();
+      alert('✓ กู้คืนข้อมูลเรียบร้อย' + (d.safety_backup ? `\n\nสำรองสถานะเดิมไว้ที่: ${d.safety_backup}` : '') + '\n\nหน้าจะรีโหลดเพื่อแสดงข้อมูลล่าสุด');
+      location.reload();
+    } catch { err.textContent = 'เกิดข้อผิดพลาด'; go.disabled = false; go.textContent = 'กู้คืน'; }
+  });
+}
+
 bkLoad();
+
+// ---------- Audit log view ----------
+const AUDIT_LABEL = {
+  'login.success':'เข้าสู่ระบบ', 'login.fail':'เข้าสู่ระบบล้มเหลว',
+  'user.create':'สร้างผู้ใช้', 'user.update':'แก้ไขผู้ใช้', 'user.delete':'ลบผู้ใช้',
+  'org.division.create':'สร้างฝ่าย', 'org.division.update':'แก้ฝ่าย', 'org.division.delete':'ลบฝ่าย',
+  'org.section.create':'สร้างแผนก', 'org.section.update':'แก้แผนก', 'org.section.delete':'ลบแผนก',
+  'org.position.create':'สร้างตำแหน่ง', 'org.position.update':'แก้ตำแหน่ง', 'org.position.delete':'ลบตำแหน่ง',
+  'password.change':'เปลี่ยนรหัสผ่าน', 'password.reset':'รีเซ็ตรหัสผ่าน',
+  'backup.create':'สำรองข้อมูล', 'backup.delete':'ลบไฟล์สำรอง', 'backup.restore':'กู้คืนข้อมูล',
+  'danger.wipe.users':'ล้าง User ทั้งหมด', 'danger.wipe.org':'ล้างโครงสร้างองค์กร',
+  'danger.wipe.interviews':'ล้างคำตอบ interview', 'danger.wipe.all':'Factory reset',
+};
+function auditActor(a) {
+  if (!a) return '-';
+  const who = a.username || a.user_id || '';
+  return (a.role ? a.role : '') + (who ? ' · ' + who : '');
+}
+async function loadAudit() {
+  const box = document.getElementById('audit-list');
+  box.innerHTML = '<div class="empty">กำลังโหลด…</div>';
+  let items;
+  try { const r = await fetch(TBASE + '/api/admin/audit?limit=200'); if (!r.ok) throw 0; items = (await r.json()).items || []; }
+  catch { box.innerHTML = '<div class="empty">โหลดบันทึกไม่สำเร็จ</div>'; return; }
+  if (!items.length) { box.innerHTML = '<div class="empty">ยังไม่มีบันทึก</div>'; return; }
+  const rows = items.map(it => {
+    const when = it.ts_bkk ? bkEsc(it.ts_bkk.replace('T',' ').replace('+07:00','')) : bkEsc(window.formatDateTime && it.ts ? window.formatDateTime(new Date(it.ts).toISOString()) : '');
+    const act = bkEsc(AUDIT_LABEL[it.action] || it.action || '');
+    const cls = it.result === 'fail' ? 'a-fail' : 'a-ok';
+    const res = it.result === 'fail' ? 'ล้มเหลว' : 'สำเร็จ';
+    return `<tr>
+      <td class="mono">${when}</td>
+      <td>${act}</td>
+      <td>${bkEsc(auditActor(it.actor))}</td>
+      <td class="mono">${bkEsc(it.target || '')}</td>
+      <td class="${cls}">${res}</td>
+      <td class="mono">${bkEsc(it.ip || '')}</td>
+    </tr>`;
+  }).join('');
+  box.innerHTML = `<table>
+    <thead><tr><th>เวลา (ไทย)</th><th>เหตุการณ์</th><th>ผู้ทำ</th><th>เป้าหมาย</th><th>ผล</th><th>IP</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+loadAudit();
 
 // FIX 4 — บังคับเปลี่ยนรหัส master ถ้ายังใช้รหัสเริ่มต้น (must_change=true).
 // แสดงเฉพาะเมื่อ must_change เท่านั้น → คนที่เปลี่ยนรหัสแล้วจะไม่เห็น modal นี้.

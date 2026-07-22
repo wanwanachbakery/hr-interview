@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>ผู้บริหารกลุ่ม | HR-Interview</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="icon" type="image/png" href="/logo.png?v=2"/>
+  <script src="/md.js?v=1"></script>
+  <style>
+    .exec-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; }
+    .exec-tenant { border:1px solid var(--border); border-radius:12px; padding:16px; background:#fff; cursor:pointer; transition:box-shadow .15s,transform .05s; }
+    .exec-tenant:hover { box-shadow:0 4px 14px rgba(0,0,0,.08); transform:translateY(-1px); }
+    .exec-tenant h3 { margin:0 0 10px; font-size:17px; }
+    .stat-line { display:flex; justify-content:space-between; font-size:13px; color:#475569; margin:6px 0 2px; }
+    .bar { height:8px; border-radius:6px; background:#eef2f7; overflow:hidden; }
+    .bar > span { display:block; height:100%; border-radius:6px; }
+    .bar.iv > span { background:#0ea5e9; }
+    .bar.wl > span { background:#22c55e; }
+    .tabs { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0 16px; }
+    .tabs button { font-size:13px; padding:7px 14px; border-radius:8px; border:1px solid var(--border); background:#fff; cursor:pointer; }
+    .tabs button.active { background:var(--brand,#0ea5e9); color:#fff; border-color:transparent; }
+    .kpi-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; margin-bottom:16px; }
+    .kpi { border:1px solid var(--border); border-radius:10px; padding:14px; background:#fff; }
+    .kpi .n { font-size:26px; font-weight:700; color:#0f172a; }
+    .kpi .l { font-size:12px; color:#64748b; margin-top:2px; }
+    table.rpt { width:100%; border-collapse:collapse; font-size:13px; }
+    table.rpt th, table.rpt td { text-align:left; padding:7px 9px; border-bottom:1px solid #eef2f7; white-space:nowrap; }
+    table.rpt th { background:#f8fafc; color:#475569; font-weight:600; }
+    .st-good{color:#166534;} .st-ok{color:#a16207;} .st-low{color:#b91c1c;} .st-none{color:#94a3b8;}
+    .filter-row { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px; }
+    .filter-row label { font-size:12px; color:#475569; display:block; }
+    .filter-row input, .filter-row select { padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-size:13px; }
+    .org-div { border:1px solid var(--border); border-radius:10px; margin-bottom:10px; overflow:hidden; }
+    .org-div > .h { background:#f1f5f9; padding:10px 14px; font-weight:600; display:flex; justify-content:space-between; }
+    .org-sec { padding:8px 14px 8px 26px; border-top:1px solid #eef2f7; }
+    .org-pos { font-size:13px; color:#475569; padding:3px 0 3px 18px; display:flex; justify-content:space-between; }
+    .muted { color:#94a3b8; }
+    .err-box { color:#b91c1c; font-size:14px; margin-top:8px; min-height:18px; }
+  </style>
+</head>
+<body>
+
+<!-- ===== Login view ===== -->
+<div id="view-login" style="display:none; max-width:420px; margin:80px auto; padding:0 16px;">
+  <div style="text-align:center; margin-bottom:24px;">
+    <h1 style="margin:8px 0 4px; font-size:32px;">HR-Interview</h1>
+    <p class="sub">📊 ผู้บริหารกลุ่ม (Group Executive)</p>
+  </div>
+  <div class="card">
+    <h2 style="margin-top:0;">🔐 เข้าสู่ระบบ</h2>
+    <p class="sub">ดูรายงานสรุป/ภาพรวมของทุกบริษัทแบบอ่านอย่างเดียว</p>
+    <form id="login-form">
+      <label>รหัสผ่าน</label>
+      <input name="password" type="password" required autofocus autocomplete="current-password"/>
+      <div id="login-err" class="err-box"></div>
+      <div style="margin-top:12px;">
+        <button type="submit" style="width:100%;">เข้าสู่ระบบ →</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ===== Must-change view ===== -->
+<div id="view-change" style="display:none; max-width:440px; margin:80px auto; padding:0 16px;">
+  <div class="card">
+    <h2 style="margin-top:0;">🔐 ตั้งรหัสผ่านใหม่</h2>
+    <p class="sub">บัญชีนี้เพิ่งถูกตั้ง/รีเซ็ตรหัสโดยผู้ดูแล — ต้องตั้งรหัสใหม่ก่อนใช้งาน</p>
+    <label>รหัสผ่านใหม่ (อย่างน้อย 6 ตัว)</label>
+    <input id="mc-pw1" type="password" autocomplete="new-password"/>
+    <label style="margin-top:8px; display:block;">ยืนยันรหัสผ่านใหม่</label>
+    <input id="mc-pw2" type="password" autocomplete="new-password"/>
+    <div id="mc-err" class="err-box"></div>
+    <div style="margin-top:12px;">
+      <button id="mc-save" style="width:100%;">บันทึกรหัสใหม่</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Portal view ===== -->
+<div id="view-portal" style="display:none;">
+  <div class="container wide">
+    <div class="topbar">
+      <div class="logo">
+        <span>HR-Interview</span>
+        <span class="pill blue" style="font-size:11px;">GROUP EXEC</span>
+      </div>
+      <nav>
+        <a href="#" id="nav-home">🏢 ทุกบริษัท</a>
+        <a href="#" id="nav-chpw">🔑 เปลี่ยนรหัส</a>
+        <a href="#" id="nav-logout">ออกจากระบบ</a>
+      </nav>
+    </div>
+
+    <!-- Tenant list -->
+    <div id="portal-list">
+      <h1 style="margin-bottom:4px;">🏢 ภาพรวมทุกบริษัท</h1>
+      <p class="sub">คลิกบริษัทเพื่อดูรายงานสรุป · ข้อมูลอ่านอย่างเดียว (read-only)</p>
+      <div id="tenant-cards" class="exec-grid" style="margin-top:16px;"><div class="empty">กำลังโหลด…</div></div>
+    </div>
+
+    <!-- Drill-in -->
+    <div id="portal-detail" style="display:none;">
+      <button class="ghost" id="btn-back" style="margin-bottom:12px;">← กลับไปรายการบริษัท</button>
+      <h1 id="detail-title" style="margin:0 0 2px;"></h1>
+      <p class="sub" id="detail-sub"></p>
+      <div class="tabs" id="detail-tabs">
+        <button data-tab="summary" class="active">📊 สรุป</button>
+        <button data-tab="report">📈 บันทึกงาน</button>
+        <button data-tab="org">🏗 โครงสร้างองค์กร</button>
+        <button data-tab="optimization">📄 รายงานภาพรวม</button>
+      </div>
+      <div id="tab-body"><div class="empty">กำลังโหลด…</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+function show(view) {
+  for (const v of ['login','change','portal']) document.getElementById('view-' + v).style.display = (v === view ? 'block' : 'none');
+}
+async function api(method, p, body) {
+  const r = await fetch(p, {
+    method, headers: body ? {'content-type':'application/json'} : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let data = null; try { data = await r.json(); } catch {}
+  return { ok: r.ok, status: r.status, data };
+}
+
+// ---------- boot: decide which view ----------
+async function boot() {
+  const me = await api('GET', '/api/exec/me');
+  if (me.status === 401) { show('login'); return; }
+  if (me.status === 403 && me.data && me.data.code === 'must_change') { show('change'); return; }
+  if (me.ok && me.data && me.data.must_change) { show('change'); return; }
+  if (me.ok) { show('portal'); openHome(); return; }
+  show('login');
+}
+
+// ---------- login ----------
+document.getElementById('login-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const err = document.getElementById('login-err'); err.textContent = '';
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  const r = await api('POST', '/api/exec/login', body);
+  if (!r.ok) { err.textContent = (r.data && r.data.error) || 'เข้าสู่ระบบไม่สำเร็จ'; return; }
+  if (r.data && r.data.must_change) { show('change'); return; }
+  show('portal'); openHome();
+});
+
+// ---------- must-change ----------
+document.getElementById('mc-save').addEventListener('click', async () => {
+  const p1 = document.getElementById('mc-pw1').value;
+  const p2 = document.getElementById('mc-pw2').value;
+  const err = document.getElementById('mc-err'); err.textContent = '';
+  if (p1.length < 6) { err.textContent = 'รหัสต้องยาวอย่างน้อย 6 ตัว'; return; }
+  if (p1 !== p2) { err.textContent = 'รหัสผ่านทั้งสองช่องไม่ตรงกัน'; return; }
+  const r = await api('PUT', '/api/exec/password', { password: p1 });
+  if (!r.ok) { err.textContent = (r.data && r.data.error) || 'บันทึกไม่สำเร็จ'; return; }
+  show('portal'); openHome();
+});
+
+// ---------- nav ----------
+document.getElementById('nav-home').addEventListener('click', e => { e.preventDefault(); openHome(); });
+document.getElementById('nav-logout').addEventListener('click', async e => {
+  e.preventDefault();
+  await api('POST', '/api/exec/logout');
+  location.href = '/exec';
+});
+document.getElementById('nav-chpw').addEventListener('click', async e => {
+  e.preventDefault();
+  const pw = prompt('รหัสผ่านใหม่ (อย่างน้อย 6 ตัว):');
+  if (!pw) return;
+  if (pw.length < 6) { alert('รหัสต้องยาวอย่างน้อย 6 ตัว'); return; }
+  const r = await api('PUT', '/api/exec/password', { password: pw });
+  if (!r.ok) { alert('ผิดพลาด: ' + ((r.data && r.data.error) || 'unknown')); return; }
+  alert('✓ เปลี่ยนรหัสเรียบร้อย');
+});
+
+// ---------- tenant list ----------
+function pct(n) { return Math.max(0, Math.min(100, Number(n) || 0)); }
+async function openHome() {
+  document.getElementById('portal-detail').style.display = 'none';
+  document.getElementById('portal-list').style.display = 'block';
+  const box = document.getElementById('tenant-cards');
+  box.innerHTML = '<div class="empty">กำลังโหลด…</div>';
+  const r = await api('GET', '/api/exec/tenants');
+  if (!r.ok) { box.innerHTML = '<div class="empty">โหลดข้อมูลไม่สำเร็จ</div>'; return; }
+  const tenants = (r.data && r.data.tenants) || [];
+  if (!tenants.length) { box.innerHTML = '<div class="empty">ยังไม่มีบริษัทในระบบ</div>'; return; }
+  box.innerHTML = tenants.map(t => {
+    if (t.error) {
+      return `<div class="exec-tenant" style="cursor:default; opacity:.7;"><h3>${esc(t.name)}</h3><div class="muted">อ่านข้อมูลไม่ได้</div></div>`;
+    }
+    const ivp = pct(t.interview_pct), wlp = pct(t.worklog && t.worklog.pct);
+    return `<div class="exec-tenant" data-tid="${esc(t.id)}" data-name="${esc(t.name)}">
+      <h3>${esc(t.name)}</h3>
+      <div class="stat-line"><span>👥 พนักงาน</span><strong>${t.employee_count} คน</strong></div>
+      <div class="stat-line"><span>🎤 สัมภาษณ์เสร็จ</span><span>${ivp}%</span></div>
+      <div class="bar iv"><span style="width:${ivp}%"></span></div>
+      <div class="stat-line" style="margin-top:10px;"><span>📝 กรอกงานวันนี้</span><span>${wlp}%</span></div>
+      <div class="bar wl"><span style="width:${wlp}%"></span></div>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.exec-tenant[data-tid]').forEach(el => {
+    el.addEventListener('click', () => openTenant(el.dataset.tid, el.dataset.name));
+  });
+}
+
+// ---------- drill-in ----------
+let curTid = null, curName = '';
+function openTenant(tid, name) {
+  curTid = tid; curName = name;
+  document.getElementById('portal-list').style.display = 'none';
+  document.getElementById('portal-detail').style.display = 'block';
+  document.getElementById('detail-title').textContent = name;
+  document.getElementById('detail-sub').textContent = 'รหัสบริษัท: ' + tid;
+  selectTab('summary');
+  window.scrollTo(0, 0);
+}
+document.getElementById('btn-back').addEventListener('click', openHome);
+document.getElementById('detail-tabs').querySelectorAll('button').forEach(b => {
+  b.addEventListener('click', () => selectTab(b.dataset.tab));
+});
+function selectTab(tab) {
+  document.getElementById('detail-tabs').querySelectorAll('button').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  const body = document.getElementById('tab-body');
+  body.innerHTML = '<div class="empty">กำลังโหลด…</div>';
+  if (tab === 'summary') return renderSummary(body);
+  if (tab === 'report') return renderReport(body);
+  if (tab === 'org') return renderOrg(body);
+  if (tab === 'optimization') return renderOptimization(body);
+}
+
+async function renderSummary(body) {
+  const r = await api('GET', '/api/exec/tenant/' + encodeURIComponent(curTid) + '/summary');
+  if (!r.ok) { body.innerHTML = '<div class="empty">โหลดสรุปไม่สำเร็จ</div>'; return; }
+  const d = r.data, iv = d.interview || {}, wl = d.worklog || {};
+  body.innerHTML = `
+    <div class="kpi-grid">
+      <div class="kpi"><div class="n">${d.employees}</div><div class="l">พนักงาน (active)</div></div>
+      <div class="kpi"><div class="n">${d.users}</div><div class="l">บัญชีผู้ใช้</div></div>
+      <div class="kpi"><div class="n">${d.interview_pct}%</div><div class="l">สัมภาษณ์เสร็จ (${iv.completed}/${iv.total})</div></div>
+      <div class="kpi"><div class="n">${wl.pct || 0}%</div><div class="l">กรอกงานวันนี้ (${wl.logged || 0}/${wl.total || 0})</div></div>
+      <div class="kpi"><div class="n">${d.org ? d.org.divisions : 0}</div><div class="l">ฝ่าย</div></div>
+      <div class="kpi"><div class="n">${d.org ? d.org.sections : 0}</div><div class="l">แผนก</div></div>
+      <div class="kpi"><div class="n">${d.org ? d.org.positions : 0}</div><div class="l">ตำแหน่ง</div></div>
+    </div>
+    <div class="card">
+      <strong>สถานะการสัมภาษณ์</strong>
+      <div class="stat-line" style="margin-top:8px;"><span>✅ เสร็จแล้ว</span><span>${iv.completed || 0}</span></div>
+      <div class="stat-line"><span>⏳ กำลังทำ</span><span>${iv.in_progress || 0}</span></div>
+      <div class="stat-line"><span>⚪ ยังไม่เริ่ม</span><span>${iv.not_started || 0}</span></div>
+    </div>
+    ${d.hasOptimizationReport ? '' : '<p class="muted">ยังไม่มีรายงานภาพรวม (optimization) สำหรับบริษัทนี้</p>'}`;
+}
+
+const STATUS_CLS = { good:'st-good', ok:'st-ok', low:'st-low', none:'st-none' };
+const STATUS_TH = { good:'ดี', ok:'พอใช้', low:'ต่ำ', none:'ยังไม่บันทึก' };
+async function renderReport(body) {
+  const today = new Date().toISOString().slice(0, 10);
+  const first = today.slice(0, 8) + '01';
+  body.innerHTML = `
+    <div class="filter-row">
+      <div><label>ตั้งแต่</label><input type="date" id="rp-from" value="${first}"/></div>
+      <div><label>ถึง</label><input type="date" id="rp-to" value="${today}"/></div>
+      <button id="rp-go">ดูรายงาน</button>
+      <button class="ghost" id="rp-csv">⬇ CSV</button>
+    </div>
+    <div id="rp-result"><div class="empty">เลือกช่วงวันที่แล้วกด “ดูรายงาน”</div></div>`;
+  const load = async () => {
+    const from = document.getElementById('rp-from').value, to = document.getElementById('rp-to').value;
+    const res = document.getElementById('rp-result');
+    res.innerHTML = '<div class="empty">กำลังโหลด…</div>';
+    const q = '?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to);
+    const r = await api('GET', '/api/exec/tenant/' + encodeURIComponent(curTid) + '/report' + q);
+    if (!r.ok) { res.innerHTML = '<div class="empty">โหลดรายงานไม่สำเร็จ</div>'; return; }
+    const d = r.data, tot = d.totals || {};
+    const rows = (d.members || []).map(m => `<tr>
+      <td>${esc(m.name)}</td><td>${esc(m.position_name)}</td><td>${esc(m.division_name)}</td><td>${esc(m.section_name)}</td>
+      <td>${m.filledHours}</td><td>${m.loggedDays != null ? m.loggedDays : m.daysLogged}</td>
+      <td>${m.expectedDays != null ? m.expectedDays : ''}</td><td>${m.leaveDays || 0}</td><td>${m.missingDays || 0}</td>
+      <td>${m.avgCompleteness}%</td><td class="${STATUS_CLS[m.status] || 'st-none'}">${STATUS_TH[m.status] || STATUS_TH.none}</td>
+    </tr>`).join('');
+    res.innerHTML = `
+      <div class="kpi-grid">
+        <div class="kpi"><div class="n">${tot.peopleLogged || 0}/${tot.peopleTotal || 0}</div><div class="l">คนที่บันทึก</div></div>
+        <div class="kpi"><div class="n">${tot.filledHours || 0}</div><div class="l">ชั่วโมงรวม</div></div>
+        <div class="kpi"><div class="n">${tot.avgCompleteness || 0}%</div><div class="l">ความครบเฉลี่ย</div></div>
+        <div class="kpi"><div class="n">${d.workDays || 0}</div><div class="l">วันทำงานในช่วง</div></div>
+      </div>
+      <div style="overflow-x:auto;"><table class="rpt">
+        <thead><tr><th>ชื่อ</th><th>ตำแหน่ง</th><th>ฝ่าย</th><th>แผนก</th><th>ชม.</th><th>วันบันทึก</th><th>วันคาดหวัง</th><th>ลา/หยุด</th><th>ขาด</th><th>ครบ%</th><th>สถานะ</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="11" class="muted" style="text-align:center;padding:20px;">ไม่มีข้อมูลในช่วงนี้</td></tr>'}</tbody>
+      </table></div>`;
+  };
+  document.getElementById('rp-go').addEventListener('click', load);
+  document.getElementById('rp-csv').addEventListener('click', () => {
+    const from = document.getElementById('rp-from').value, to = document.getElementById('rp-to').value;
+    const q = '?format=csv&from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to);
+    location.href = '/api/exec/tenant/' + encodeURIComponent(curTid) + '/report' + q;
+  });
+  load();
+}
+
+async function renderOrg(body) {
+  const r = await api('GET', '/api/exec/tenant/' + encodeURIComponent(curTid) + '/org');
+  if (!r.ok) { body.innerHTML = '<div class="empty">โหลดโครงสร้างไม่สำเร็จ</div>'; return; }
+  const d = r.data;
+  const stat = s => `<span class="muted" style="font-weight:400;">${s.total} คน · เสร็จ ${s.completed}</span>`;
+  if (!d.divisions || !d.divisions.length) { body.innerHTML = '<div class="empty">ยังไม่มีโครงสร้างองค์กร</div>'; return; }
+  body.innerHTML = d.divisions.map(div => `
+    <div class="org-div">
+      <div class="h"><span>🏢 ${esc(div.name)}</span>${stat(div.stat)}</div>
+      ${div.sections.map(sec => `
+        <div class="org-sec">
+          <div style="display:flex; justify-content:space-between; font-weight:500;"><span>📁 ${esc(sec.name)}</span>${stat(sec.stat)}</div>
+          ${sec.positions.map(p => `<div class="org-pos"><span>• ${esc(p.name)}</span>${stat(p.stat)}</div>`).join('')}
+        </div>`).join('')}
+    </div>`).join('');
+}
+
+async function renderOptimization(body) {
+  const r = await api('GET', '/api/exec/tenant/' + encodeURIComponent(curTid) + '/optimization');
+  if (!r.ok) { body.innerHTML = '<div class="empty">โหลดรายงานไม่สำเร็จ</div>'; return; }
+  if (!r.data || !r.data.hasReport) { body.innerHTML = '<div class="empty">ยังไม่มีรายงานภาพรวม (optimization) สำหรับบริษัทนี้</div>'; return; }
+  const div = document.createElement('div');
+  div.className = 'md-body card';
+  div.innerHTML = window.renderMarkdown(r.data.markdown || '');
+  body.innerHTML = '';
+  body.appendChild(div);
+}
+
+boot();
+</script>
+</body>
+</html>
