@@ -12,6 +12,7 @@
     .role-manager      { background:#dbeafe; color:#1e40af; }
     .role-division_head{ background:#e9d5ff; color:#6b21a8; }
     .role-section_head { background:#bbf7d0; color:#166534; }
+    .role-supervisor   { background:#fed7aa; color:#9a3412; }
     .role-officer      { background:#f1f5f9; color:#475569; }
     .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:100; }
     .modal-bg.show { display:flex; }
@@ -172,6 +173,7 @@
         <option value="manager">ผู้จัดการ (ดูฝ่ายตัวเอง + override ได้)</option>
         <option value="division_head">หัวหน้าฝ่าย (ดูฝ่ายตัวเอง + ทุกแผนก/ตำแหน่งในฝ่าย)</option>
         <option value="section_head">หัวหน้าแผนก (ดูแผนกตัวเอง + ตำแหน่งในแผนก)</option>
+        <option value="supervisor">หัวหน้างาน (ดูเจ้าหน้าที่ในแผนกตัวเอง — อ่านอย่างเดียว)</option>
         <option value="officer">เจ้าหน้าที่ (ดูตำแหน่งตัวเองเท่านั้น)</option>
       </select>
 
@@ -231,7 +233,7 @@
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
 const ROLE_LABEL = {
   executive: 'ผู้บริหาร', manager: 'ผู้จัดการ',
-  division_head: 'หัวหน้าฝ่าย', section_head: 'หัวหน้าแผนก', officer: 'เจ้าหน้าที่',
+  division_head: 'หัวหน้าฝ่าย', section_head: 'หัวหน้าแผนก', supervisor: 'หัวหน้างาน', officer: 'เจ้าหน้าที่',
 };
 let USERS = [], DIVS = [], SECS = [], POSS = [];
 
