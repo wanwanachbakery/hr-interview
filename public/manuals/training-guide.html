@@ -74,6 +74,10 @@
   .toc{columns:2; gap:20px;}
   .toc a{color:var(--brand-d); text-decoration:none; display:block; padding:3px 0;}
   .toc a:hover{text-decoration:underline;}
+  figure.shot{margin:16px 0; text-align:center;}
+  figure.shot img{max-width:100%; border:1px solid #cbd5e1; border-radius:10px; box-shadow:0 6px 18px rgba(2,8,23,.10);}
+  figure.shot figcaption{font-size:13.5px; color:var(--muted); margin-top:7px;}
+  .shotband{background:#eff6ff; border:1px solid var(--tipbd); border-radius:8px; padding:3px 10px; display:inline-block; font-size:12px; color:var(--brand-d); font-weight:700; margin-bottom:8px;}
   footer{color:var(--muted); text-align:center; font-size:13px; margin-top:30px;}
   @media (max-width:600px){ .toc{columns:1;} body{font-size:15px;} header.hero h1{font-size:24px;} }
   @media print{
@@ -148,6 +152,9 @@
       </div>
     </div>
     <div class="warn">⚠️ ครั้งแรกที่เข้า แนะนำให้เปลี่ยนรหัสผ่านเป็นของตัวเองที่เมนู <b>โปรไฟล์</b> · เมื่อใช้เสร็จทุกครั้งควรกด <b>ออกจากระบบ</b> (มุมขวาบน)</div>
+    <figure class="shot"><span class="shotband">📷 หน้าจอจริง</span><br>
+      <img src="img/web-login.png" alt="หน้าเข้าสู่ระบบจริง"/>
+      <figcaption>หน้าเข้าสู่ระบบจริง</figcaption></figure>
   </div>
 
   <!-- ================= PART 1 : WEB ================= -->
@@ -193,6 +200,9 @@
       <li>ดูผลเก่าย้อนหลังได้ที่ปุ่ม <b>"📚 เวอร์ชันเก่า"</b> (ระบบเก็บประวัติทุกครั้งที่วิเคราะห์)</li>
     </ol>
     <div class="warn">⚠️ อย่ากดปุ่มวิเคราะห์ซ้ำ ๆ ระหว่างรอ — ถ้ากดตอนกำลังทำอยู่ ระบบจะพากลับไปดูงานเดิมให้ (ไม่เริ่มใหม่)</div>
+    <figure class="shot"><span class="shotband">📷 หน้าจอจริง</span><br>
+      <img src="img/web-review.png" alt="เอกสารที่ระบบสร้างหลังสัมภาษณ์"/>
+      <figcaption>ตัวอย่างเอกสารที่ระบบสร้างให้หลังสัมภาษณ์ (ใบพรรณนางาน / KPI / แนวทางปรับปรุง ฯลฯ)</figcaption></figure>
   </div>
 
   <!-- 1.2 WORKLOG -->
@@ -221,6 +231,10 @@
       <li>งานที่ทำซ้ำทุกวัน ติ๊ก <b>"งานประจำ"</b> — วันถัดไปกด <b>"คัดลอกงานประจำจากเมื่อวาน"</b> ได้เลย ไม่ต้องพิมพ์ใหม่</li>
       <li>กด <b>"💾 บันทึกงานวันนี้"</b></li>
     </ol>
+
+    <figure class="shot"><span class="shotband">📷 หน้าจอจริง</span><br>
+      <img src="img/web-worklog.png" alt="หน้าบันทึกงานประจำวัน"/>
+      <figcaption>หน้าบันทึกงานประจำวันจริง — กรอกงานรายชั่วโมง + เลือกหมวดหมู่</figcaption></figure>
 
     <h4>ข. การลา / วันหยุด / สลับวันหยุด</h4>
     <p class="lead">ที่หน้าบันทึกงาน จะมีเมนู <b>"🌴 ทำเครื่องหมายวันหยุด/ลา…"</b> ให้เลือก</p>
@@ -256,6 +270,18 @@
       <tr><td><b>ออกจากระบบ</b></td><td>ปุ่มมุมขวาบน — กดทุกครั้งเมื่อใช้เสร็จ</td><td>ทุกคน</td></tr>
     </table>
     <div class="tip">💡 <span class="pill p-sup">หัวหน้างาน</span> ดูข้อมูลทีมได้แต่ <b>แก้ไขไม่ได้</b> (อ่านอย่างเดียว) — เหมาะกับการติดตามงานลูกทีม</div>
+
+    <h4>📷 ตัวอย่างหน้าจอจริง (สำหรับหัวหน้า / ผู้ดูแล / ผู้บริหาร)</h4>
+    <figure class="shot"><img src="img/web-dashboard.png" alt="Dashboard Job"/>
+      <figcaption>Dashboard Job — สถานะการสัมภาษณ์แต่ละตำแหน่ง · ใครกรอก/ยังไม่กรอก</figcaption></figure>
+    <figure class="shot"><img src="img/web-admin-users.png" alt="หน้าจัดการผู้ใช้"/>
+      <figcaption>หน้าจัดการผู้ใช้ (Admin) — รายชื่อผู้ใช้ + บทบาท</figcaption></figure>
+    <figure class="shot"><img src="img/web-adduser-modal.png" alt="เพิ่มผู้ใช้ + เลือกบทบาท"/>
+      <figcaption>เพิ่มผู้ใช้ + เลือกบทบาท (รวม "หัวหน้างาน") · เลือก ฝ่าย → แผนก → ตำแหน่ง ตามลำดับ</figcaption></figure>
+    <figure class="shot"><img src="img/exec-list.png" alt="หน้าผู้บริหารกลุ่ม รายการบริษัท"/>
+      <figcaption>หน้าผู้บริหารกลุ่ม (/exec) — เห็นทุกบริษัทพร้อมสถิติสรุป</figcaption></figure>
+    <figure class="shot"><img src="img/exec-detail.png" alt="ผู้บริหารกลุ่ม รายละเอียดบริษัท"/>
+      <figcaption>ผู้บริหารกลุ่ม — เข้าดูรายงานสรุปของแต่ละบริษัท (อ่านอย่างเดียว)</figcaption></figure>
   </div>
 
   <!-- ================= PART 2 : MOBILE ================= -->
@@ -367,6 +393,9 @@
       </div>
     </div>
     <div class="tip">💡 ต้องเปิดแจ้งเตือน <b>1 ครั้งต่อ 1 เครื่อง</b> · ถ้าเปลี่ยนมือถือใหม่ ให้ทำขั้นตอนนี้ซ้ำบนเครื่องใหม่</div>
+    <figure class="shot"><span class="shotband">📷 หน้าจอจริง (มือถือ)</span><br>
+      <img src="img/mobile-worklog.png" alt="หน้าบันทึกงานบนมือถือ" style="max-width:330px;"/>
+      <figcaption>หน้าบันทึกงานเมื่อเปิดบนมือถือจริง (จอ 390px)</figcaption></figure>
     <div class="note">✅ ระบบจะไม่เตือนในวัน <b>หยุด/ลา</b> ที่คุณทำเครื่องหมายไว้ หรือวันหยุดบริษัท</div>
   </div>
 
