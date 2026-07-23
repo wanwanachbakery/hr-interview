@@ -2853,9 +2853,11 @@ function computeWorklogReportFor(db, opts) {
   const workingDates = dates.filter(ds => !isCompanyHoliday(hs, ds));
   const workDays = workingDates.length;
 
+  const shiftMap = Object.fromEntries((db.shifts() || []).map(s => [s.id, s]));  // 2c: คิด "ชั่วโมงที่คาดหวัง" ตามกะรายวัน
   const members = users.map(u => {
-    const uh = calcUserHours(u);
-    const perDay = (uh && uh.hours.length) ? uh.hours.length : 8;
+    const uhDef = calcUserHours(u);
+    const defPerDay = (uhDef && uhDef.hours.length) ? uhDef.hours.length : 8;
+    const sched = db.loadSchedule(u.id) || {};                                   // โหลดตารางกะครั้งเดียวต่อคน
     let filledHours = 0, daysLogged = 0, sumComplete = 0;
     const loggedSet = new Set(), leaveSet = new Set();
     for (const ds of dates) {
@@ -2868,6 +2870,9 @@ function computeWorklogReportFor(db, opts) {
       daysLogged++; loggedSet.add(ds);
       const hrs = new Set(f.map(e => e.hour));         // distinct hours worked that day
       filledHours += hrs.size;
+      const sh = shiftMap[sched[ds]];                  // มีกะวันนั้น → ใช้ชั่วโมงของกะ, ไม่มี → เวลาปกติ
+      let perDay = defPerDay;
+      if (sh) { const h = hoursFromTimes(sh.start, sh.end, sh.break_start, sh.break_end); if (h && h.hours.length) perDay = h.hours.length; }
       sumComplete += Math.min(1, hrs.size / perDay);
       for (const e of f) {                              // category/recurring counted per task
         totTasks++;
