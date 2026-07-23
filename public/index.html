@@ -207,7 +207,15 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;
     const statusTxt = STATUS_LABEL[statusKey] || statusKey;
     ivMeta.innerHTML = `ตำแหน่ง: <strong>${esc(emp.role)}</strong> · ฝ่าย ${esc(emp.division_name)} / แผนก ${esc(emp.section_name)} · สถานะ <span class="iv-status iv-${statusKey}">${esc(statusTxt)}</span>`;
     if (statusKey === 'completed') {
-      ivAction.innerHTML = `<a href="/review?id=${encodeURIComponent(emp.id)}"><button>📄 ดูเอกสารของฉัน (JD/KPI)</button></a>`;
+      const ds = emp.docStatus || 'done';
+      const eid = encodeURIComponent(emp.id);
+      if (ds === 'error') {
+        ivAction.innerHTML = `<div class="sub" style="color:#b45309; margin-bottom:6px;">⚠️ สัมภาษณ์เสร็จแล้ว แต่สร้างเอกสารไม่สำเร็จ — กดสร้างใหม่ได้ (ไม่ต้องตอบใหม่)</div><a href="/interview?id=${eid}"><button>🔄 สร้างเอกสารใหม่</button></a>`;
+      } else if (ds === 'processing') {
+        ivAction.innerHTML = `<div class="sub" style="margin-bottom:6px;">⏳ กำลังสร้างเอกสาร... เปิดดูภายหลังได้</div><a href="/review?id=${eid}"><button class="ghost">📄 ดูเอกสาร</button></a>`;
+      } else {
+        ivAction.innerHTML = `<a href="/review?id=${eid}"><button>📄 ดูเอกสารของฉัน (JD/KPI)</button></a>`;
+      }
     } else {
       const btnText = statusKey === 'in_progress' ? '▶ ตอบต่อจากที่ค้างไว้' : '▶ เริ่มอินเทอร์วิว';
       ivAction.innerHTML = `<a href="/interview?id=${encodeURIComponent(emp.id)}"><button>${btnText}</button></a>`;

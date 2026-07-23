@@ -94,8 +94,15 @@
         <h1 style="margin:0;">บันทึกงานของทีม</h1>
         <p class="sub" id="tw-scope" style="margin:2px 0 0;">เห็นเฉพาะคนในขอบเขตของคุณ</p>
       </div>
-      <a href="/schedule" id="tw-sched-link" style="display:none; margin-left:auto; font-size:14px;"><button class="ghost">🗓️ จัดกะ (ปฏิทิน)</button></a>
-      <script>fetch(window.TBASE + '/api/me').then(r => r.json()).then(me => { if (me && ['admin','executive','manager','division_head','section_head'].includes(me.role)) { const el = document.getElementById('tw-sched-link'); if (el) el.style.display = 'inline-block'; } }).catch(() => {});</script>
+      <span style="margin-left:auto; display:flex; gap:8px; flex-wrap:wrap;">
+        <a href="/manage/categories" id="tw-cat-link" style="display:none; font-size:14px;"><button class="ghost">🏷️ จัดการหมวดหมู่</button></a>
+        <a href="/schedule" id="tw-sched-link" style="display:none; font-size:14px;"><button class="ghost">🗓️ จัดกะ (ปฏิทิน)</button></a>
+      </span>
+      <script>fetch(window.TBASE + '/api/me').then(r => r.json()).then(me => {
+        if (!me) return;
+        if (['admin','executive','manager','division_head','section_head'].includes(me.role)) { const el = document.getElementById('tw-sched-link'); if (el) el.style.display = 'inline-block'; }
+        if (['admin','manager','division_head','section_head'].includes(me.role)) { const el = document.getElementById('tw-cat-link'); if (el) el.style.display = 'inline-block'; }
+      }).catch(() => {});</script>
     </div>
 
     <div id="tw-main">

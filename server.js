@@ -649,6 +649,15 @@ function requireRoles(...roles) {
     next();
   };
 }
+// หัวหน้าที่จัดการหมวดหมู่ของ "ฝ่ายตัวเอง" ได้ (สอดคล้อง RBAC ที่แก้ข้อมูลในขอบเขตตัวเองได้)
+// supervisor(หัวหน้างาน)/officer = read-only จึงไม่รวม (ยัง quick-add ผ่านหน้าบันทึกงานได้)
+const CATEGORY_MANAGER_ROLES = ['manager', 'division_head', 'section_head'];
+function requireCategoryManager(req, res, next) {
+  const r = req.session?.role;
+  if (r === 'admin' || CATEGORY_MANAGER_ROLES.includes(r)) return next();
+  if (req.path.startsWith('/api/')) return res.status(403).json({ error: 'forbidden' });
+  return res.redirect(req.tbase || '/');
+}
 
 // ---------- User schedule helpers ----------
 // Convert "HH:MM" string to integer hour (floor). Returns null if invalid.
@@ -2230,9 +2239,17 @@ tenantRouter.post('/api/interview/:id/finish', (req, res) => {
   saveInterview(iv);
 
   // Mark processing + respond now (still inside the request → ALS proxies are safe).
+  // สำคัญ: การสัมภาษณ์ถือว่า "เสร็จ" ตั้งแต่ตอบครบ+กดจบแล้ว (finishedAt ถูกตั้งด้านบน)
+  // จึงตั้ง interviewStatus='completed' ทันทีที่นี่ ไม่ผูกกับการสร้างเอกสาร — ถ้าสร้าง
+  // เอกสารล้มเหลว/ช้า ผู้ใช้จะไม่ถูกบังคับให้ทำสัมภาษณ์ซ้ำ (แค่กด "สร้างเอกสารใหม่").
   const list = load.employees();
   const e = list.find(x => x.id === iv.id);
-  if (e) { e.docStatus = 'processing'; save.employees(list); }
+  if (e) {
+    e.interviewStatus = 'completed';
+    e.completedAt = iv.finishedAt;
+    e.docStatus = 'processing';
+    save.employees(list);
+  }
   res.json({ ok: true, status: 'processing' });
 
   // Background generation. Capture the concrete tenant db NOW — after the response
@@ -2613,6 +2630,65 @@ tenantRouter.delete('/api/admin/categories/:id', requireAdmin, (req, res) => {
   const next = list.filter(x => x.id !== req.params.id);
   if (next.length === list.length) return res.status(404).json({ error: 'ไม่พบหมวดหมู่' });
   db.saveCategories(next);
+  res.json({ ok: true });
+});
+
+// ---- Category management for HEADS (หัวหน้า) — จำกัดเฉพาะ "ฝ่ายตัวเอง" ----
+// เพิ่ม/แก้/ลบ ได้เฉพาะหมวดของฝ่ายตน · หมวดกลาง (ทุกฝ่าย) แก้ไม่ได้ (admin เท่านั้น)
+function myManageDivision(req) {
+  const user = load.users().find(u => u.id === req.session.user_id);
+  return user ? (user.division_id || null) : null;
+}
+tenantRouter.get('/api/manage/categories', requireCategoryManager, (req, res) => {
+  const db = ctxDb();
+  const myDiv = myManageDivision(req);
+  const divName = myDiv ? ((db.divisions().find(d => d.id === myDiv) || {}).name || '') : '';
+  const all = loadCatsPersist(db);
+  res.json({
+    division_id: myDiv,
+    division_name: divName,
+    mine: all.filter(c => (c.division_id || null) === myDiv),      // แก้/ลบได้
+    globals: all.filter(c => !c.division_id).map(c => c.name),      // อ้างอิงอย่างเดียว (read-only)
+  });
+});
+tenantRouter.post('/api/manage/categories', requireCategoryManager, (req, res) => {
+  const db = ctxDb();
+  const myDiv = myManageDivision(req);
+  if (!myDiv) return res.status(400).json({ error: 'บัญชีของคุณยังไม่ได้ผูกกับฝ่าย — ให้แอดมินกำหนดฝ่ายก่อน' });
+  const nm = String((req.body || {}).name || '').trim();
+  if (!nm) return res.status(400).json({ error: 'ต้องใส่ชื่อหมวดหมู่' });
+  if (nm.length > 80) return res.status(400).json({ error: 'ชื่อหมวดหมู่ยาวเกินไป' });
+  const list = loadCatsPersist(db);
+  if (list.some(c => c.name.toLowerCase() === nm.toLowerCase() && (c.division_id || null) === myDiv)) return res.status(400).json({ error: 'มีหมวดหมู่นี้ในฝ่ายแล้ว' });
+  list.push({ id: newCatId(), name: nm, division_id: myDiv });
+  db.saveCategories(list);
+  res.json({ ok: true });
+});
+tenantRouter.put('/api/manage/categories/:id', requireCategoryManager, (req, res) => {
+  const db = ctxDb();
+  const myDiv = myManageDivision(req);
+  if (!myDiv) return res.status(400).json({ error: 'บัญชีของคุณยังไม่ได้ผูกกับฝ่าย' });
+  const nm = String((req.body || {}).name || '').trim();
+  if (!nm) return res.status(400).json({ error: 'ต้องใส่ชื่อหมวดหมู่' });
+  if (nm.length > 80) return res.status(400).json({ error: 'ชื่อหมวดหมู่ยาวเกินไป' });
+  const list = loadCatsPersist(db);
+  const c = list.find(x => x.id === req.params.id);
+  if (!c) return res.status(404).json({ error: 'ไม่พบหมวดหมู่' });
+  if ((c.division_id || null) !== myDiv) return res.status(403).json({ error: 'แก้ได้เฉพาะหมวดหมู่ของฝ่ายคุณ' });
+  if (list.some(x => x.id !== c.id && x.name.toLowerCase() === nm.toLowerCase() && (x.division_id || null) === myDiv)) return res.status(400).json({ error: 'มีหมวดหมู่นี้ในฝ่ายแล้ว' });
+  c.name = nm;   // ฝ่ายคงเดิม (ย้ายฝ่าย/ทำเป็นหมวดกลางได้เฉพาะ admin)
+  db.saveCategories(list);
+  res.json({ ok: true });
+});
+tenantRouter.delete('/api/manage/categories/:id', requireCategoryManager, (req, res) => {
+  const db = ctxDb();
+  const myDiv = myManageDivision(req);
+  if (!myDiv) return res.status(400).json({ error: 'บัญชีของคุณยังไม่ได้ผูกกับฝ่าย' });
+  const list = loadCatsPersist(db);
+  const c = list.find(x => x.id === req.params.id);
+  if (!c) return res.status(404).json({ error: 'ไม่พบหมวดหมู่' });
+  if ((c.division_id || null) !== myDiv) return res.status(403).json({ error: 'ลบได้เฉพาะหมวดหมู่ของฝ่ายคุณ' });
+  db.saveCategories(list.filter(x => x.id !== c.id));
   res.json({ ok: true });
 });
 
@@ -3229,6 +3305,7 @@ tenantRouter.get('/admin/users', requireAdmin, (req, res) => res.sendFile(path.j
 tenantRouter.get('/admin/org',   requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-org.html')));
 tenantRouter.get('/admin/categories', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-categories.html')));
 tenantRouter.get('/admin/shifts', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-shifts.html')));
+tenantRouter.get('/manage/categories', requireCategoryManager, (req, res) => res.sendFile(path.join(ROOT, 'public', 'manage-categories.html')));
 tenantRouter.get('/schedule', requireRoles('admin', 'executive', 'manager', 'division_head', 'section_head'), (req, res) => res.sendFile(path.join(ROOT, 'public', 'schedule.html')));
 tenantRouter.get('/profile',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'profile.html')));
 tenantRouter.get('/reports',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'reports.html')));
