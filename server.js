@@ -2692,6 +2692,25 @@ tenantRouter.post('/api/admin/schedule', (req, res) => {
   db.saveSchedule(uid, sched);
   res.json({ ok: true });
 });
+// จัดกะทีละหลายวัน (เช่น ทั้งสัปดาห์/เฉพาะจันทร์-ศุกร์) — shift_id ว่าง = ล้างกะวันเหล่านั้น
+tenantRouter.post('/api/admin/schedule/bulk', (req, res) => {
+  const b = req.body || {};
+  const uid = String(b.user_id || '');
+  const dates = Array.isArray(b.dates) ? [...new Set(b.dates.filter(d => WORKLOG_DATE_RE.test(d)))] : [];
+  const target = load.users().find(u => u.id === uid);
+  if (!target) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+  if (!canManageSchedule(req.session, target)) return res.status(403).json({ error: 'ไม่มีสิทธิ์จัดกะให้ผู้ใช้นี้' });
+  if (!dates.length) return res.status(400).json({ error: 'ไม่มีวันที่ถูกต้อง' });
+  if (dates.length > 400) return res.status(400).json({ error: 'จำนวนวันมากเกินไป' });
+  const db = ctxDb();
+  if (b.shift_id && !(db.shifts() || []).some(s => s.id === b.shift_id)) return res.status(400).json({ error: 'ไม่พบกะนี้' });
+  const sched = db.loadSchedule(uid) || {};
+  for (const d of dates) { if (b.shift_id) sched[d] = b.shift_id; else delete sched[d]; }
+  db.saveSchedule(uid, sched);
+  res.json({ ok: true, count: dates.length });
+});
+// อ่านแม่แบบกะ (สำหรับหน้าปฏิทิน — หัวหน้าที่ไม่ใช่ admin ก็ต้องเห็นรายชื่อกะ)
+tenantRouter.get('/api/shifts', (req, res) => res.json({ shifts: ctxDb().shifts() }));
 
 // Copy "งานประจำ" (recurring) entries from the most recent prior day with any
 tenantRouter.get('/api/worklog/copy-recurring', (req, res) => {
@@ -3205,6 +3224,7 @@ tenantRouter.get('/admin/users', requireAdmin, (req, res) => res.sendFile(path.j
 tenantRouter.get('/admin/org',   requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-org.html')));
 tenantRouter.get('/admin/categories', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-categories.html')));
 tenantRouter.get('/admin/shifts', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-shifts.html')));
+tenantRouter.get('/schedule', requireRoles('admin', 'executive', 'manager', 'division_head', 'section_head'), (req, res) => res.sendFile(path.join(ROOT, 'public', 'schedule.html')));
 tenantRouter.get('/profile',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'profile.html')));
 tenantRouter.get('/reports',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'reports.html')));
 tenantRouter.get('/manual',   (req, res) => res.sendFile(path.join(ROOT, 'public', 'manual.html')));

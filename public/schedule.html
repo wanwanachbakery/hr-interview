@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>ปฏิทินจัดกะ | HR-Interview</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="icon" type="image/png" href="/logo.png?v=2"/>
+  <style>
+    .sc-controls { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px; }
+    .sc-controls .f { display:flex; flex-direction:column; gap:3px; }
+    .sc-controls label { font-size:12px; color:#64748b; }
+    .sc-controls select { padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px; }
+    .sc-monthbar { display:flex; align-items:center; gap:12px; margin:6px 0 12px; }
+    .sc-monthbar .mtitle { font-weight:700; font-size:17px; min-width:150px; text-align:center; }
+    .sc-bulk { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+    .sc-bulk button { font-size:13px; }
+    .cal { width:100%; border-collapse:collapse; table-layout:fixed; }
+    .cal th { font-size:12px; color:#64748b; padding:6px 2px; font-weight:600; }
+    .cal td { border:1px solid #eef2f7; height:74px; vertical-align:top; padding:4px; cursor:pointer; }
+    .cal td.empty { background:#fafafa; cursor:default; }
+    .cal td:hover:not(.empty) { background:#f0f9ff; }
+    .cal .dnum { font-size:12px; color:#94a3b8; }
+    .cal td.today { outline:2px solid #0284c7; outline-offset:-2px; }
+    .cal td.sun .dnum, .cal td.sat .dnum { color:#ef4444; }
+    .cal .chip { display:block; margin-top:4px; font-size:11px; font-weight:600; color:#fff; border-radius:6px; padding:2px 5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .legend { display:flex; gap:12px; flex-wrap:wrap; margin-top:12px; font-size:13px; color:#475569; }
+    .legend .li { display:flex; align-items:center; gap:5px; }
+    .legend .sw { width:14px; height:14px; border-radius:4px; display:inline-block; }
+    @media (max-width:600px){ .cal td { height:58px; } .cal .chip { font-size:9px; } }
+  </style>
+<script>
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  function shouldPrefix(href){ return href && href.startsWith('/') && !href.startsWith('/t/') && !href.startsWith('/super') && !href.startsWith('/styles') && !href.startsWith('/logo') && !href.startsWith('/i18n') && !href.startsWith('/favicon'); }
+  function rewriteLinks(root){ if(!window.TBASE||!root)return; if(root.nodeType===1&&root.tagName==='A'&&shouldPrefix(root.getAttribute('href')))root.setAttribute('href',window.TBASE+root.getAttribute('href')); if(typeof root.querySelectorAll==='function')root.querySelectorAll('a[href^="/"]').forEach(a=>{const h=a.getAttribute('href');if(shouldPrefix(h))a.setAttribute('href',window.TBASE+h);}); }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    new MutationObserver(m => { for (const x of m) { rewriteLinks(x.target); for (const n of x.addedNodes) rewriteLinks(n); } }).observe(document.body, { childList: true, subtree: true });
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span'); span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => { span.textContent = c && c.name ? c.name : ''; if (!c || !c.name) span.style.display = 'none'; }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
+  <script src="/app-shell.js?v=3"></script>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="logo"><span>HR-Interview</span></div>
+    <nav>
+      <a href="/">หน้าแรก</a>
+      <a href="/worklog-team">👥 บันทึกงานทีม</a>
+      <a href="/dashboard">📋 Dashboard</a>
+      <a href="#" onclick="(async()=>{await fetch(TBASE+'/api/logout',{method:'POST'});location.href=TBASE+'/login';})();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <h1>🗓️ ปฏิทินจัดกะ</h1>
+  <p class="sub">เลือกพนักงาน → เลือก "กะที่จะลง" → คลิกวันในปฏิทินเพื่อลงกะ · หรือใช้ปุ่มลงทีเดียวทั้งเดือน</p>
+
+  <div class="card">
+    <div class="sc-controls">
+      <div class="f"><label>พนักงาน</label><select id="sc-user" style="min-width:220px;"><option value="">— เลือก —</option></select></div>
+      <div class="f"><label>กะที่จะลง (คลิกวันเพื่อลง)</label><select id="sc-shift"><option value="">— ล้างกะ (เวลาปกติ) —</option></select></div>
+    </div>
+
+    <div class="sc-monthbar">
+      <button class="ghost" id="sc-prev">‹ เดือนก่อน</button>
+      <span class="mtitle" id="sc-mtitle">—</span>
+      <button class="ghost" id="sc-next">เดือนถัดไป ›</button>
+    </div>
+
+    <div class="sc-bulk">
+      <button class="ghost" id="sc-wd">ลงกะทั้งเดือน (จ–ศ)</button>
+      <button class="ghost" id="sc-all">ลงทั้งเดือน (ทุกวัน)</button>
+      <button class="ghost" id="sc-clear" style="color:#b91c1c;">ล้างกะทั้งเดือน</button>
+    </div>
+
+    <div id="sc-msg" class="sub" style="min-height:18px;"></div>
+    <div id="sc-cal"><p class="sub">เลือกพนักงานเพื่อดูปฏิทิน</p></div>
+    <div class="legend" id="sc-legend"></div>
+  </div>
+</div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const TH_MONTHS = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+const TH_DOW = ['อา','จ','อ','พ','พฤ','ศ','ส'];
+const pad = n => String(n).padStart(2, '0');
+const ymd = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
+let SHIFTS = [], schedule = {}, curUser = '';
+const now = new Date();
+let curY = now.getFullYear(), curM = now.getMonth();
+const todayStr = ymd(now.getFullYear(), now.getMonth(), now.getDate());
+const msg = document.getElementById('sc-msg');
+const flash = (t, ok) => { msg.style.color = ok ? '#16a34a' : '#b91c1c'; msg.textContent = t; if (ok) setTimeout(() => { if (msg.textContent === t) msg.textContent = ''; }, 2500); };
+const shiftById = id => SHIFTS.find(s => s.id === id);
+
+async function loadUsers() {
+  try {
+    const list = await fetch(TBASE + '/api/reports/users').then(r => r.json());
+    const us = (Array.isArray(list) ? list : []).filter(u => u.role !== 'admin');
+    document.getElementById('sc-user').innerHTML = '<option value="">— เลือก —</option>' + us.map(u => `<option value="${u.id}">${esc(u.name)} (${esc(u.division_name || '-')})</option>`).join('');
+  } catch (e) {}
+}
+async function loadShifts() {
+  try { const d = await fetch(TBASE + '/api/shifts').then(r => r.json()); SHIFTS = d.shifts || []; } catch (e) { SHIFTS = []; }
+  document.getElementById('sc-shift').innerHTML = '<option value="">— ล้างกะ (เวลาปกติ) —</option>' + SHIFTS.map(s => `<option value="${s.id}">${esc(s.name)} (${esc(s.start)}–${esc(s.end)})</option>`).join('');
+  document.getElementById('sc-legend').innerHTML = SHIFTS.map(s => `<span class="li"><span class="sw" style="background:${esc(s.color || '#94a3b8')}"></span>${esc(s.name)}</span>`).join('');
+}
+async function loadMonth() {
+  if (!curUser) { document.getElementById('sc-cal').innerHTML = '<p class="sub">เลือกพนักงานเพื่อดูปฏิทิน</p>'; return; }
+  const from = ymd(curY, curM, 1), to = ymd(curY, curM, new Date(curY, curM + 1, 0).getDate());
+  try {
+    const d = await fetch(`${TBASE}/api/admin/schedule?user_id=${encodeURIComponent(curUser)}&from=${from}&to=${to}`).then(r => r.json());
+    schedule = d.schedule || {};
+  } catch (e) { schedule = {}; }
+  render();
+}
+function render() {
+  document.getElementById('sc-mtitle').textContent = `${TH_MONTHS[curM]} ${curY}`;
+  if (!curUser) { document.getElementById('sc-cal').innerHTML = '<p class="sub">เลือกพนักงานเพื่อดูปฏิทิน</p>'; return; }
+  const first = new Date(curY, curM, 1).getDay();          // 0=อา
+  const days = new Date(curY, curM + 1, 0).getDate();
+  let cells = [], dow = 0;
+  for (let i = 0; i < first; i++) cells.push('<td class="empty"></td>');
+  for (let d = 1; d <= days; d++) {
+    const ds = ymd(curY, curM, d);
+    const sid = schedule[ds], sh = sid ? shiftById(sid) : null;
+    const wd = new Date(curY, curM, d).getDay();
+    const cls = ['', ' sun', ' mon', '', '', '', ' sat'][wd] || '';
+    const chip = sh ? `<span class="chip" style="background:${esc(sh.color || '#0ea5e9')}" title="${esc(sh.name)} ${esc(sh.start)}–${esc(sh.end)}">${esc(sh.name)}</span>` : (sid ? `<span class="chip" style="background:#94a3b8">กะที่ถูกลบ</span>` : '');
+    cells.push(`<td class="${(ds === todayStr ? 'today' : '')}${wd === 0 ? ' sun' : ''}${wd === 6 ? ' sat' : ''}" data-date="${ds}"><span class="dnum">${d}</span>${chip}</td>`);
+  }
+  while (cells.length % 7) cells.push('<td class="empty"></td>');
+  let rows = '';
+  for (let i = 0; i < cells.length; i += 7) rows += '<tr>' + cells.slice(i, i + 7).join('') + '</tr>';
+  document.getElementById('sc-cal').innerHTML = `<div style="overflow-x:auto;"><table class="cal"><thead><tr>${TH_DOW.map(d => `<th>${d}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+// คลิกวัน → ลงกะที่เลือก (หรือล้างถ้าเลือก "ล้างกะ")
+document.getElementById('sc-cal').addEventListener('click', async e => {
+  const td = e.target.closest('td[data-date]'); if (!td || !curUser) return;
+  const date = td.getAttribute('data-date');
+  const shift_id = document.getElementById('sc-shift').value || null;
+  const r = await fetch(TBASE + '/api/admin/schedule', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: curUser, date, shift_id }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { flash(d.error || 'บันทึกไม่สำเร็จ', false); return; }
+  if (shift_id) schedule[date] = shift_id; else delete schedule[date];
+  render();
+});
+async function bulk(kind) {
+  if (!curUser) { flash('เลือกพนักงานก่อน', false); return; }
+  const shift_id = document.getElementById('sc-shift').value || null;
+  if (kind !== 'clear' && !shift_id) { flash('เลือก "กะที่จะลง" ก่อน (หรือใช้ปุ่มล้าง)', false); return; }
+  const days = new Date(curY, curM + 1, 0).getDate();
+  const dates = [];
+  for (let d = 1; d <= days; d++) {
+    const wd = new Date(curY, curM, d).getDay();
+    if (kind === 'wd' && (wd === 0 || wd === 6)) continue;   // จ–ศ เท่านั้น
+    dates.push(ymd(curY, curM, d));
+  }
+  const label = kind === 'clear' ? 'ล้างกะทั้งเดือน' : (kind === 'wd' ? 'ลงกะ จ–ศ ทั้งเดือน' : 'ลงกะทุกวันทั้งเดือน');
+  if (!confirm(`${label} (${TH_MONTHS[curM]} ${curY}) ?`)) return;
+  const r = await fetch(TBASE + '/api/admin/schedule/bulk', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: curUser, dates, shift_id: kind === 'clear' ? null : shift_id }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { flash(d.error || 'ไม่สำเร็จ', false); return; }
+  flash(`✓ ${label} (${d.count} วัน)`, true); loadMonth();
+}
+document.getElementById('sc-user').addEventListener('change', e => { curUser = e.target.value; loadMonth(); });
+document.getElementById('sc-prev').addEventListener('click', () => { curM--; if (curM < 0) { curM = 11; curY--; } loadMonth(); });
+document.getElementById('sc-next').addEventListener('click', () => { curM++; if (curM > 11) { curM = 0; curY++; } loadMonth(); });
+document.getElementById('sc-wd').addEventListener('click', () => bulk('wd'));
+document.getElementById('sc-all').addEventListener('click', () => bulk('all'));
+document.getElementById('sc-clear').addEventListener('click', () => bulk('clear'));
+loadShifts(); loadUsers(); render();
+</script>
+</body>
+</html>
