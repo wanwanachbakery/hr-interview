@@ -128,6 +128,7 @@
     </div>
 
     <div id="wl-holiday" style="display:none; margin-top:14px; padding:11px 14px; border-radius:10px; background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; font-size:14px;"></div>
+    <div id="wl-shift" style="display:none; margin-top:14px; padding:11px 14px; border-radius:10px; background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; font-size:14px;"></div>
 
     <div id="wl-tools-row" style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:14px; flex-wrap:wrap;">
       <div id="wl-progress-row" style="display:flex; align-items:center; gap:12px; flex:1; min-width:240px;">
@@ -234,6 +235,11 @@ function renderTable(data) {
   const hb = document.getElementById('wl-holiday');
   if (data.holiday) { hb.style.display = 'block'; hb.innerHTML = `📅 วันนี้เป็น<strong>${esc(data.holidayLabel || 'วันหยุด')}</strong> — ไม่ต้องบันทึกงาน (ถ้ามาทำงาน/สลับวันหยุด กรอกงานได้ตามปกติ)`; }
   else hb.style.display = 'none';
+
+  // แบนเนอร์กะของวันนั้น (ถ้าหัวหน้า/แอดมินจัดกะไว้ → ตารางชั่วโมงเป็นไปตามกะนี้)
+  const sb = document.getElementById('wl-shift');
+  if (data.shift) { sb.style.display = 'block'; sb.innerHTML = `🕐 วันนี้เข้ากะ <strong>${esc(data.shift.name)}</strong> (${esc(data.shift.start)}–${esc(data.shift.end)})`; }
+  else sb.style.display = 'none';
 
   const saveBtn = document.getElementById('wl-save');
   const leaveSel = document.getElementById('wl-leave');

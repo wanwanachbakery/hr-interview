@@ -400,6 +400,7 @@ function tenantDb(tenantId) {
     pushSubs:       path.join(dir, 'push-subs.json'),
     notifySettings: path.join(dir, 'notify-settings.json'),
     notifyLog:      path.join(dir, 'notify-log.json'),
+    shifts:         path.join(dir, 'shifts.json'),
   };
   return {
     id: tenantId,
@@ -420,6 +421,10 @@ function tenantDb(tenantId) {
     pushSubs:       () => readJson(F.pushSubs, {}),                  // { userId: [ {endpoint, keys, ua, created_at} ] }
     notifySettings: () => readJson(F.notifySettings, { enabled: true }),  // company-wide on/off (default ON)
     notifyLog:      () => readJson(F.notifyLog, {}),                // { userId: { "YYYY-MM-DD": [10,11,...] } } dedup of sent reminders
+    shifts:         () => readJson(F.shifts, []),                   // [{id,name,start,end,break_start,break_end,color}] แม่แบบกะ
+    // ตารางกะรายคน — 1 ไฟล์/คน: schedules/<userId>.json = { "YYYY-MM-DD": shiftId }
+    loadSchedule:   (uid) => readJson(path.join(dir, 'schedules', `${uid}.json`), {}),
+    saveSchedule:   (uid, obj) => { const sd = path.join(dir, 'schedules'); if (!fs.existsSync(sd)) fs.mkdirSync(sd, { recursive: true }); writeJson(path.join(sd, `${uid}.json`), obj); },
     saveEmployees: (l) => writeJson(F.employees, l),
     saveDivisions: (l) => writeJson(F.divisions, l),
     saveSections:  (l) => writeJson(F.sections, l),
@@ -434,6 +439,7 @@ function tenantDb(tenantId) {
     savePushSubs:       (o) => writeJson(F.pushSubs, o),
     saveNotifySettings: (o) => writeJson(F.notifySettings, o),
     saveNotifyLog:      (o) => writeJson(F.notifyLog, o),
+    saveShifts:         (l) => writeJson(F.shifts, l),
     interviewPath: (id) => path.join(intDir, `${id}.json`),
     loadInterview: (id) => readJson(path.join(intDir, `${id}.json`), null),
     saveInterview: (iv) => writeJson(path.join(intDir, `${iv.id}.json`), iv),
@@ -652,19 +658,39 @@ function timeToHour(hhmm) {
 }
 // Build interview hours from a user's work_start/work_end/break_start/break_end.
 // Returns { start, end, lunchStart, lunchEnd, hours[] } or null when invalid.
-function calcUserHours(user) {
-  if (!user) return null;
-  const start = timeToHour(user.work_start);
-  const end = timeToHour(user.work_end);
+function hoursFromTimes(ws, we, bs, be) {
+  const start = timeToHour(ws);
+  const end = timeToHour(we);
   if (start == null || end == null || end <= start) return null;
-  const lunchStart = timeToHour(user.break_start);
-  const lunchEnd = timeToHour(user.break_end);
+  const lunchStart = timeToHour(bs);
+  const lunchEnd = timeToHour(be);
   const hours = [];
   for (let h = start; h < end; h++) {
     if (lunchStart != null && lunchEnd != null && h >= lunchStart && h < lunchEnd) continue;
     hours.push(h);
   }
   return { start, end, lunchStart, lunchEnd, hours };
+}
+function calcUserHours(user) {
+  if (!user) return null;
+  return hoursFromTimes(user.work_start, user.work_end, user.break_start, user.break_end);
+}
+// กะที่กำหนดให้ user ในวันนั้น (จากตารางกะ) — คืน object กะ หรือ null
+function resolveShiftForDate(db, user, date) {
+  try {
+    const shiftId = (db.loadSchedule(user.id) || {})[date];
+    if (!shiftId) return null;
+    return (db.shifts() || []).find(s => s.id === shiftId) || null;
+  } catch { return null; }
+}
+// ชั่วโมงของวันนั้น: มีกะ → ใช้เวลาของกะ, ไม่มี → เวลาทำงานปกติของ user
+function resolveHoursForDate(db, user, date) {
+  const sh = resolveShiftForDate(db, user, date);
+  if (sh) {
+    const uh = hoursFromTimes(sh.start, sh.end, sh.break_start, sh.break_end);
+    if (uh) return { uh, shift: { id: sh.id, name: sh.name, start: sh.start, end: sh.end } };
+  }
+  return { uh: calcUserHours(user), shift: null };
 }
 
 // ---------- Position-anchored employee helpers ----------
@@ -2274,7 +2300,7 @@ function companyHolidayLabel(hs, dateStr) {
 
 // Build the full hour grid for a user on a date, overlaying any saved entries.
 function buildWorklogForUser(db, user, date) {
-  const uh = calcUserHours(user);
+  const { uh, shift } = resolveHoursForDate(db, user, date);
   const hours = (uh && uh.hours.length) ? uh.hours : [9, 10, 11, 13, 14, 15, 16, 17];
   const saved = db.loadWorklog(user.id, date);
   const byHour = {};
@@ -2296,6 +2322,7 @@ function buildWorklogForUser(db, user, date) {
     holiday: isCompanyHoliday(hs, date),                  // company holiday (weekly or specific)
     holidayLabel: companyHolidayLabel(hs, date),
     dayOff: saved && saved.dayOff ? saved.dayOff : null,  // personal leave marked by the user
+    shift,                                                // กะของวันนั้น (ถ้ามี) → หน้าเว็บโชว์แบนเนอร์
   };
 }
 
@@ -2586,6 +2613,83 @@ tenantRouter.delete('/api/admin/categories/:id', requireAdmin, (req, res) => {
   const next = list.filter(x => x.id !== req.params.id);
   if (next.length === list.length) return res.status(404).json({ error: 'ไม่พบหมวดหมู่' });
   db.saveCategories(next);
+  res.json({ ok: true });
+});
+
+// ---- Shift templates (แม่แบบกะ) — admin ----
+function isHHMM(s) { return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(s || '')); }
+tenantRouter.get('/api/admin/shifts', requireAdmin, (req, res) => res.json({ shifts: ctxDb().shifts() }));
+tenantRouter.post('/api/admin/shifts', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'ต้องใส่ชื่อกะ' });
+  if (!isHHMM(b.start) || !isHHMM(b.end)) return res.status(400).json({ error: 'เวลาเข้า-ออกไม่ถูกต้อง (HH:MM)' });
+  if (b.start >= b.end) return res.status(400).json({ error: 'เวลาออกต้องหลังเวลาเข้า' });
+  if ((b.break_start && !isHHMM(b.break_start)) || (b.break_end && !isHHMM(b.break_end))) return res.status(400).json({ error: 'เวลาพักไม่ถูกต้อง' });
+  const db = ctxDb();
+  const list = db.shifts();
+  list.push({ id: 'sh_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, start: b.start, end: b.end, break_start: b.break_start || '', break_end: b.break_end || '', color: b.color || '#0ea5e9' });
+  db.saveShifts(list);
+  res.json({ ok: true });
+});
+tenantRouter.put('/api/admin/shifts/:id', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'ต้องใส่ชื่อกะ' });
+  if (!isHHMM(b.start) || !isHHMM(b.end) || b.start >= b.end) return res.status(400).json({ error: 'เวลาไม่ถูกต้อง' });
+  if ((b.break_start && !isHHMM(b.break_start)) || (b.break_end && !isHHMM(b.break_end))) return res.status(400).json({ error: 'เวลาพักไม่ถูกต้อง' });
+  const db = ctxDb();
+  const list = db.shifts();
+  const sh = list.find(x => x.id === req.params.id);
+  if (!sh) return res.status(404).json({ error: 'ไม่พบกะ' });
+  Object.assign(sh, { name, start: b.start, end: b.end, break_start: b.break_start || '', break_end: b.break_end || '', color: b.color || sh.color });
+  db.saveShifts(list);
+  res.json({ ok: true });
+});
+tenantRouter.delete('/api/admin/shifts/:id', requireAdmin, (req, res) => {
+  const db = ctxDb();
+  const list = db.shifts();
+  const next = list.filter(x => x.id !== req.params.id);
+  if (next.length === list.length) return res.status(404).json({ error: 'ไม่พบกะ' });
+  db.saveShifts(next);
+  res.json({ ok: true });   // วันที่เคยกำหนดกะนี้จะกลับไปใช้เวลาทำงานปกติ
+});
+
+// ---- Shift schedule (ตารางกะรายวันต่อคน) — admin หรือหัวหน้าที่มีสิทธิ์เหนือคนนั้น ----
+function canManageSchedule(session, target) {
+  if (!session || !target) return false;
+  if (session.role === 'admin') return true;
+  if (['executive', 'manager', 'division_head', 'section_head'].includes(session.role)) return canViewUserWorklog(session, target);
+  return false;   // supervisor = อ่านอย่างเดียว, officer = ไม่ได้
+}
+tenantRouter.get('/api/admin/schedule', (req, res) => {
+  const uid = String(req.query.user_id || '');
+  const target = load.users().find(u => u.id === uid);
+  if (!target) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+  if (req.session.user_id !== uid && !canManageSchedule(req.session, target)) return res.status(403).json({ error: 'ไม่มีสิทธิ์' });
+  const sched = ctxDb().loadSchedule(uid) || {};
+  const { from, to } = req.query;
+  const out = {};
+  for (const [d, sid] of Object.entries(sched)) { if ((!from || d >= from) && (!to || d <= to)) out[d] = sid; }
+  res.json({ schedule: out, shifts: ctxDb().shifts() });
+});
+tenantRouter.post('/api/admin/schedule', (req, res) => {
+  const b = req.body || {};
+  const uid = String(b.user_id || '');
+  const date = String(b.date || '');
+  if (!WORKLOG_DATE_RE.test(date)) return res.status(400).json({ error: 'วันที่ไม่ถูกต้อง' });
+  const target = load.users().find(u => u.id === uid);
+  if (!target) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+  if (!canManageSchedule(req.session, target)) return res.status(403).json({ error: 'ไม่มีสิทธิ์จัดกะให้ผู้ใช้นี้' });
+  const db = ctxDb();
+  const sched = db.loadSchedule(uid) || {};
+  if (b.shift_id) {
+    if (!(db.shifts() || []).some(s => s.id === b.shift_id)) return res.status(400).json({ error: 'ไม่พบกะนี้' });
+    sched[date] = b.shift_id;
+  } else {
+    delete sched[date];   // ล้างกะของวันนั้น → กลับไปใช้เวลาทำงานปกติ
+  }
+  db.saveSchedule(uid, sched);
   res.json({ ok: true });
 });
 
@@ -3100,6 +3204,7 @@ tenantRouter.get('/admin',    requireAdmin, (req, res) => res.sendFile(path.join
 tenantRouter.get('/admin/users', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-users.html')));
 tenantRouter.get('/admin/org',   requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-org.html')));
 tenantRouter.get('/admin/categories', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-categories.html')));
+tenantRouter.get('/admin/shifts', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-shifts.html')));
 tenantRouter.get('/profile',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'profile.html')));
 tenantRouter.get('/reports',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'reports.html')));
 tenantRouter.get('/manual',   (req, res) => res.sendFile(path.join(ROOT, 'public', 'manual.html')));

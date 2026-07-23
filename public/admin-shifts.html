@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>กะ / ตารางเวร | HR-Interview</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="icon" type="image/png" href="/logo.png?v=2"/>
+  <style>
+    .sh-form { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin:10px 0 16px; }
+    .sh-form .f { display:flex; flex-direction:column; gap:3px; }
+    .sh-form label { font-size:12px; color:#64748b; }
+    .sh-form input, .sh-form select { padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px; }
+    .sh-form input[type=text] { min-width:150px; }
+    .sh-table { width:100%; border-collapse:collapse; font-size:14px; }
+    .sh-table th { text-align:left; color:#475569; font-weight:600; padding:8px 10px; border-bottom:2px solid #e2e8f0; }
+    .sh-table td { padding:9px 10px; border-bottom:1px solid #f1f5f9; }
+    .sh-dot { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:middle; margin-right:6px; }
+    .sched-list { display:flex; flex-direction:column; gap:6px; margin-top:12px; }
+    .sched-row { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 12px; border:1px solid #e2e8f0; border-radius:8px; background:#f8fafc; font-size:14px; }
+    .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:100; }
+    .modal-bg.show { display:flex; }
+    .modal { background:#fff; border-radius:14px; padding:22px; max-width:440px; width:92%; }
+    .modal label { display:block; font-size:13px; color:#475569; margin:10px 0 4px; }
+    .modal input { width:100%; padding:9px 11px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px; box-sizing:border-box; }
+  </style>
+<script>
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  function shouldPrefix(href){ return href && href.startsWith('/') && !href.startsWith('/t/') && !href.startsWith('/super') && !href.startsWith('/styles') && !href.startsWith('/logo') && !href.startsWith('/i18n') && !href.startsWith('/favicon'); }
+  function rewriteLinks(root){ if(!window.TBASE||!root)return; if(root.nodeType===1&&root.tagName==='A'&&shouldPrefix(root.getAttribute('href')))root.setAttribute('href',window.TBASE+root.getAttribute('href')); if(typeof root.querySelectorAll==='function')root.querySelectorAll('a[href^="/"]').forEach(a=>{const h=a.getAttribute('href');if(shouldPrefix(h))a.setAttribute('href',window.TBASE+h);}); }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    new MutationObserver(m => { for (const x of m) { rewriteLinks(x.target); for (const n of x.addedNodes) rewriteLinks(n); } }).observe(document.body, { childList: true, subtree: true });
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span'); span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => { span.textContent = c && c.name ? c.name : ''; if (!c || !c.name) span.style.display = 'none'; }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
+  <script src="/app-shell.js?v=3"></script>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="logo"><span>HR-Interview</span></div>
+    <nav>
+      <a href="/admin">🔐 Admin</a>
+      <a href="/admin/users">👥 ผู้ใช้</a>
+      <a href="/admin/categories">🏷️ หมวดหมู่งาน</a>
+      <a href="#" onclick="(async()=>{await fetch(TBASE+'/api/logout',{method:'POST'});location.href=TBASE+'/login';})();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <h1>🕐 กะ / ตารางเวร</h1>
+  <p class="sub">ตั้งแม่แบบกะของบริษัท แล้วจัดกะให้พนักงานรายวัน · หน้าบันทึกงานของพนักงานจะแสดงชั่วโมงตามกะของวันนั้น</p>
+
+  <div class="card">
+    <h2 style="margin:0 0 4px; font-size:18px;">แม่แบบกะ</h2>
+    <p class="sub" style="margin:0;">เช่น กะเช้า 08:00–17:00 · กะบ่าย 13:00–22:00</p>
+    <div class="sh-form">
+      <div class="f"><label>ชื่อกะ</label><input type="text" id="s-name" placeholder="เช่น กะเช้า"/></div>
+      <div class="f"><label>เข้างาน</label><input type="time" id="s-start" value="08:00"/></div>
+      <div class="f"><label>ออกงาน</label><input type="time" id="s-end" value="17:00"/></div>
+      <div class="f"><label>เริ่มพัก</label><input type="time" id="s-bs" value="12:00"/></div>
+      <div class="f"><label>เลิกพัก</label><input type="time" id="s-be" value="13:00"/></div>
+      <div class="f"><label>สี</label><input type="color" id="s-color" value="#0ea5e9" style="width:48px; height:38px; padding:2px;"/></div>
+      <button id="s-add">+ เพิ่มกะ</button>
+    </div>
+    <div id="s-msg" class="sub" style="min-height:18px;"></div>
+    <div id="s-body"><p class="sub">กำลังโหลด...</p></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 4px; font-size:18px;">จัดกะให้พนักงาน</h2>
+    <p class="sub" style="margin:0 0 10px;">เลือกพนักงาน → เลือกวันที่ → เลือกกะ (เว้น = ใช้เวลาทำงานปกติ) · ปฏิทินแบบเต็มจะมาในเฟสถัดไป</p>
+    <div class="sh-form">
+      <div class="f"><label>พนักงาน</label><select id="a-user" style="min-width:200px;"><option value="">— เลือก —</option></select></div>
+      <div class="f"><label>วันที่</label><input type="date" id="a-date"/></div>
+      <div class="f"><label>กะ</label><select id="a-shift"><option value="">— ไม่มีกะ (เวลาปกติ) —</option></select></div>
+      <button id="a-assign">บันทึกกะ</button>
+    </div>
+    <div id="a-msg" class="sub" style="min-height:18px;"></div>
+    <div id="a-list" class="sched-list"></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="edit-bg">
+  <div class="modal">
+    <h2 style="margin:0 0 6px; font-size:18px;">แก้ไขกะ</h2>
+    <input type="hidden" id="e-id"/>
+    <label>ชื่อกะ</label><input id="e-name"/>
+    <div style="display:flex; gap:10px;">
+      <div style="flex:1;"><label>เข้างาน</label><input type="time" id="e-start"/></div>
+      <div style="flex:1;"><label>ออกงาน</label><input type="time" id="e-end"/></div>
+    </div>
+    <div style="display:flex; gap:10px;">
+      <div style="flex:1;"><label>เริ่มพัก</label><input type="time" id="e-bs"/></div>
+      <div style="flex:1;"><label>เลิกพัก</label><input type="time" id="e-be"/></div>
+    </div>
+    <label>สี</label><input type="color" id="e-color" style="width:60px; height:38px; padding:2px;"/>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:18px;">
+      <button class="ghost" onclick="document.getElementById('edit-bg').classList.remove('show')">ยกเลิก</button>
+      <button id="e-save">บันทึก</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let SHIFTS = [], USERS = [];
+const smsg = document.getElementById('s-msg'), amsg = document.getElementById('a-msg');
+function flash(el, t, ok) { el.style.color = ok ? '#16a34a' : '#b91c1c'; el.textContent = t; if (ok) setTimeout(() => { if (el.textContent === t) el.textContent = ''; }, 3000); }
+
+function renderShifts() {
+  if (!SHIFTS.length) { document.getElementById('s-body').innerHTML = '<p class="sub">ยังไม่มีกะ — เพิ่มด้านบน</p>'; return; }
+  document.getElementById('s-body').innerHTML = `<table class="sh-table"><thead><tr><th>กะ</th><th>เวลา</th><th>พัก</th><th style="width:110px;"></th></tr></thead><tbody>${SHIFTS.map(s => `
+    <tr>
+      <td><span class="sh-dot" style="background:${esc(s.color || '#94a3b8')}"></span>${esc(s.name)}</td>
+      <td>${esc(s.start)}–${esc(s.end)}</td>
+      <td>${s.break_start ? esc(s.break_start) + '–' + esc(s.break_end || '') : '—'}</td>
+      <td><button class="ghost" onclick="openEditShift('${s.id}')">แก้</button> <button class="ghost" style="color:#b91c1c;" onclick="delShift('${s.id}','${esc(s.name)}')">ลบ</button></td>
+    </tr>`).join('')}</tbody></table>`;
+}
+function fillShiftSelect() {
+  document.getElementById('a-shift').innerHTML = '<option value="">— ไม่มีกะ (เวลาปกติ) —</option>' + SHIFTS.map(s => `<option value="${s.id}">${esc(s.name)} (${esc(s.start)}–${esc(s.end)})</option>`).join('');
+}
+async function loadShifts() {
+  try { const d = await fetch(TBASE + '/api/admin/shifts').then(r => r.json()); SHIFTS = d.shifts || []; renderShifts(); fillShiftSelect(); }
+  catch (e) { document.getElementById('s-body').innerHTML = '<p class="sub" style="color:#b91c1c;">โหลดไม่สำเร็จ</p>'; }
+}
+document.getElementById('s-add').addEventListener('click', async () => {
+  const body = { name: document.getElementById('s-name').value.trim(), start: document.getElementById('s-start').value, end: document.getElementById('s-end').value, break_start: document.getElementById('s-bs').value, break_end: document.getElementById('s-be').value, color: document.getElementById('s-color').value };
+  if (!body.name) { flash(smsg, 'กรอกชื่อกะ', false); return; }
+  const r = await fetch(TBASE + '/api/admin/shifts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { flash(smsg, d.error || 'เพิ่มไม่สำเร็จ', false); return; }
+  document.getElementById('s-name').value = ''; flash(smsg, '✓ เพิ่มกะแล้ว', true); loadShifts();
+});
+function openEditShift(id) {
+  const s = SHIFTS.find(x => x.id === id); if (!s) return;
+  document.getElementById('e-id').value = s.id; document.getElementById('e-name').value = s.name;
+  document.getElementById('e-start').value = s.start; document.getElementById('e-end').value = s.end;
+  document.getElementById('e-bs').value = s.break_start || ''; document.getElementById('e-be').value = s.break_end || '';
+  document.getElementById('e-color').value = s.color || '#0ea5e9';
+  document.getElementById('edit-bg').classList.add('show');
+}
+document.getElementById('e-save').addEventListener('click', async () => {
+  const id = document.getElementById('e-id').value;
+  const body = { name: document.getElementById('e-name').value.trim(), start: document.getElementById('e-start').value, end: document.getElementById('e-end').value, break_start: document.getElementById('e-bs').value, break_end: document.getElementById('e-be').value, color: document.getElementById('e-color').value };
+  const r = await fetch(TBASE + '/api/admin/shifts/' + encodeURIComponent(id), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(d.error || 'บันทึกไม่สำเร็จ'); return; }
+  document.getElementById('edit-bg').classList.remove('show'); flash(smsg, '✓ บันทึกแล้ว', true); loadShifts();
+});
+async function delShift(id, name) {
+  if (!confirm('ลบกะ "' + name + '"?\n\nวันที่เคยกำหนดกะนี้จะกลับไปใช้เวลาทำงานปกติ')) return;
+  const r = await fetch(TBASE + '/api/admin/shifts/' + encodeURIComponent(id), { method: 'DELETE' });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); flash(smsg, d.error || 'ลบไม่สำเร็จ', false); return; }
+  flash(smsg, '✓ ลบแล้ว', true); loadShifts();
+}
+
+// ---- assign ----
+async function loadUsers() {
+  try {
+    const list = await fetch(TBASE + '/api/reports/users').then(r => r.json());
+    USERS = (Array.isArray(list) ? list : []).filter(u => u.role !== 'admin');
+    document.getElementById('a-user').innerHTML = '<option value="">— เลือก —</option>' + USERS.map(u => `<option value="${u.id}">${esc(u.name)} (${esc(u.division_name || '-')})</option>`).join('');
+  } catch (e) {}
+}
+const shiftName = id => { const s = SHIFTS.find(x => x.id === id); return s ? `${s.name} (${s.start}–${s.end})` : id; };
+async function loadSchedule(uid) {
+  const box = document.getElementById('a-list');
+  if (!uid) { box.innerHTML = ''; return; }
+  try {
+    const d = await fetch(TBASE + '/api/admin/schedule?user_id=' + encodeURIComponent(uid)).then(r => r.json());
+    const days = Object.entries(d.schedule || {}).sort((a, b) => b[0].localeCompare(a[0]));
+    if (!days.length) { box.innerHTML = '<p class="sub">ยังไม่มีการกำหนดกะให้คนนี้</p>'; return; }
+    box.innerHTML = days.map(([date, sid]) => `<div class="sched-row"><span>📅 ${esc(date)} → <b>${esc(shiftName(sid))}</b></span><button class="ghost" style="color:#b91c1c; font-size:12px;" onclick="clearDay('${esc(date)}')">ล้าง</button></div>`).join('');
+  } catch (e) { box.innerHTML = '<p class="sub" style="color:#b91c1c;">โหลดไม่สำเร็จ</p>'; }
+}
+document.getElementById('a-user').addEventListener('change', e => loadSchedule(e.target.value));
+document.getElementById('a-assign').addEventListener('click', async () => {
+  const user_id = document.getElementById('a-user').value, date = document.getElementById('a-date').value, shift_id = document.getElementById('a-shift').value || null;
+  if (!user_id) { flash(amsg, 'เลือกพนักงาน', false); return; }
+  if (!date) { flash(amsg, 'เลือกวันที่', false); return; }
+  const r = await fetch(TBASE + '/api/admin/schedule', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id, date, shift_id }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { flash(amsg, d.error || 'บันทึกไม่สำเร็จ', false); return; }
+  flash(amsg, '✓ ' + (shift_id ? 'กำหนดกะแล้ว' : 'ล้างกะแล้ว'), true); loadSchedule(user_id);
+});
+async function clearDay(date) {
+  const user_id = document.getElementById('a-user').value; if (!user_id) return;
+  const r = await fetch(TBASE + '/api/admin/schedule', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id, date, shift_id: null }) });
+  if (r.ok) loadSchedule(user_id);
+}
+loadShifts(); loadUsers();
+</script>
+</body>
+</html>
