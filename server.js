@@ -2042,6 +2042,23 @@ tenantRouter.get('/api/me/employee', (req, res) => {
     const user = load.users().find(u => u.id === req.session.user_id);
     if (user && user.position_id) emp = autoCreateEmployeeForUser(user);
   }
+  // Self-heal สำหรับข้อมูลเก่า: สัมภาษณ์ที่ "กดจบแล้วจริง" (iv.finishedAt มีค่า) แต่ค้างที่
+  // in_progress เพราะการสร้างเอกสารล้ม/ค้างในระบบเวอร์ชันก่อน → เลื่อนเป็น completed ให้อัตโนมัติ
+  // ผู้ใช้จะไม่ถูกถามสัมภาษณ์ซ้ำ (เอกสารที่ยังไม่เสร็จ กด "สร้างเอกสารใหม่" ได้)
+  if (emp && emp.interviewStatus === 'in_progress') {
+    const iv = loadInterview(emp.id);
+    if (iv && iv.finishedAt) {
+      const list = load.employees();
+      const e = list.find(x => x.id === emp.id);
+      if (e && e.interviewStatus === 'in_progress') {
+        e.interviewStatus = 'completed';
+        e.completedAt = e.completedAt || iv.finishedAt;
+        if (!e.docStatus || e.docStatus === 'processing') e.docStatus = 'error';
+        save.employees(list);
+        emp = e;
+      }
+    }
+  }
   res.json(emp || null);
 });
 
