@@ -22,6 +22,17 @@
     .wl-del:hover { background:#fef2f2; }
     .wl-addtask { background:transparent; border:1px dashed #94a3b8; color:#475569; border-radius:8px; padding:6px 12px; font-size:12px; cursor:pointer; font-family:inherit; }
     .wl-addtask:hover { border-color:#0284c7; color:#0284c7; }
+    .wl-hour-foot { display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap; }
+    .wl-hoursave { background:#0284c7; border:1px solid #0284c7; color:#fff; border-radius:8px; padding:8px 16px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; margin-left:auto; white-space:nowrap; }
+    .wl-hoursave:hover { background:#0369a1; }
+    .wl-hoursave.saved { background:#16a34a; border-color:#16a34a; }
+    .wl-hoursave:disabled { opacity:.65; cursor:default; }
+    /* มือถือ: ปุ่มเพิ่มงาน + บันทึกชั่วโมง เต็มความกว้าง แตะง่าย */
+    @media (max-width:600px){
+      .wl-addtask { flex:1; padding:11px 12px; font-size:13px; }
+      .wl-hoursave { margin-left:0; flex:1; padding:11px 12px; font-size:14px; }
+      .wl-hour { padding:12px 12px; }
+    }
   </style>
 <script>
   window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
@@ -240,7 +251,10 @@ function renderTable(data) {
     return `<div class="wl-hour" data-hour="${e.hour}">
       <div class="wl-hour-head">${esc(e.label)} <span class="wl-hour-status"></span></div>
       <div class="wl-tasks">${items.map(taskLineHTML).join('')}</div>
-      <button type="button" class="wl-addtask" data-hour="${e.hour}">+ เพิ่มงานในชั่วโมงนี้</button>
+      <div class="wl-hour-foot">
+        <button type="button" class="wl-addtask" data-hour="${e.hour}">+ เพิ่มงานในชั่วโมงนี้</button>
+        <button type="button" class="wl-hoursave" data-hour="${e.hour}">💾 บันทึกชั่วโมงนี้</button>
+      </div>
     </div>`;
   }).join('');
   recomputeProgress();
@@ -269,6 +283,8 @@ bodyEl.addEventListener('click', e => {
     add.closest('.wl-hour').querySelector('.wl-tasks').insertAdjacentHTML('beforeend', taskLineHTML(null));
     return;
   }
+  const hs = e.target.closest('.wl-hoursave');
+  if (hs) { saveHour(hs); return; }
 });
 
 async function addCategory(sel) {
@@ -330,8 +346,8 @@ async function copyRecurring() {
   btn.disabled = false;
 }
 
-async function saveDay() {
-  const btn = document.getElementById('wl-save');
+// เก็บงานทั้งหมดที่กรอกไว้ (ทุกชั่วโมง) — ใช้ร่วมกันทั้งบันทึกทั้งวันและบันทึกรายชั่วโมง
+function collectEntries() {
   const entries = [];
   bodyEl.querySelectorAll('.wl-hour').forEach(b => {
     const hour = Number(b.getAttribute('data-hour'));
@@ -342,13 +358,44 @@ async function saveDay() {
       entries.push({ hour, task, category: catV === ADD_NEW ? '' : catV, recurring: line.querySelector('.wl-rec').getAttribute('data-on') === '1' });
     });
   });
+  return entries;
+}
+
+async function putEntries() {
+  return fetch(`${TBASE}/api/worklog`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ date: dateEl.value, entries: collectEntries() }) });
+}
+
+async function saveDay() {
+  const btn = document.getElementById('wl-save');
   btn.disabled = true; const old = btn.textContent; btn.textContent = 'กำลังบันทึก...';
   try {
-    const r = await fetch(`${TBASE}/api/worklog`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ date: dateEl.value, entries }) });
-    if (r.ok) { savedMsg.style.color = '#16a34a'; savedMsg.textContent = '✓ บันทึกแล้ว'; setTimeout(() => savedMsg.textContent = '', 3000); }
+    const r = await putEntries();
+    if (r.ok) { savedMsg.style.color = '#16a34a'; savedMsg.textContent = '✓ บันทึกแล้ว'; recomputeProgress(); setTimeout(() => savedMsg.textContent = '', 3000); }
     else { const d = await r.json().catch(() => ({})); savedMsg.style.color = '#b91c1c'; savedMsg.textContent = d.error || 'บันทึกไม่สำเร็จ'; }
   } catch (e) { savedMsg.style.color = '#b91c1c'; savedMsg.textContent = 'เชื่อมต่อไม่สำเร็จ'; }
   btn.disabled = false; btn.textContent = old;
+}
+
+// บันทึกจากปุ่มท้ายชั่วโมง — เซฟงานที่กรอกไว้ทั้งหมด (รวมชั่วโมงนี้) แล้วยืนยันตรงปุ่มที่กด
+async function saveHour(btn) {
+  if (btn.disabled) return;
+  const old = btn.innerHTML;
+  btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
+  try {
+    const r = await putEntries();
+    if (r.ok) {
+      btn.classList.add('saved'); btn.innerHTML = '✓ บันทึกแล้ว';
+      recomputeProgress();
+      setTimeout(() => { btn.classList.remove('saved'); btn.innerHTML = old; btn.disabled = false; }, 1800);
+    } else {
+      const d = await r.json().catch(() => ({}));
+      btn.innerHTML = old; btn.disabled = false;
+      savedMsg.style.color = '#b91c1c'; savedMsg.textContent = d.error || 'บันทึกไม่สำเร็จ';
+    }
+  } catch (e) {
+    btn.innerHTML = old; btn.disabled = false;
+    savedMsg.style.color = '#b91c1c'; savedMsg.textContent = 'เชื่อมต่อไม่สำเร็จ';
+  }
 }
 
 async function markLeave(type) {
