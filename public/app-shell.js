@@ -61,17 +61,20 @@
       '/': 'หน้าแรก', '/worklog': 'บันทึกงานประจำวัน', '/worklog-team': 'บันทึกงานของทีม',
       '/worklog-report': 'สรุปบันทึกงาน', '/dashboard': 'Dashboard Job', '/reports': 'รายงาน',
       '/profile': 'โปรไฟล์', '/interview': 'อินเทอร์วิว', '/review': 'เอกสาร', '/examples': 'ตัวอย่าง',
-      '/manual': 'คู่มือการใช้งาน',
+      '/manual': 'คู่มือการใช้งาน', '/schedule': 'จัดกะ / ตารางเวร', '/manage/categories': 'หมวดหมู่งาน',
       '/admin': 'จัดการระบบ', '/admin/users': 'จัดการผู้ใช้', '/admin/org': 'จัดการองค์กร',
     };
     const title = TITLES[path] || (path.indexOf('/admin') === 0 ? 'จัดการระบบ' : '');
 
-    // {href, label, ic, supervisor?: hide from officers, hideAdmin?: hide from admin}
+    // {href, label, ic, supervisor?: hide from officers, hideAdmin?: hide from admin,
+    //  roles?: show ONLY to these roles}
     const NAV = [
       { href: '/', label: 'หน้าแรก', ic: '🏠' },
       { href: '/worklog', label: 'บันทึกงาน', ic: '📝', hideAdmin: true },
       { href: '/worklog-team', label: 'บันทึกงานทีม', ic: '👥', supervisor: true },
       { href: '/worklog-report', label: 'สรุปบันทึกงาน', ic: '📈', supervisor: true },
+      { href: '/schedule', label: 'จัดกะ / ตารางเวร', ic: '🗓️', roles: ['admin', 'executive', 'manager', 'division_head', 'section_head'] },
+      { href: '/manage/categories', label: 'หมวดหมู่งาน', ic: '🏷️', roles: ['manager', 'division_head', 'section_head'] },
       { href: '/dashboard', label: 'Dashboard Job', ic: '📋' },
       { href: '/reports', label: 'รายงาน', ic: '📊' },
       { href: '/manual', label: 'คู่มือ', ic: '📖' },
@@ -83,6 +86,8 @@
       '/worklog': 'บันทึกสิ่งที่ทำในแต่ละชั่วโมง: พิมพ์งาน เลือกหมวดหมู่ · กด “+ เพิ่มงานในชั่วโมงนี้” ถ้ามีหลายงานในชั่วโมงเดียว · ติ๊ก “งานประจำ” สำหรับงานที่ทำซ้ำทุกวัน · เสร็จแล้วกด “บันทึกงานวันนี้”',
       '/worklog-team': 'ดูบันทึกงานของลูกน้อง: เลือกชื่อพนักงานจากดรอปดาวน์ (พิมพ์เพื่อค้นหา) คัดกรองตามฝ่าย/แผนก และเลือกวันที่ที่ต้องการดู (ดูอย่างเดียว แก้ไม่ได้)',
       '/worklog-report': 'สรุปบันทึกงานของทีม: เลือกช่วงเวลา แล้วดูสัดส่วนเวลาที่ใช้แยกตามหมวดหมู่งาน และดูว่าใครบันทึกครบ/ไม่ครบ',
+      '/schedule': 'จัดกะให้พนักงานรายวัน: เลือกพนักงาน → เลือก “กะที่จะลง” (จากแม่แบบที่แอดมินสร้างไว้) → คลิกวันในปฏิทิน หรือใช้ปุ่มลงทั้งเดือน/จันทร์–ศุกร์ · หมายเหตุ: การเพิ่ม/แก้ “แม่แบบกะ (ช่วงเวลา)” ทำได้เฉพาะแอดมิน',
+      '/manage/categories': 'เพิ่ม/แก้/ลบ หมวดหมู่งานของฝ่ายคุณ — พนักงานในฝ่ายจะเลือกหมวดเหล่านี้ในหน้าบันทึกงานได้ทันที (หมวดกลางที่ใช้ทุกฝ่าย แก้ได้เฉพาะแอดมิน)',
       '/dashboard': 'ดูสถานะการสัมภาษณ์ของแต่ละตำแหน่ง · ผู้ครองที่ “เสร็จ” แล้วกด “ดูเอกสาร” ได้ · กด “วิเคราะห์ภาพรวมบริษัท” เพื่อสร้างรายงานรวม · ปุ่ม “รีเซ็ต” (เฉพาะแอดมิน) ล้างคำตอบกลับเป็น “ยังไม่ตอบ” โดยไม่ลบพนักงาน',
       '/reports': 'สรุปจำนวนผู้ใช้และฝ่าย พร้อมรายชื่อทั้งหมด — ค้นหาด้วยชื่อ/username และคัดกรองตามบทบาท/ฝ่าย/แผนกได้',
       '/manual': 'คู่มือการใช้งานทั้งหมด — สลับแท็บ “ฉบับเต็ม / ตามบทบาท” ใช้สารบัญด้านข้างกระโดดไปแต่ละหัวข้อ หรือกด “ดาวน์โหลด PDF” เพื่อบันทึก/ส่งต่อ',
@@ -165,7 +170,10 @@
 
     function renderNav(role) {
       const isSup = role && role !== 'officer';
-      const items = NAV.filter(it => !(it.hideAdmin && role === 'admin') && !(it.supervisor && !isSup));
+      const items = NAV.filter(it =>
+        !(it.hideAdmin && role === 'admin') &&
+        !(it.supervisor && !isSup) &&
+        !(it.roles && !it.roles.includes(role)));
       document.getElementById('appNav').innerHTML = items.map(it => {
         const active = (it.href === '/' ? path === '/' : path === it.href) ? ' active' : '';
         return '<a class="app-nav-item' + active + '" href="' + TB + it.href + '"><span class="ic">' + it.ic + '</span>' + esc(it.label) + '</a>';
