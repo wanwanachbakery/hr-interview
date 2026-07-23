@@ -450,6 +450,24 @@ function tenantDb(tenantId) {
 // Default work-log categories seeded for each new tenant (admin's starter set;
 // employees can add their own via the daily-log dropdown).
 const DEFAULT_WORKLOG_CATEGORIES = ['บริการลูกค้า', 'ขาย', 'คีย์ข้อมูล/เอกสาร', 'จัดของ/สต็อก', 'ประชุม/ประสานงาน', 'รายงาน', 'อื่นๆ'];
+function newCatId() { return 'cat_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+// หมวดหมู่งาน: รองรับทั้งของเดิม (อาร์เรย์สตริง = หมวดกลาง) และแบบใหม่ {id,name,division_id}
+// (division_id = null แปลว่า "หมวดกลาง" ใช้ได้ทุกฝ่าย)
+function normalizeCats(raw) {
+  const list = (Array.isArray(raw) && raw.length) ? raw : DEFAULT_WORKLOG_CATEGORIES;
+  return list.map(c => (typeof c === 'string')
+    ? { id: newCatId(), name: c.trim(), division_id: null }
+    : { id: c.id || newCatId(), name: String(c.name || '').trim(), division_id: c.division_id || null })
+    .filter(c => c.name);
+}
+// อ่าน + ย้ายรูปแบบเป็น object พร้อม id ที่คงที่ (persist ครั้งเดียว) — ใช้ในหน้าจัดการ admin
+function loadCatsPersist(db) {
+  const raw = db.categories();
+  const norm = normalizeCats(raw);
+  const already = Array.isArray(raw) && raw.length === norm.length && raw.every(c => c && typeof c === 'object' && c.id);
+  if (!already) db.saveCategories(norm);
+  return norm;
+}
 
 function initTenantFolder(tenantId, initialAdminPassword, companyName) {
   const db = tenantDb(tenantId);
@@ -2496,20 +2514,79 @@ tenantRouter.post('/api/admin/holidays/thai-fixed', requireAdmin, (req, res) => 
   res.json({ ok: true, added, dates });
 });
 
-// ---- Work categories (admin seeds a starter set; any user can add new) ----
+// ---- Work categories ----
+// หน้าบันทึกงาน: เห็นเฉพาะหมวดของฝ่ายตัวเอง + หมวดกลาง (division_id = null)
+function catNamesForUser(db, user) {
+  const div = user ? user.division_id : null;
+  const names = normalizeCats(db.categories())
+    .filter(c => !c.division_id || c.division_id === div)
+    .map(c => c.name);
+  return [...new Set(names)];
+}
 tenantRouter.get('/api/worklog/categories', (req, res) => {
-  const list = ctxDb().categories();
-  res.json({ categories: list.length ? list : DEFAULT_WORKLOG_CATEGORIES });
+  const user = load.users().find(u => u.id === req.session.user_id);
+  res.json({ categories: catNamesForUser(ctxDb(), user) });
 });
+// quick-add จากหน้าบันทึกงาน → เพิ่มเข้าฝ่ายของผู้ใช้เอง
 tenantRouter.post('/api/worklog/categories', (req, res) => {
   const name = String((req.body || {}).name || '').trim();
   if (!name) return res.status(400).json({ error: 'ต้องใส่ชื่อหมวดหมู่' });
   if (name.length > 80) return res.status(400).json({ error: 'ชื่อหมวดหมู่ยาวเกินไป' });
   const db = ctxDb();
-  let list = db.categories();
-  if (!list.length) list = DEFAULT_WORKLOG_CATEGORIES.slice(); // first add also persists the defaults
-  if (!list.some(c => c.toLowerCase() === name.toLowerCase())) { list.push(name); db.saveCategories(list); }
-  res.json({ ok: true, categories: db.categories() });
+  const user = load.users().find(u => u.id === req.session.user_id);
+  const div = user ? (user.division_id || null) : null;
+  const list = normalizeCats(db.categories());
+  if (!list.some(c => c.name.toLowerCase() === name.toLowerCase() && (c.division_id || null) === div)) {
+    list.push({ id: newCatId(), name, division_id: div });
+    db.saveCategories(list);
+  }
+  res.json({ ok: true, categories: catNamesForUser(db, user) });
+});
+
+// ---- Category management (admin: CRUD + แยกตามฝ่าย) ----
+tenantRouter.get('/api/admin/categories', requireAdmin, (req, res) => {
+  const db = ctxDb();
+  const cats = loadCatsPersist(db);
+  const divMap = Object.fromEntries(db.divisions().map(d => [d.id, d.name]));
+  res.json({
+    categories: cats.map(c => ({ ...c, division_name: c.division_id ? (divMap[c.division_id] || '(ฝ่ายที่ถูกลบ)') : null })),
+    divisions: db.divisions(),
+  });
+});
+tenantRouter.post('/api/admin/categories', requireAdmin, (req, res) => {
+  const nm = String((req.body || {}).name || '').trim();
+  const div = (req.body || {}).division_id || null;
+  if (!nm) return res.status(400).json({ error: 'ต้องใส่ชื่อหมวดหมู่' });
+  if (nm.length > 80) return res.status(400).json({ error: 'ชื่อหมวดหมู่ยาวเกินไป' });
+  const db = ctxDb();
+  if (div && !db.divisions().some(d => d.id === div)) return res.status(400).json({ error: 'ฝ่ายไม่ถูกต้อง' });
+  const list = loadCatsPersist(db);
+  if (list.some(c => c.name.toLowerCase() === nm.toLowerCase() && (c.division_id || null) === div)) return res.status(400).json({ error: 'มีหมวดหมู่นี้ในฝ่ายนี้แล้ว' });
+  list.push({ id: newCatId(), name: nm, division_id: div });
+  db.saveCategories(list);
+  res.json({ ok: true });
+});
+tenantRouter.put('/api/admin/categories/:id', requireAdmin, (req, res) => {
+  const nm = String((req.body || {}).name || '').trim();
+  const div = (req.body || {}).division_id || null;
+  if (!nm) return res.status(400).json({ error: 'ต้องใส่ชื่อหมวดหมู่' });
+  if (nm.length > 80) return res.status(400).json({ error: 'ชื่อหมวดหมู่ยาวเกินไป' });
+  const db = ctxDb();
+  if (div && !db.divisions().some(d => d.id === div)) return res.status(400).json({ error: 'ฝ่ายไม่ถูกต้อง' });
+  const list = loadCatsPersist(db);
+  const c = list.find(x => x.id === req.params.id);
+  if (!c) return res.status(404).json({ error: 'ไม่พบหมวดหมู่' });
+  c.name = nm; c.division_id = div;
+  db.saveCategories(list);
+  res.json({ ok: true });   // แก้ชื่อมีผลกับงานที่กรอกใหม่ (งานเก่าคงชื่อเดิมไว้)
+});
+tenantRouter.delete('/api/admin/categories/:id', requireAdmin, (req, res) => {
+  const db = ctxDb();
+  const list = loadCatsPersist(db);
+  const next = list.filter(x => x.id !== req.params.id);
+  if (next.length === list.length) return res.status(404).json({ error: 'ไม่พบหมวดหมู่' });
+  db.saveCategories(next);
+  res.json({ ok: true });
 });
 
 // Copy "งานประจำ" (recurring) entries from the most recent prior day with any
@@ -3022,6 +3099,7 @@ tenantRouter.get('/login',    (req, res) => res.sendFile(path.join(ROOT, 'public
 tenantRouter.get('/admin',    requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin.html')));
 tenantRouter.get('/admin/users', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-users.html')));
 tenantRouter.get('/admin/org',   requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-org.html')));
+tenantRouter.get('/admin/categories', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-categories.html')));
 tenantRouter.get('/profile',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'profile.html')));
 tenantRouter.get('/reports',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'reports.html')));
 tenantRouter.get('/manual',   (req, res) => res.sendFile(path.join(ROOT, 'public', 'manual.html')));

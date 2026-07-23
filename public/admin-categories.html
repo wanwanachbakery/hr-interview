@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>หมวดหมู่งาน | HR-Interview</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="icon" type="image/png" href="/logo.png?v=2"/>
+  <style>
+    .cat-add { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:12px 0 18px; }
+    .cat-add input, .cat-add select { padding:9px 11px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px; }
+    .cat-add input { flex:1; min-width:180px; }
+    .cat-table { width:100%; border-collapse:collapse; font-size:14px; }
+    .cat-table th { text-align:left; color:#475569; font-weight:600; padding:8px 10px; border-bottom:2px solid #e2e8f0; }
+    .cat-table td { padding:9px 10px; border-bottom:1px solid #f1f5f9; }
+    .divchip { font-size:12px; padding:2px 10px; border-radius:999px; background:#ede9fe; color:#6d28d9; }
+    .divchip.central { background:#e0f2fe; color:#0369a1; }
+    .cat-search { width:100%; max-width:340px; padding:9px 12px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px; margin-bottom:12px; box-sizing:border-box; }
+    .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:100; }
+    .modal-bg.show { display:flex; }
+    .modal { background:#fff; border-radius:14px; padding:22px; max-width:420px; width:92%; }
+    .modal label { display:block; font-size:13px; color:#475569; margin:10px 0 4px; }
+    .modal input, .modal select { width:100%; padding:9px 11px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px; box-sizing:border-box; }
+    @media (max-width:600px){ .cat-add input, .cat-add select { flex:1 1 100%; } }
+  </style>
+<script>
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  function shouldPrefix(href) {
+    return href && href.startsWith('/')
+      && !href.startsWith('/t/') && !href.startsWith('/super')
+      && !href.startsWith('/styles') && !href.startsWith('/logo')
+      && !href.startsWith('/i18n') && !href.startsWith('/favicon');
+  }
+  function rewriteLinks(root) {
+    if (!window.TBASE || !root) return;
+    if (root.nodeType === 1 && root.tagName === 'A' && shouldPrefix(root.getAttribute('href'))) root.setAttribute('href', window.TBASE + root.getAttribute('href'));
+    if (typeof root.querySelectorAll === 'function') root.querySelectorAll('a[href^="/"]').forEach(a => { const h = a.getAttribute('href'); if (shouldPrefix(h)) a.setAttribute('href', window.TBASE + h); });
+  }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    new MutationObserver(m => { for (const x of m) { rewriteLinks(x.target); for (const n of x.addedNodes) rewriteLinks(n); } }).observe(document.body, { childList: true, subtree: true });
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span'); span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => { span.textContent = c && c.name ? c.name : ''; if (!c || !c.name) span.style.display = 'none'; }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
+  <script src="/app-shell.js?v=3"></script>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="logo"><span>HR-Interview</span></div>
+    <nav>
+      <a href="/admin">🔐 Admin</a>
+      <a href="/admin/org">🏢 องค์กร</a>
+      <a href="/admin/users">👥 ผู้ใช้</a>
+      <a href="#" onclick="(async()=>{await fetch(TBASE+'/api/logout',{method:'POST'});location.href=TBASE+'/login';})();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <h1>🏷️ หมวดหมู่งาน</h1>
+  <p class="sub">เพิ่ม / แก้ไข / ลบ หมวดหมู่งานประจำวัน · แยกตามฝ่ายได้ (เว้นฝ่าย = หมวดกลาง ใช้ได้ทุกฝ่าย)</p>
+
+  <div class="card">
+    <div class="cat-add">
+      <input id="c-name" placeholder="ชื่อหมวดหมู่ใหม่..." maxlength="80"/>
+      <select id="c-div"><option value="">— หมวดกลาง (ทุกฝ่าย) —</option></select>
+      <button id="c-add">+ เพิ่มหมวดหมู่</button>
+    </div>
+    <input id="c-search" class="cat-search" placeholder="🔍 ค้นหาหมวดหมู่..."/>
+    <div id="c-msg" class="sub" style="min-height:18px; margin-bottom:6px;"></div>
+    <div id="c-body"><p class="sub">กำลังโหลด...</p></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="edit-bg">
+  <div class="modal">
+    <h2 style="margin:0 0 6px; font-size:18px;">แก้ไขหมวดหมู่</h2>
+    <input type="hidden" id="e-id"/>
+    <label>ชื่อหมวดหมู่</label>
+    <input id="e-name" maxlength="80"/>
+    <label>ฝ่าย</label>
+    <select id="e-div"><option value="">— หมวดกลาง (ทุกฝ่าย) —</option></select>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:18px;">
+      <button class="ghost" onclick="document.getElementById('edit-bg').classList.remove('show')">ยกเลิก</button>
+      <button id="e-save">บันทึก</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let CATS = [], DIVS = [];
+const msg = document.getElementById('c-msg');
+function flash(t, ok) { msg.style.color = ok ? '#16a34a' : '#b91c1c'; msg.textContent = t; if (ok) setTimeout(() => { if (msg.textContent === t) msg.textContent = ''; }, 3000); }
+function divOptions(sel, cur) {
+  sel.innerHTML = '<option value="">— หมวดกลาง (ทุกฝ่าย) —</option>' + DIVS.map(d => `<option value="${d.id}"${d.id === cur ? ' selected' : ''}>${esc(d.name)}</option>`).join('');
+}
+function render() {
+  const q = document.getElementById('c-search').value.trim().toLowerCase();
+  const rows = CATS.filter(c => !q || c.name.toLowerCase().includes(q) || (c.division_name || '').toLowerCase().includes(q));
+  if (!CATS.length) { document.getElementById('c-body').innerHTML = '<p class="sub">ยังไม่มีหมวดหมู่ — เพิ่มด้านบน</p>'; return; }
+  if (!rows.length) { document.getElementById('c-body').innerHTML = '<p class="sub">ไม่พบหมวดหมู่ที่ค้นหา</p>'; return; }
+  document.getElementById('c-body').innerHTML = `<table class="cat-table"><thead><tr><th>ชื่อหมวดหมู่</th><th>ฝ่าย</th><th style="width:120px;"></th></tr></thead><tbody>${rows.map(c => `
+    <tr>
+      <td>${esc(c.name)}</td>
+      <td>${c.division_id ? `<span class="divchip">${esc(c.division_name)}</span>` : '<span class="divchip central">หมวดกลาง</span>'}</td>
+      <td><button class="ghost" onclick="openEdit('${c.id}')">แก้</button> <button class="ghost" style="color:#b91c1c;" onclick="delCat('${c.id}','${esc(c.name)}')">ลบ</button></td>
+    </tr>`).join('')}</tbody></table>`;
+}
+async function load() {
+  try {
+    const d = await fetch(TBASE + '/api/admin/categories').then(r => r.json());
+    CATS = d.categories || []; DIVS = d.divisions || [];
+    divOptions(document.getElementById('c-div'), '');
+    render();
+  } catch (e) { document.getElementById('c-body').innerHTML = '<p class="sub" style="color:#b91c1c;">โหลดไม่สำเร็จ</p>'; }
+}
+document.getElementById('c-search').addEventListener('input', render);
+document.getElementById('c-add').addEventListener('click', async () => {
+  const name = document.getElementById('c-name').value.trim();
+  const division_id = document.getElementById('c-div').value || null;
+  if (!name) { flash('กรอกชื่อหมวดหมู่', false); return; }
+  const r = await fetch(TBASE + '/api/admin/categories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, division_id }) });
+  const dd = await r.json().catch(() => ({}));
+  if (!r.ok) { flash(dd.error || 'เพิ่มไม่สำเร็จ', false); return; }
+  document.getElementById('c-name').value = ''; flash('✓ เพิ่มแล้ว', true); load();
+});
+function openEdit(id) {
+  const c = CATS.find(x => x.id === id); if (!c) return;
+  document.getElementById('e-id').value = c.id;
+  document.getElementById('e-name').value = c.name;
+  divOptions(document.getElementById('e-div'), c.division_id || '');
+  document.getElementById('edit-bg').classList.add('show');
+}
+document.getElementById('e-save').addEventListener('click', async () => {
+  const id = document.getElementById('e-id').value;
+  const name = document.getElementById('e-name').value.trim();
+  const division_id = document.getElementById('e-div').value || null;
+  if (!name) { alert('กรอกชื่อหมวดหมู่'); return; }
+  const r = await fetch(TBASE + '/api/admin/categories/' + encodeURIComponent(id), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, division_id }) });
+  const dd = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(dd.error || 'บันทึกไม่สำเร็จ'); return; }
+  document.getElementById('edit-bg').classList.remove('show'); flash('✓ บันทึกแล้ว', true); load();
+});
+async function delCat(id, name) {
+  if (!confirm('ลบหมวดหมู่ "' + name + '"?\n\nงานที่เคยกรอกไว้จะยังเก็บชื่อหมวดนี้ไว้ (ไม่หาย) แต่จะเลือกใหม่ไม่ได้')) return;
+  const r = await fetch(TBASE + '/api/admin/categories/' + encodeURIComponent(id), { method: 'DELETE' });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); flash(d.error || 'ลบไม่สำเร็จ', false); return; }
+  flash('✓ ลบแล้ว', true); load();
+}
+load();
+</script>
+</body>
+</html>
