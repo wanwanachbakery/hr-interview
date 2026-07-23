@@ -170,12 +170,21 @@ let categories = [];
 
 function todayStr() { return new Date().toLocaleDateString('en-CA'); }
 
-function catOptions(selected) {
-  const opts = categories.map(c => `<option value="${esc(c)}"${c === selected ? ' selected' : ''}>${esc(c)}</option>`);
-  if (selected && !categories.includes(selected)) opts.unshift(`<option value="${esc(selected)}" selected>${esc(selected)}</option>`);
-  opts.unshift(`<option value=""${!selected ? ' selected' : ''}>— เลือกหมวดหมู่ —</option>`);
-  opts.push(`<option value="${ADD_NEW}" style="color:#0369a1;">+ เพิ่มหมวดหมู่ใหม่…</option>`);
-  return opts.join('');
+// หมวดหมู่ = ช่องพิมพ์ค้นหาได้ (datalist) · รายการกรองตามฝ่ายของผู้ใช้มาจากเซิร์ฟเวอร์แล้ว
+function refreshCatDatalist() {
+  let dl = document.getElementById('wl-catlist');
+  if (!dl) { dl = document.createElement('datalist'); dl.id = 'wl-catlist'; document.body.appendChild(dl); }
+  dl.innerHTML = categories.map(c => `<option value="${esc(c)}"></option>`).join('');
+}
+// พิมพ์หมวดใหม่ที่ยังไม่มี → เพิ่มเข้าฝ่ายตัวเองอัตโนมัติ (quick-add)
+async function maybeQuickAddCategory(name) {
+  name = String(name || '').trim();
+  if (!name || categories.some(c => c.toLowerCase() === name.toLowerCase())) return;
+  try {
+    const r = await fetch(`${TBASE}/api/worklog/categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
+    const d = await r.json();
+    if (r.ok && d.categories) { categories = d.categories; refreshCatDatalist(); }
+  } catch (e) { /* เงียบไว้ — ยังบันทึกงานได้ */ }
 }
 
 function taskLineHTML(item) {
@@ -183,7 +192,7 @@ function taskLineHTML(item) {
   const on = !!item.recurring;
   return `<div class="wl-taskline">
     <input class="t-task" type="text" data-field="task" value="${esc(item.task || '')}" placeholder="ทำอะไรในช่วงนี้..."/>
-    <select class="t-cat" data-field="category">${catOptions(item.category || '')}</select>
+    <input class="t-cat" type="text" data-field="category" list="wl-catlist" value="${esc(item.category || '')}" placeholder="หมวดหมู่ (พิมพ์ค้นหา)"/>
     <button type="button" class="wl-rec${on ? ' on' : ''}" data-on="${on ? 1 : 0}">${on ? '⟳ ประจำ' : 'ครั้งเดียว'}</button>
     <button type="button" class="wl-del" title="ลบงานนี้">✕</button>
   </div>`;
@@ -263,8 +272,8 @@ function renderTable(data) {
 // One set of delegated listeners (bodyEl is stable across renders)
 bodyEl.addEventListener('input', e => { if (e.target.matches('input[data-field="task"]')) recomputeProgress(); });
 bodyEl.addEventListener('change', e => {
-  const sel = e.target.closest('select[data-field="category"]');
-  if (sel && sel.value === ADD_NEW) addCategory(sel);
+  const inp = e.target.closest('input[data-field="category"]');
+  if (inp) maybeQuickAddCategory(inp.value);
 });
 bodyEl.addEventListener('click', e => {
   const rec = e.target.closest('.wl-rec');
@@ -287,20 +296,6 @@ bodyEl.addEventListener('click', e => {
   if (hs) { saveHour(hs); return; }
 });
 
-async function addCategory(sel) {
-  const name = (prompt('ชื่อหมวดหมู่ใหม่:') || '').trim();
-  if (!name) { sel.value = ''; return; }
-  try {
-    const r = await fetch(`${TBASE}/api/worklog/categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
-    const d = await r.json();
-    if (!r.ok) { alert(d.error || 'เพิ่มหมวดหมู่ไม่สำเร็จ'); sel.value = ''; return; }
-    categories = d.categories || categories;
-    bodyEl.querySelectorAll('select[data-field="category"]').forEach(s => {
-      const cur = (s === sel) ? name : (s.value === ADD_NEW ? '' : s.value);
-      s.innerHTML = catOptions(cur);
-    });
-  } catch (e) { alert('เชื่อมต่อไม่สำเร็จ'); sel.value = ''; }
-}
 
 async function loadDay(date) {
   savedMsg.textContent = '';
@@ -310,6 +305,7 @@ async function loadDay(date) {
       const c = await fetch(`${TBASE}/api/worklog/categories`).then(r => r.json()).catch(() => null);
       categories = (c && c.categories) || [];
     }
+    refreshCatDatalist();
     const data = await fetch(`${TBASE}/api/worklog?date=${date}`).then(r => r.json());
     renderTable(data);
   } catch (e) {
@@ -354,8 +350,8 @@ function collectEntries() {
     b.querySelectorAll('.wl-taskline').forEach(line => {
       const task = line.querySelector('input[data-field="task"]').value;
       if (!task.trim()) return;
-      const catV = line.querySelector('select[data-field="category"]').value;
-      entries.push({ hour, task, category: catV === ADD_NEW ? '' : catV, recurring: line.querySelector('.wl-rec').getAttribute('data-on') === '1' });
+      const catV = line.querySelector('[data-field="category"]').value;
+      entries.push({ hour, task, category: (catV || '').trim(), recurring: line.querySelector('.wl-rec').getAttribute('data-on') === '1' });
     });
   });
   return entries;
