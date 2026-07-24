@@ -309,6 +309,10 @@
     #audit-card .a-ok { color:#166534; }
     #audit-card .a-fail { color:#b91c1c; }
     #audit-card .a-wrap { overflow-x:auto; }
+    #audit-card .audit-filters { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:14px; }
+    #audit-card .audit-filters input, #audit-card .audit-filters select { padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px; width:auto; }
+    #audit-card .audit-filters .au-s { flex:1; min-width:180px; }
+    #audit-card .audit-filters .au-dt { display:flex; align-items:center; gap:5px; font-size:13px; color:#64748b; }
   </style>
   <div class="card" id="audit-card" style="margin-top:24px; border-top:4px solid #475569;">
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
@@ -318,7 +322,15 @@
       </div>
       <button class="ghost" onclick="loadAudit()">↻ รีเฟรช</button>
     </div>
-    <div class="a-wrap" style="margin-top:12px;">
+    <div class="audit-filters">
+      <input id="au-search" class="au-s" placeholder="🔍 ค้นหาชื่อ / เหตุการณ์ / เป้าหมาย..."/>
+      <select id="au-event"><option value="">ทุกเหตุการณ์</option></select>
+      <span class="au-dt">จาก <input type="date" id="au-from"/></span>
+      <span class="au-dt">ถึง <input type="date" id="au-to"/></span>
+      <button class="ghost" id="au-clear" type="button">ล้าง</button>
+    </div>
+    <div id="au-count" class="sub" style="margin:8px 0 0; font-size:13px;"></div>
+    <div class="a-wrap" style="margin-top:10px;">
       <div id="audit-list"><div class="empty">กำลังโหลด…</div></div>
     </div>
   </div>
@@ -749,15 +761,44 @@ function auditActor(a) {
   const who = a.username || a.user_id || '';
   return (a.role ? a.role : '') + (who ? ' · ' + who : '');
 }
-async function loadAudit() {
+let AUDIT_ITEMS = [];
+const auditDate = it => it.ts_bkk ? it.ts_bkk.slice(0, 10) : (it.ts ? new Date(it.ts).toLocaleDateString('en-CA') : '');
+function fillAuditEvents() {
+  const sel = document.getElementById('au-event');
+  const cur = sel.value;
+  const seen = [];
+  for (const it of AUDIT_ITEMS) { if (it.action && !seen.includes(it.action)) seen.push(it.action); }
+  seen.sort((a, b) => (AUDIT_LABEL[a] || a).localeCompare(AUDIT_LABEL[b] || b, 'th'));
+  sel.innerHTML = '<option value="">ทุกเหตุการณ์</option>' + seen.map(a => `<option value="${bkEsc(a)}">${bkEsc(AUDIT_LABEL[a] || a)}</option>`).join('');
+  if (cur && seen.includes(cur)) sel.value = cur;
+}
+function filteredAudit() {
+  const q = (document.getElementById('au-search').value || '').trim().toLowerCase();
+  const ev = document.getElementById('au-event').value;
+  const from = document.getElementById('au-from').value;
+  const to = document.getElementById('au-to').value;
+  return AUDIT_ITEMS.filter(it => {
+    if (ev && it.action !== ev) return false;
+    const d = auditDate(it);
+    if (from && d < from) return false;
+    if (to && d > to) return false;
+    if (q) {
+      const hay = [auditActor(it.actor), AUDIT_LABEL[it.action] || '', it.action || '', it.target || '', it.result || '']
+        .join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+function renderAudit() {
   const box = document.getElementById('audit-list');
-  box.innerHTML = '<div class="empty">กำลังโหลด…</div>';
-  let items;
-  try { const r = await fetch(TBASE + '/api/admin/audit?limit=200'); if (!r.ok) throw 0; items = (await r.json()).items || []; }
-  catch { box.innerHTML = '<div class="empty">โหลดบันทึกไม่สำเร็จ</div>'; return; }
-  if (!items.length) { box.innerHTML = '<div class="empty">ยังไม่มีบันทึก</div>'; return; }
+  const countEl = document.getElementById('au-count');
+  if (!AUDIT_ITEMS.length) { box.innerHTML = '<div class="empty">ยังไม่มีบันทึก</div>'; countEl.textContent = ''; return; }
+  const items = filteredAudit();
+  countEl.textContent = `แสดง ${items.length} จาก ${AUDIT_ITEMS.length} รายการ`;
+  if (!items.length) { box.innerHTML = '<div class="empty">ไม่พบรายการที่ค้นหา — ลองเปลี่ยนคำค้น/ช่วงวันที่/เหตุการณ์</div>'; return; }
   const rows = items.map(it => {
-    const when = it.ts_bkk ? bkEsc(it.ts_bkk.replace('T',' ').replace('+07:00','')) : bkEsc(window.formatDateTime && it.ts ? window.formatDateTime(new Date(it.ts).toISOString()) : '');
+    const when = it.ts_bkk ? bkEsc(it.ts_bkk.replace('T', ' ').replace('+07:00', '')) : bkEsc(window.formatDateTime && it.ts ? window.formatDateTime(new Date(it.ts).toISOString()) : '');
     const act = bkEsc(AUDIT_LABEL[it.action] || it.action || '');
     const cls = it.result === 'fail' ? 'a-fail' : 'a-ok';
     const res = it.result === 'fail' ? 'ล้มเหลว' : 'สำเร็จ';
@@ -774,6 +815,25 @@ async function loadAudit() {
     <thead><tr><th>เวลา (ไทย)</th><th>เหตุการณ์</th><th>ผู้ทำ</th><th>เป้าหมาย</th><th>ผล</th><th>IP</th></tr></thead>
     <tbody>${rows}</tbody></table>`;
 }
+async function loadAudit() {
+  const box = document.getElementById('audit-list');
+  box.innerHTML = '<div class="empty">กำลังโหลด…</div>';
+  try { const r = await fetch(TBASE + '/api/admin/audit?limit=500'); if (!r.ok) throw 0; AUDIT_ITEMS = (await r.json()).items || []; }
+  catch { box.innerHTML = '<div class="empty">โหลดบันทึกไม่สำเร็จ</div>'; return; }
+  fillAuditEvents();
+  renderAudit();
+}
+document.getElementById('au-search').addEventListener('input', renderAudit);
+document.getElementById('au-event').addEventListener('change', renderAudit);
+document.getElementById('au-from').addEventListener('change', renderAudit);
+document.getElementById('au-to').addEventListener('change', renderAudit);
+document.getElementById('au-clear').addEventListener('click', () => {
+  document.getElementById('au-search').value = '';
+  document.getElementById('au-event').value = '';
+  document.getElementById('au-from').value = '';
+  document.getElementById('au-to').value = '';
+  renderAudit();
+});
 loadAudit();
 
 // FIX 4 — บังคับเปลี่ยนรหัส master ถ้ายังใช้รหัสเริ่มต้น (must_change=true).
