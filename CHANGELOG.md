@@ -2,6 +2,13 @@
 
 รูปแบบเวอร์ชันตาม [Semantic Versioning](https://semver.org/lang/th/)
 
+## [1.10.1] - 2026-07-24
+
+### 🧹 แก้ปัญหา "อัปเดตแล้วแต่หน้าเว็บยังเป็นของเก่า" (cache)
+- **สาเหตุ:** Cloudflare สั่งให้เบราว์เซอร์เก็บไฟล์ CSS/JS ไว้ 4 ชม. (`max-age=14400`) ทับค่า `no-cache` ของเซิร์ฟเวอร์ → ผู้ใช้เห็นของเก่าจนกว่าจะ hard refresh หรือครบ 4 ชม.
+- **แก้:** เติมเลขเวอร์ชันต่อท้ายไฟล์ทุกหน้า → `styles.css?v=5` และ `app-shell.js?v=5` (หน้า HTML เป็น no-cache/สดเสมอ จึงชี้ไป URL ใหม่ = เบราว์เซอร์โหลดของใหม่ทันที ผู้ใช้ไม่ต้อง hard refresh)
+- ครั้งต่อๆ ไปที่แก้ CSS/JS ให้ bump เลขนี้ (v=6, v=7…) · **แนะนำแก้ถาวรที่ Cloudflare:** Caching → Configuration → Browser Cache TTL = "Respect Existing Headers" แล้ว Purge Everything (จะไม่ต้อง bump เองอีก)
+
 ## [1.10.0] - 2026-07-24
 
 ### 🗓️ เจ้าหน้าที่ตั้งกะของตัวเองได้
