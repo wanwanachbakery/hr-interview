@@ -649,12 +649,17 @@ function requireRoles(...roles) {
     next();
   };
 }
-// หัวหน้าที่จัดการหมวดหมู่ของ "ฝ่ายตัวเอง" ได้ (สอดคล้อง RBAC ที่แก้ข้อมูลในขอบเขตตัวเองได้)
-// supervisor(หัวหน้างาน)/officer = read-only จึงไม่รวม (ยัง quick-add ผ่านหน้าบันทึกงานได้)
+// จัดการหมวดหมู่ (แก้/ลบ) ของ "ฝ่ายตัวเอง" ได้ — หัวหน้าที่แก้ข้อมูลในขอบเขตตัวเองได้
 const CATEGORY_MANAGER_ROLES = ['manager', 'division_head', 'section_head'];
 function requireCategoryManager(req, res, next) {
   const r = req.session?.role;
   if (r === 'admin' || CATEGORY_MANAGER_ROLES.includes(r)) return next();
+  if (req.path.startsWith('/api/')) return res.status(403).json({ error: 'forbidden' });
+  return res.redirect(req.tbase || '/');
+}
+// เพิ่ม/ดู หมวดหมู่ของฝ่ายตัวเองได้ — ผู้ใช้ที่ล็อกอินทุกคน (รวมเจ้าหน้าที่/หัวหน้างาน)
+function requireCategoryContributor(req, res, next) {
+  if (req.session?.user_id || req.session?.role === 'admin') return next();
   if (req.path.startsWith('/api/')) return res.status(403).json({ error: 'forbidden' });
   return res.redirect(req.tbase || '/');
 }
@@ -2694,7 +2699,7 @@ function myManageDivision(req) {
   const user = load.users().find(u => u.id === req.session.user_id);
   return user ? (user.division_id || null) : null;
 }
-tenantRouter.get('/api/manage/categories', requireCategoryManager, (req, res) => {
+tenantRouter.get('/api/manage/categories', requireCategoryContributor, (req, res) => {
   const db = ctxDb();
   const myDiv = myManageDivision(req);
   const divName = myDiv ? ((db.divisions().find(d => d.id === myDiv) || {}).name || '') : '';
@@ -2706,7 +2711,7 @@ tenantRouter.get('/api/manage/categories', requireCategoryManager, (req, res) =>
     globals: all.filter(c => !c.division_id).map(c => c.name),      // อ้างอิงอย่างเดียว (read-only)
   });
 });
-tenantRouter.post('/api/manage/categories', requireCategoryManager, (req, res) => {
+tenantRouter.post('/api/manage/categories', requireCategoryContributor, (req, res) => {
   const db = ctxDb();
   const myDiv = myManageDivision(req);
   if (!myDiv) return res.status(400).json({ error: 'บัญชีของคุณยังไม่ได้ผูกกับฝ่าย — ให้แอดมินกำหนดฝ่ายก่อน' });
@@ -2811,7 +2816,8 @@ tenantRouter.post('/api/admin/schedule', (req, res) => {
   if (!WORKLOG_DATE_RE.test(date)) return res.status(400).json({ error: 'วันที่ไม่ถูกต้อง' });
   const target = load.users().find(u => u.id === uid);
   if (!target) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
-  if (!canManageSchedule(req.session, target)) return res.status(403).json({ error: 'ไม่มีสิทธิ์จัดกะให้ผู้ใช้นี้' });
+  // ตั้งกะของตัวเองได้ (self-service) หรือหัวหน้าที่มีสิทธิ์เหนือคนนั้น
+  if (uid !== req.session.user_id && !canManageSchedule(req.session, target)) return res.status(403).json({ error: 'ไม่มีสิทธิ์จัดกะให้ผู้ใช้นี้' });
   const db = ctxDb();
   const sched = db.loadSchedule(uid) || {};
   if (b.shift_id) {
@@ -2830,7 +2836,7 @@ tenantRouter.post('/api/admin/schedule/bulk', (req, res) => {
   const dates = Array.isArray(b.dates) ? [...new Set(b.dates.filter(d => WORKLOG_DATE_RE.test(d)))] : [];
   const target = load.users().find(u => u.id === uid);
   if (!target) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
-  if (!canManageSchedule(req.session, target)) return res.status(403).json({ error: 'ไม่มีสิทธิ์จัดกะให้ผู้ใช้นี้' });
+  if (uid !== req.session.user_id && !canManageSchedule(req.session, target)) return res.status(403).json({ error: 'ไม่มีสิทธิ์จัดกะให้ผู้ใช้นี้' });
   if (!dates.length) return res.status(400).json({ error: 'ไม่มีวันที่ถูกต้อง' });
   if (dates.length > 400) return res.status(400).json({ error: 'จำนวนวันมากเกินไป' });
   const db = ctxDb();
@@ -3360,8 +3366,8 @@ tenantRouter.get('/admin/users', requireAdmin, (req, res) => res.sendFile(path.j
 tenantRouter.get('/admin/org',   requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-org.html')));
 tenantRouter.get('/admin/categories', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-categories.html')));
 tenantRouter.get('/admin/shifts', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-shifts.html')));
-tenantRouter.get('/manage/categories', requireCategoryManager, (req, res) => res.sendFile(path.join(ROOT, 'public', 'manage-categories.html')));
-tenantRouter.get('/schedule', requireRoles('admin', 'executive', 'manager', 'division_head', 'section_head'), (req, res) => res.sendFile(path.join(ROOT, 'public', 'schedule.html')));
+tenantRouter.get('/manage/categories', requireCategoryContributor, (req, res) => res.sendFile(path.join(ROOT, 'public', 'manage-categories.html')));
+tenantRouter.get('/schedule', requireRoles('admin', 'executive', 'manager', 'division_head', 'section_head', 'supervisor', 'officer'), (req, res) => res.sendFile(path.join(ROOT, 'public', 'schedule.html')));
 tenantRouter.get('/profile',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'profile.html')));
 tenantRouter.get('/reports',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'reports.html')));
 tenantRouter.get('/manual',   (req, res) => res.sendFile(path.join(ROOT, 'public', 'manual.html')));

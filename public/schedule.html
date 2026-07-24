@@ -67,7 +67,7 @@
 
   <div class="card">
     <div class="sc-controls">
-      <div class="f"><label>พนักงาน</label><select id="sc-user" style="min-width:220px;"><option value="">— เลือก —</option></select></div>
+      <div class="f" id="sc-userwrap"><label>พนักงาน</label><select id="sc-user" style="min-width:220px;"><option value="">— เลือก —</option></select></div>
       <div class="f"><label>กะที่จะลง (คลิกวันเพื่อลง)</label><select id="sc-shift"><option value="">— ล้างกะ (เวลาปกติ) —</option></select></div>
     </div>
 
@@ -103,12 +103,31 @@ const msg = document.getElementById('sc-msg');
 const flash = (t, ok) => { msg.style.color = ok ? '#16a34a' : '#b91c1c'; msg.textContent = t; if (ok) setTimeout(() => { if (msg.textContent === t) msg.textContent = ''; }, 2500); };
 const shiftById = id => SHIFTS.find(s => s.id === id);
 
+let ME = null, canManageOthers = false;
 async function loadUsers() {
   try {
     const list = await fetch(TBASE + '/api/reports/users').then(r => r.json());
-    const us = (Array.isArray(list) ? list : []).filter(u => u.role !== 'admin');
-    document.getElementById('sc-user').innerHTML = '<option value="">— เลือก —</option>' + us.map(u => `<option value="${u.id}">${esc(u.name)} (${esc(u.division_name || '-')})</option>`).join('');
+    const us = (Array.isArray(list) ? list : []).filter(u => u.role !== 'admin' && !(ME && u.id === ME.user_id));
+    let opts = '<option value="">— เลือก —</option>';
+    if (ME && ME.user_id) opts += `<option value="${ME.user_id}">⭐ ตัวฉันเอง (${esc(ME.name || '')})</option>`;
+    opts += us.map(u => `<option value="${u.id}">${esc(u.name)} (${esc(u.division_name || '-')})</option>`).join('');
+    document.getElementById('sc-user').innerHTML = opts;
   } catch (e) {}
+}
+async function init() {
+  try { ME = await fetch(TBASE + '/api/me').then(r => r.json()); } catch (e) { ME = null; }
+  canManageOthers = !!(ME && ['admin', 'executive', 'manager', 'division_head', 'section_head'].includes(ME.role));
+  await loadShifts();
+  if (canManageOthers) {
+    await loadUsers();
+  } else {
+    // โหมด "กะของฉัน" (เจ้าหน้าที่/หัวหน้างาน ตั้งกะของตัวเอง)
+    const wrap = document.getElementById('sc-userwrap'); if (wrap) wrap.style.display = 'none';
+    const h = document.querySelector('h1'); if (h) h.textContent = '🗓️ กะของฉัน';
+    const sub = document.querySelector('p.sub'); if (sub) sub.textContent = 'เลือก "กะที่จะลง" แล้วคลิกวันในปฏิทินเพื่อกำหนดกะของคุณ · หรือใช้ปุ่มลงทีเดียวทั้งเดือน';
+    curUser = (ME && ME.user_id) ? ME.user_id : '';
+  }
+  loadMonth();
 }
 async function loadShifts() {
   try { const d = await fetch(TBASE + '/api/shifts').then(r => r.json()); SHIFTS = d.shifts || []; } catch (e) { SHIFTS = []; }
@@ -179,7 +198,7 @@ document.getElementById('sc-next').addEventListener('click', () => { curM++; if 
 document.getElementById('sc-wd').addEventListener('click', () => bulk('wd'));
 document.getElementById('sc-all').addEventListener('click', () => bulk('all'));
 document.getElementById('sc-clear').addEventListener('click', () => bulk('clear'));
-loadShifts(); loadUsers(); render();
+init();
 </script>
 </body>
 </html>

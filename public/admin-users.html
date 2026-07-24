@@ -140,6 +140,7 @@
       <input id="u-search" placeholder="🔍 ค้นหาชื่อ / username..." style="flex:1; min-width:200px; padding:9px 12px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px; box-sizing:border-box;"/>
       <select id="u-fdiv" style="padding:9px 11px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px;"><option value="">ทุกฝ่าย</option></select>
       <select id="u-fsec" style="padding:9px 11px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px;"><option value="">ทุกแผนก</option></select>
+      <select id="u-fpos" style="padding:9px 11px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px;"><option value="">ทุกตำแหน่ง</option></select>
       <button class="ghost" id="u-clear" type="button" title="ล้างตัวกรอง">ล้าง</button>
     </div>
     <div id="u-count" class="sub" style="margin-bottom:10px; font-size:13px;"></div>
@@ -255,6 +256,7 @@ async function loadAll() {
   ]);
   fillFilterDivs();
   fillFilterSecs();
+  fillFilterPos();
   renderUsers();
 }
 
@@ -274,13 +276,28 @@ function fillFilterSecs() {
   }).join('');
   sel.value = (cur && list.some(s => s.id === cur)) ? cur : '';
 }
+function fillFilterPos() {
+  const did = document.getElementById('u-fdiv').value;
+  const sid = document.getElementById('u-fsec').value;
+  const sel = document.getElementById('u-fpos');
+  const cur = sel.value;
+  const secMap = Object.fromEntries(SECS.map(s => [s.id, s.name]));
+  const list = POSS.filter(p => (!sid || p.section_id === sid) && (!did || p.division_id === did));
+  sel.innerHTML = '<option value="">ทุกตำแหน่ง</option>' + list.map(p => {
+    const sn = sid ? '' : ' (' + esc(secMap[p.section_id] || '') + ')';
+    return `<option value="${p.id}">${esc(p.name)}${sn}</option>`;
+  }).join('');
+  sel.value = (cur && list.some(p => p.id === cur)) ? cur : '';
+}
 function filteredUsers() {
   const q = (document.getElementById('u-search').value || '').trim().toLowerCase();
   const fdiv = document.getElementById('u-fdiv').value;
   const fsec = document.getElementById('u-fsec').value;
+  const fpos = document.getElementById('u-fpos').value;
   return USERS.filter(u => {
     if (fdiv && u.division_id !== fdiv) return false;
     if (fsec && u.section_id !== fsec) return false;
+    if (fpos && u.position_id !== fpos) return false;
     if (q && !((String(u.name || '') + ' ' + String(u.username || '')).toLowerCase().includes(q))) return false;
     return true;
   });
@@ -424,12 +441,14 @@ document.getElementById('sel-sec').addEventListener('change', fillPositions);
 
 // --- ตัวกรองรายการผู้ใช้ (ค้นหาชื่อ + ฝ่าย + แผนก) ---
 document.getElementById('u-search').addEventListener('input', renderUsers);
-document.getElementById('u-fdiv').addEventListener('change', () => { fillFilterSecs(); renderUsers(); });
-document.getElementById('u-fsec').addEventListener('change', renderUsers);
+document.getElementById('u-fdiv').addEventListener('change', () => { fillFilterSecs(); fillFilterPos(); renderUsers(); });
+document.getElementById('u-fsec').addEventListener('change', () => { fillFilterPos(); renderUsers(); });
+document.getElementById('u-fpos').addEventListener('change', renderUsers);
 document.getElementById('u-clear').addEventListener('click', () => {
   document.getElementById('u-search').value = '';
   document.getElementById('u-fdiv').value = '';
   fillFilterSecs();
+  fillFilterPos();
   renderUsers();
 });
 

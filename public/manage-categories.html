@@ -100,7 +100,8 @@
 
 <script>
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let CATS = [], DIVNAME = '';
+let CATS = [], DIVNAME = '', CAN_MANAGE = false;
+const MANAGER_ROLES = ['admin', 'manager', 'division_head', 'section_head'];
 const msg = document.getElementById('c-msg');
 function flash(t, ok) { msg.style.color = ok ? '#16a34a' : '#b91c1c'; msg.textContent = t; if (ok) setTimeout(() => { if (msg.textContent === t) msg.textContent = ''; }, 3000); }
 function render() {
@@ -108,14 +109,21 @@ function render() {
   const rows = CATS.filter(c => !q || c.name.toLowerCase().includes(q));
   if (!CATS.length) { document.getElementById('c-body').innerHTML = '<p class="sub">ยังไม่มีหมวดหมู่ในฝ่าย — เพิ่มด้านบน</p>'; return; }
   if (!rows.length) { document.getElementById('c-body').innerHTML = '<p class="sub">ไม่พบหมวดหมู่ที่ค้นหา</p>'; return; }
-  document.getElementById('c-body').innerHTML = `<table class="cat-table"><thead><tr><th>ชื่อหมวดหมู่</th><th style="width:120px;"></th></tr></thead><tbody>${rows.map(c => `
+  const actionsHead = CAN_MANAGE ? '<th style="width:120px;"></th>' : '';
+  document.getElementById('c-body').innerHTML = `<table class="cat-table"><thead><tr><th>ชื่อหมวดหมู่</th>${actionsHead}</tr></thead><tbody>${rows.map(c => `
     <tr>
       <td>${esc(c.name)}</td>
-      <td><button class="ghost" onclick="openEdit('${c.id}')">แก้</button> <button class="ghost" style="color:#b91c1c;" onclick="delCat('${c.id}','${esc(c.name)}')">ลบ</button></td>
+      ${CAN_MANAGE ? `<td><button class="ghost" onclick="openEdit('${c.id}')">แก้</button> <button class="ghost" style="color:#b91c1c;" onclick="delCat('${c.id}','${esc(c.name)}')">ลบ</button></td>` : ''}
     </tr>`).join('')}</tbody></table>`;
 }
 async function load() {
   try {
+    let me = null; try { me = await fetch(TBASE + '/api/me').then(r => r.json()); } catch (e) {}
+    CAN_MANAGE = !!(me && MANAGER_ROLES.includes(me.role));
+    if (!CAN_MANAGE) {
+      const sub = document.querySelector('h1 + p.sub');
+      if (sub) sub.innerHTML = 'เพิ่มหมวดหมู่งานของ <span id="div-banner" class="div-banner">ฝ่ายของคุณ</span> — พนักงานในฝ่ายจะเลือกหมวดเหล่านี้ในหน้าบันทึกงานได้ทันที <span class="sub">(แก้ไข/ลบ ต้องเป็นหัวหน้า)</span>';
+    }
     const d = await fetch(TBASE + '/api/manage/categories').then(r => r.json());
     CATS = d.mine || []; DIVNAME = d.division_name || '';
     const banner = document.getElementById('div-banner');
