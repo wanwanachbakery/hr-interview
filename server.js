@@ -670,20 +670,31 @@ function timeToHour(hhmm) {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '').trim());
   return m ? Number(m[1]) : null;
 }
-// Build interview hours from a user's work_start/work_end/break_start/break_end.
-// Returns { start, end, lunchStart, lunchEnd, hours[] } or null when invalid.
+// Build interview/worklog hours from work_start/work_end/break_start/break_end.
+// รองรับกะข้ามวัน: ถ้าเวลาออก <= เวลาเข้า ถือว่าข้ามเที่ยงคืน (บวก 24) เช่น
+//   15:00→00:00 = [15..23] · 23:00→07:00 = [23,0,1,2,3,4,5,6]
+// Returns { start, end, lunchStart, lunchEnd, overnight, hours[] } หรือ null เมื่อไม่ถูกต้อง
 function hoursFromTimes(ws, we, bs, be) {
   const start = timeToHour(ws);
   const end = timeToHour(we);
-  if (start == null || end == null || end <= start) return null;
+  if (start == null || end == null) return null;
+  let endAbs = end;
+  const overnight = endAbs <= start;
+  if (overnight) endAbs += 24;                 // ข้ามวัน → บวก 24 (00:00 = เที่ยงคืน = 24)
+  if (endAbs - start > 24) return null;         // กันกะยาวเกิน 24 ชม.
   const lunchStart = timeToHour(bs);
   const lunchEnd = timeToHour(be);
-  const hours = [];
-  for (let h = start; h < end; h++) {
-    if (lunchStart != null && lunchEnd != null && h >= lunchStart && h < lunchEnd) continue;
-    hours.push(h);
+  let lsAbs = null, leAbs = null;
+  if (lunchStart != null && lunchEnd != null) {
+    lsAbs = lunchStart; if (lsAbs < start) lsAbs += 24;       // ดันเวลาพักเข้าช่วงกะ
+    leAbs = lunchEnd;   if (leAbs <= lsAbs) leAbs += 24;
   }
-  return { start, end, lunchStart, lunchEnd, hours };
+  const hours = [];
+  for (let h = start; h < endAbs; h++) {
+    if (lsAbs != null && leAbs != null && h >= lsAbs && h < leAbs) continue;
+    hours.push(h % 24);                          // วนกลับ 0 หลังเที่ยงคืน
+  }
+  return { start, end, lunchStart, lunchEnd, overnight, hours };
 }
 function calcUserHours(user) {
   if (!user) return null;
@@ -2390,7 +2401,7 @@ function buildWorklogForUser(db, user, date) {
   }
   const pad = (n) => String(n).padStart(2, '0');
   // One row per scheduled hour, each holding 0..n task items (multiple tasks per hour).
-  const entries = hours.map(h => ({ hour: h, label: `${pad(h)}:00–${pad(h + 1)}:00`, items: byHour[h] || [] }));
+  const entries = hours.map(h => ({ hour: h, label: `${pad(h)}:00–${pad((h + 1) % 24)}:00`, items: byHour[h] || [] }));
   const filled = entries.filter(e => e.items.length > 0).length;   // hours with at least one task
   const hs = loadHolidaySet(db);
   return {
@@ -2760,8 +2771,9 @@ tenantRouter.post('/api/admin/shifts', requireAdmin, (req, res) => {
   const name = String(b.name || '').trim();
   if (!name) return res.status(400).json({ error: 'ต้องใส่ชื่อกะ' });
   if (!isHHMM(b.start) || !isHHMM(b.end)) return res.status(400).json({ error: 'เวลาเข้า-ออกไม่ถูกต้อง (HH:MM)' });
-  if (b.start >= b.end) return res.status(400).json({ error: 'เวลาออกต้องหลังเวลาเข้า' });
+  if (b.start === b.end) return res.status(400).json({ error: 'เวลาเข้าและเวลาออกต้องไม่เท่ากัน' });
   if ((b.break_start && !isHHMM(b.break_start)) || (b.break_end && !isHHMM(b.break_end))) return res.status(400).json({ error: 'เวลาพักไม่ถูกต้อง' });
+  if (!hoursFromTimes(b.start, b.end, b.break_start, b.break_end)) return res.status(400).json({ error: 'ช่วงเวลากะไม่ถูกต้อง' });
   const db = ctxDb();
   const list = db.shifts();
   list.push({ id: 'sh_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, start: b.start, end: b.end, break_start: b.break_start || '', break_end: b.break_end || '', color: b.color || '#0ea5e9' });
@@ -2772,8 +2784,9 @@ tenantRouter.put('/api/admin/shifts/:id', requireAdmin, (req, res) => {
   const b = req.body || {};
   const name = String(b.name || '').trim();
   if (!name) return res.status(400).json({ error: 'ต้องใส่ชื่อกะ' });
-  if (!isHHMM(b.start) || !isHHMM(b.end) || b.start >= b.end) return res.status(400).json({ error: 'เวลาไม่ถูกต้อง' });
+  if (!isHHMM(b.start) || !isHHMM(b.end) || b.start === b.end) return res.status(400).json({ error: 'เวลาไม่ถูกต้อง' });
   if ((b.break_start && !isHHMM(b.break_start)) || (b.break_end && !isHHMM(b.break_end))) return res.status(400).json({ error: 'เวลาพักไม่ถูกต้อง' });
+  if (!hoursFromTimes(b.start, b.end, b.break_start, b.break_end)) return res.status(400).json({ error: 'ช่วงเวลากะไม่ถูกต้อง' });
   const db = ctxDb();
   const list = db.shifts();
   const sh = list.find(x => x.id === req.params.id);
