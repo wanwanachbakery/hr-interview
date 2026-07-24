@@ -326,21 +326,24 @@ async function copyRecurring() {
     const d = await fetch(`${TBASE}/api/worklog/copy-recurring?date=${dateEl.value}`).then(r => r.json());
     if (!d.entries || !d.entries.length) { savedMsg.style.color = '#64748b'; savedMsg.textContent = 'ไม่พบงานประจำจากวันก่อน'; }
     else {
-      let n = 0;
+      let n = 0, skipped = 0;
       for (const e of d.entries) {
         const block = bodyEl.querySelector(`.wl-hour[data-hour="${e.hour}"]`);
-        if (!block) continue;
+        if (!block) { skipped++; continue; }   // ชั่วโมงนี้ไม่มีในตารางวันนี้ (เวลาทำงาน/กะต่างกัน)
         const tasks = block.querySelector('.wl-tasks');
         let line = [...tasks.querySelectorAll('.wl-taskline')].find(l => !l.querySelector('input[data-field="task"]').value.trim());
         if (!line) { tasks.insertAdjacentHTML('beforeend', taskLineHTML(null)); line = tasks.lastElementChild; }
         line.querySelector('input[data-field="task"]').value = e.task;
         if (e.category && !categories.includes(e.category)) categories.push(e.category);
-        line.querySelector('select[data-field="category"]').innerHTML = catOptions(e.category || '');
+        const catInput = line.querySelector('input[data-field="category"]');
+        if (catInput) catInput.value = e.category || '';                  // ช่องหมวดหมู่เป็น input (datalist) แล้ว
         const rec = line.querySelector('.wl-rec');
         rec.setAttribute('data-on', '1'); rec.className = 'wl-rec on'; rec.textContent = '⟳ ประจำ';
         n++;
       }
-      savedMsg.style.color = '#16a34a'; savedMsg.textContent = `คัดลอกมา ${n} งาน (จาก ${d.from || '-'})`;
+      refreshCatDatalist();
+      savedMsg.style.color = '#16a34a';
+      savedMsg.textContent = `คัดลอกมา ${n} งาน (จาก ${d.from || '-'})` + (skipped ? ` · ข้าม ${skipped} งานที่อยู่นอกเวลาทำงานวันนี้` : '');
       recomputeProgress();
     }
     setTimeout(() => { savedMsg.textContent = ''; savedMsg.style.color = '#16a34a'; }, 4000);

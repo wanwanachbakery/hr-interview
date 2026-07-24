@@ -304,11 +304,13 @@
   <style>
     #audit-card table { width:100%; border-collapse:collapse; font-size:13px; }
     #audit-card th, #audit-card td { text-align:left; padding:7px 9px; border-bottom:1px solid #eef2f7; vertical-align:top; }
-    #audit-card th { background:#f8fafc; color:#475569; font-weight:600; white-space:nowrap; }
+    #audit-card th { background:#f1f5f9; color:#475569; font-weight:600; white-space:nowrap; }
     #audit-card td.mono { font-family:monospace; font-size:12px; }
     #audit-card .a-ok { color:#166534; }
     #audit-card .a-fail { color:#b91c1c; }
-    #audit-card .a-wrap { overflow-x:auto; }
+    /* กล่องเลื่อนในตัว — ตารางยาวไม่ดันหน้าให้ยืด + หัวตารางตรึงไว้ */
+    #audit-card .a-wrap { overflow:auto; max-height:60vh; border:1px solid #e2e8f0; border-radius:10px; }
+    #audit-card thead th { position:sticky; top:0; z-index:1; box-shadow:0 1px 0 #e2e8f0; }
     #audit-card .audit-filters { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:14px; }
     #audit-card .audit-filters input, #audit-card .audit-filters select { padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; font-family:inherit; font-size:14px; width:auto; }
     #audit-card .audit-filters .au-s { flex:1; min-width:180px; }
