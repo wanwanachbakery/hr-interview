@@ -208,10 +208,10 @@
         <div><label>เลิกพัก <span class="sub" style="font-size:12px;">(24 ชม.)</span></label><input name="break_end" type="text" pattern="^([01]\d|2[0-3]):[0-5]\d$" placeholder="HH:MM" maxlength="5" inputmode="numeric" value="13:00" required title="รูปแบบ HH:MM แบบ 24 ชั่วโมง"/></div>
       </div>
 
-      <!-- Manager-only: scope override -->
+      <!-- Scope override: manager / division_head / section_head -->
       <div id="override-panel" style="display:none; margin-top:16px; padding:12px; border:1px dashed #cbd5e1; border-radius:8px; background:#fffbeb;">
-        <h3 style="margin:0 0 4px;">ตั้งค่า scope เพิ่มเติม (เฉพาะ Manager)</h3>
-        <p class="sub" style="font-size:13px;">ผู้จัดการเริ่มจากเห็นแค่ฝ่ายตัวเอง — เลือกฝ่าย/แผนก/ตำแหน่งอื่นที่อนุญาตให้ดูได้</p>
+        <h3 style="margin:0 0 4px;">🗂️ ดูแลเพิ่มเติม (หลายแผนก / หลายฝ่าย)</h3>
+        <p class="sub" style="font-size:13px;">นอกจากฝ่าย/แผนกหลักของตัวเองแล้ว — ติ๊กเลือกฝ่าย/แผนก/ตำแหน่งอื่นที่ให้ผู้ใช้คนนี้ดูแลได้ด้วย (ดูบันทึกงาน · จัดกะ · รายงาน)</p>
         <div class="row">
           <div>
             <label>ฝ่ายเพิ่มเติม</label>
@@ -414,7 +414,7 @@ function onRoleChange() {
   setReq(document.getElementById('div-req'));
   setReq(document.getElementById('sec-req'));
   setReq(document.getElementById('pos-req'));
-  document.getElementById('override-panel').style.display = r === 'manager' ? 'block' : 'none';
+  document.getElementById('override-panel').style.display = ['manager', 'division_head', 'section_head'].includes(r) ? 'block' : 'none';
 }
 document.getElementById('role-select').addEventListener('change', onRoleChange);
 
@@ -451,7 +451,7 @@ document.getElementById('user-form').addEventListener('submit', async e => {
     break_end:   fd.get('break_end'),
   };
   if (fd.get('password')) body.password = fd.get('password');
-  if (body.role === 'manager') {
+  if (['manager', 'division_head', 'section_head'].includes(body.role)) {
     body.scope_override = {
       divisions: fd.getAll('ov_div'),
       sections:  fd.getAll('ov_sec'),

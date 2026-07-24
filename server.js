@@ -766,6 +766,8 @@ function archiveEmployeeForUser(userId, reason) {
 // canView is LENIENT — section_head/officer can also "see" their parent division
 // (and officer their parent section) so the dashboard tree has a root to render.
 // canEdit is STRICT — section_head only edits own section, never the parent division.
+// Roles ที่แอดมินกำหนด "ดูแลเพิ่มเติม" (หลายแผนก/ฝ่าย) ผ่าน scope_override ได้
+const SCOPE_OVERRIDE_ROLES = ['manager', 'division_head', 'section_head'];
 function canView(session, target) {
   if (!session) return false;
   const r = session.role;
@@ -784,7 +786,12 @@ function canView(session, target) {
     return false;
   }
   if (r === 'division_head') {
-    return !!target.division_id && target.division_id === myDiv;
+    if (target.division_id && target.division_id === myDiv) return true;
+    // ดูแลหลายฝ่าย/แผนกเพิ่มเติม (แอดมินกำหนดผ่าน scope_override)
+    if (target.division_id && (ov.divisions || []).includes(target.division_id)) return true;
+    if (target.section_id && (ov.sections || []).includes(target.section_id)) return true;
+    if (target.position_id && (ov.positions || []).includes(target.position_id)) return true;
+    return false;
   }
   if (r === 'section_head' || r === 'supervisor') {
     // section_head + supervisor(หัวหน้างาน) เห็น scope เดียวกัน (แผนกตัวเอง) — ต่างกันที่
@@ -793,6 +800,10 @@ function canView(session, target) {
     // Parent division — only when target is "about" a division (no section_id specified).
     // Lets the dashboard render the parent ฝ่าย so the tree has a root.
     if (target.division_id && target.division_id === myDiv && !target.section_id && !target.position_id) return true;
+    // ดูแลหลายแผนกเพิ่มเติม (แอดมินกำหนดผ่าน scope_override) — supervisor จะไม่มี override เสมอ
+    if (target.section_id && (ov.sections || []).includes(target.section_id)) return true;
+    if (target.position_id && (ov.positions || []).includes(target.position_id)) return true;
+    if (target.division_id && (ov.divisions || []).includes(target.division_id) && !target.section_id && !target.position_id) return true;
     return false;
   }
   if (r === 'officer') {
@@ -821,11 +832,20 @@ function canEdit(session, target) {
     return false;
   }
   if (r === 'division_head') {
-    return !!(target.division_id && target.division_id === session.division_id);
+    if (target.division_id && target.division_id === session.division_id) return true;
+    const ov = session.scope_override || {};
+    if (target.division_id && (ov.divisions || []).includes(target.division_id)) return true;
+    if (target.section_id && (ov.sections || []).includes(target.section_id)) return true;
+    if (target.position_id && (ov.positions || []).includes(target.position_id)) return true;
+    return false;
   }
   if (r === 'section_head') {
     // Own section + positions in it (positions are passed with section_id). Never the parent division.
-    return !!(target.section_id && target.section_id === session.section_id);
+    if (target.section_id && target.section_id === session.section_id) return true;
+    const ov = session.scope_override || {};
+    if (target.section_id && (ov.sections || []).includes(target.section_id)) return true;
+    if (target.position_id && (ov.positions || []).includes(target.position_id)) return true;
+    return false;
   }
   return false;
 }
@@ -1462,14 +1482,32 @@ tenantRouter.put('/api/sections/:id', (req, res) => {
     sec.name = String(name).trim();
   }
   if (name_en !== undefined) sec.name_en = String(name_en).trim();
-  if (division_id !== undefined) {
-    if (!load.divisions().some(d => d.id === division_id)) return res.status(400).json({ error: 'ไม่พบฝ่าย' });
+  let moved = null;
+  if (division_id !== undefined && division_id !== sec.division_id) {
+    const newDiv = load.divisions().find(d => d.id === division_id);
+    if (!newDiv) return res.status(400).json({ error: 'ไม่พบฝ่าย' });
+    // กันชื่อแผนกชนในฝ่ายปลายทาง
+    if (list.some(x => x.id !== sec.id && x.division_id === division_id && x.name === sec.name)) {
+      return res.status(400).json({ error: 'ฝ่ายปลายทางมีแผนกชื่อนี้อยู่แล้ว' });
+    }
     sec.division_id = division_id;
+    // Cascade: ตำแหน่ง + ผู้ใช้ + พนักงาน ในแผนกนี้ ย้ายฝ่ายตามไปด้วย (กัน division_id ค้างไม่ตรงกัน)
+    const poss = load.positions(); let pc = 0;
+    for (const p of poss) if (p.section_id === sec.id && p.division_id !== division_id) { p.division_id = division_id; pc++; }
+    if (pc) save.positions(poss);
+    const usrs = load.users(); let uc = 0;
+    // bump tv ของ user ที่ย้าย → token เดิม (มี division_id เก่า) จะโดนปฏิเสธ ต้อง login ใหม่ = สิทธิ์อัปเดต
+    for (const usr of usrs) if (usr.section_id === sec.id && usr.division_id !== division_id) { usr.division_id = division_id; usr.tv = Number(usr.tv || 0) + 1; uc++; }
+    if (uc) save.users(usrs);
+    const emps = load.employees(); let ec = 0;
+    for (const e of emps) if (e.section_id === sec.id && e.division_id !== division_id) { e.division_id = division_id; e.division_name = newDiv.name; ec++; }
+    if (ec) save.employees(emps);
+    moved = { to: newDiv.name, positions: pc, users: uc, employees: ec };
   }
   sec.updated_at = new Date().toISOString();
   save.sections(list);
-  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'org.section.update', target: sec.id, ip: req.ip, result: 'ok', meta: { name: sec.name } });
-  res.json(sec);
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: moved ? 'org.section.move' : 'org.section.update', target: sec.id, ip: req.ip, result: 'ok', meta: moved ? { name: sec.name, ...moved } : { name: sec.name } });
+  res.json(moved ? { ...sec, moved } : sec);
 });
 tenantRouter.delete('/api/sections/:id', requireAdmin, (req, res) => {
   const list = load.sections();
@@ -1646,7 +1684,7 @@ tenantRouter.post('/api/users', requireAdmin, (req, res) => {
     work_end:   work_end   || '18:00',
     break_start: break_start || '12:00',
     break_end:   break_end   || '13:00',
-    scope_override: role === 'manager' ? (scope_override || null) : null,
+    scope_override: SCOPE_OVERRIDE_ROLES.includes(role) ? (scope_override || null) : null,
     created_at: new Date().toISOString(),
   };
   list.push(user);
@@ -1698,8 +1736,8 @@ tenantRouter.put('/api/users/:id', requireAdmin, (req, res) => {
   if (body.break_start !== undefined) u.break_start = body.break_start;
   if (body.break_end   !== undefined) u.break_end   = body.break_end;
   if (body.scope_override !== undefined) {
-    u.scope_override = u.role === 'manager' ? (body.scope_override || null) : null;
-  } else if (u.role !== 'manager') {
+    u.scope_override = SCOPE_OVERRIDE_ROLES.includes(u.role) ? (body.scope_override || null) : null;
+  } else if (!SCOPE_OVERRIDE_ROLES.includes(u.role)) {
     u.scope_override = null;
   }
   // FIX 3 — bump token version เมื่อรหัส/role/scope เปลี่ยน → token เดิมของ user นี้

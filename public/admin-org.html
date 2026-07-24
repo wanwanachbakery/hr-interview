@@ -208,6 +208,10 @@ function renderTree() {
                 <div>📋 <strong>${esc(s.name)}</strong> ${s.name_en ? `<span class="sub" style="font-size:13px;">(${esc(s.name_en)})</span>` : ''}</div>
                 <div class="item-actions">
                   <button class="ghost" onclick="editSec('${s.id}')">แก้</button>
+                  ${DIVS.length > 1 ? `<select onchange="moveSec('${s.id}', this.value); this.value='';" title="ย้ายแผนกนี้ไปฝ่ายอื่น" style="padding:5px 8px; border:1px solid #d1d5db; border-radius:6px; font-family:inherit; font-size:13px;">
+                    <option value="">↔ ย้ายฝ่าย…</option>
+                    ${DIVS.filter(x => x.id !== d.id).map(x => `<option value="${x.id}">→ ${esc(x.name)}</option>`).join('')}
+                  </select>` : ''}
                   <button class="ghost" style="color:#b91c1c;" onclick="delSec('${s.id}')">ลบ</button>
                 </div>
               </div>
@@ -295,6 +299,18 @@ async function delSec(id) {
   if (!confirm('ลบแผนก "' + s.name + '"?')) return;
   const r = await fetch(TBASE + '/api/sections/' + id, { method:'DELETE' });
   if (!r.ok) { const e = await r.json().catch(()=>({})); alert('ลบไม่ได้: ' + (e.error || 'unknown')); return; }
+  loadAll();
+}
+async function moveSec(id, divId) {
+  if (!divId) return;
+  const s = SECS.find(x => x.id === id); const d = DIVS.find(x => x.id === divId);
+  if (!s || !d) return;
+  if (!confirm(`ย้ายแผนก "${s.name}" ไปที่ฝ่าย "${d.name}"?\n\n⚠️ ตำแหน่ง · ผู้ใช้ · พนักงาน ทั้งหมดในแผนกนี้จะย้ายฝ่ายตามไปด้วย\n(ผู้ใช้ที่ถูกย้ายต้องเข้าสู่ระบบใหม่ 1 ครั้ง เพื่อรีเฟรชสิทธิ์)`)) return;
+  const r = await fetch(TBASE + '/api/sections/' + id, { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({ division_id: divId }) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { alert('ย้ายไม่ได้: ' + (data.error || 'unknown')); return; }
+  const m = data.moved;
+  if (m) alert(`✓ ย้าย "${s.name}" ไปฝ่าย "${m.to}" แล้ว\nย้ายตามไป: ตำแหน่ง ${m.positions} · ผู้ใช้ ${m.users} · พนักงาน ${m.employees}`);
   loadAll();
 }
 
