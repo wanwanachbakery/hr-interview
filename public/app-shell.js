@@ -188,16 +188,24 @@
       const prof = document.getElementById('appProfile');
       if (prof) prof.style.display = (role === 'admin') ? 'none' : '';
     }
-    renderNav(null);                                    // optimistic; refine once role is known
-    fetch(TB + '/api/me').then(r => r.json()).then(me => renderNav(me && me.role)).catch(() => {});
+    // Perf: เมนู/ชื่อบริษัท/สวิตช์ เปลี่ยนน้อยมากในหนึ่ง session — cache ใน sessionStorage
+    // เพื่อให้หน้าถัด ๆ ไป "วาดเมนูทันที" ไม่ต้องรอ ~1 วิ ต่อการเปิดหน้า (ยิงรีเฟรชเบื้องหลัง)
+    function ssGet(k) { try { return JSON.parse(sessionStorage.getItem(k)); } catch { return null; } }
+    function ssSet(k, v) { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch (_) {} }
+    function setCo(c) { const el = document.getElementById('appCo'); if (el) el.textContent = (c && c.name) || ''; }
+    const cMe = ssGet('wwn_me'), cHol = ssGet('wwn_hol'), cCo = ssGet('wwn_co');
+    if (cHol) selfOffEnabled = !!cHol.allowSelfDayOff;
+    renderNav(cMe ? cMe.role : null);                   // วาดจาก cache ทันที (ถ้ามี) ไม่งั้น optimistic
+    if (cCo) setCo(cCo);
+    // refresh เบื้องหลัง → อัปเดต cache + วาดใหม่ให้ตรงจริง
+    fetch(TB + '/api/me').then(r => r.json()).then(me => { ssSet('wwn_me', me || {}); renderNav(me && me.role); }).catch(() => {});
     // เมนู "วันหยุดของฉัน" แสดงเมื่อแอดมินเปิดสวิตช์ให้พนักงานตั้งวันหยุดเอง
-    fetch(TB + '/api/holidays').then(r => r.json()).then(h => { selfOffEnabled = !!(h && h.allowSelfDayOff); renderNav(navRole); }).catch(() => {});
-    fetch(TB + '/api/company').then(r => r.ok ? r.json() : null).then(c => {
-      const el = document.getElementById('appCo'); if (el) el.textContent = (c && c.name) || '';
-    }).catch(() => {});
+    fetch(TB + '/api/holidays').then(r => r.json()).then(h => { ssSet('wwn_hol', h || {}); selfOffEnabled = !!(h && h.allowSelfDayOff); renderNav(navRole); }).catch(() => {});
+    fetch(TB + '/api/company').then(r => r.ok ? r.json() : null).then(c => { ssSet('wwn_co', c || {}); setCo(c); }).catch(() => {});
 
     document.getElementById('appLogout').addEventListener('click', async (e) => {
       e.preventDefault();
+      try { sessionStorage.removeItem('wwn_me'); sessionStorage.removeItem('wwn_hol'); sessionStorage.removeItem('wwn_co'); } catch (_) {}
       try { await fetch(TB + '/api/logout', { method: 'POST' }); } catch (_) {}
       location.href = TB + '/login';
     });
