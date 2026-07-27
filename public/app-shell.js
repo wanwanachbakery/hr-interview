@@ -71,6 +71,7 @@
     const NAV = [
       { href: '/', label: 'หน้าแรก', ic: '🏠' },
       { href: '/worklog', label: 'บันทึกงาน', ic: '📝', hideAdmin: true },
+      { href: '/my-daysoff', label: 'วันหยุดของฉัน', ic: '🌴', hideAdmin: true, needsSelfOff: true },
       { href: '/worklog-team', label: 'บันทึกงานทีม', ic: '👥', supervisor: true },
       { href: '/worklog-report', label: 'สรุปบันทึกงาน', ic: '📈', supervisor: true },
       { href: '/schedule', label: 'จัดกะ / ตารางเวร', ic: '🗓️', roles: ['admin', 'executive', 'manager', 'division_head', 'section_head', 'supervisor', 'officer'] },
@@ -168,12 +169,15 @@
       if (window.I18N && typeof window.I18N.mountSwitcher === 'function') { try { window.I18N.mountSwitcher(); } catch (_) {} }
     }
 
+    let navRole = null, selfOffEnabled = false;
     function renderNav(role) {
+      navRole = role;
       const isSup = role && role !== 'officer';
       const items = NAV.filter(it =>
         !(it.hideAdmin && role === 'admin') &&
         !(it.supervisor && !isSup) &&
-        !(it.roles && !it.roles.includes(role)));
+        !(it.roles && !it.roles.includes(role)) &&
+        !(it.needsSelfOff && !selfOffEnabled));
       document.getElementById('appNav').innerHTML = items.map(it => {
         const active = (it.href === '/' ? path === '/' : path === it.href) ? ' active' : '';
         return '<a class="app-nav-item' + active + '" href="' + TB + it.href + '"><span class="ic">' + it.ic + '</span>' + esc(it.label) + '</a>';
@@ -186,6 +190,8 @@
     }
     renderNav(null);                                    // optimistic; refine once role is known
     fetch(TB + '/api/me').then(r => r.json()).then(me => renderNav(me && me.role)).catch(() => {});
+    // เมนู "วันหยุดของฉัน" แสดงเมื่อแอดมินเปิดสวิตช์ให้พนักงานตั้งวันหยุดเอง
+    fetch(TB + '/api/holidays').then(r => r.json()).then(h => { selfOffEnabled = !!(h && h.allowSelfDayOff); renderNav(navRole); }).catch(() => {});
     fetch(TB + '/api/company').then(r => r.ok ? r.json() : null).then(c => {
       const el = document.getElementById('appCo'); if (el) el.textContent = (c && c.name) || '';
     }).catch(() => {});

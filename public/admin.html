@@ -77,7 +77,7 @@
     }
   });
 </script>
-  <script src="/app-shell.js?v=5"></script>
+  <script src="/app-shell.js?v=6"></script>
 </head>
 <body>
 <div class="container">
@@ -248,6 +248,12 @@
     </div>
     <p class="sub" style="margin:8px 0 0;">* วันหยุดราชการที่อิงจันทรคติ (มาฆบูชา/วิสาขบูชา/อาสาฬหบูชา/เข้าพรรษา) เปลี่ยนทุกปี — เพิ่มเองด้วยช่อง “เพิ่มวันหยุด”</p>
     <div id="hol-list" style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;"><span class="sub">— ยังไม่มี —</span></div>
+
+    <h3 style="margin:22px 0 8px;">พนักงานตั้งวันหยุดของตัวเอง</h3>
+    <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; font-weight:400;">
+      <input type="checkbox" id="hol-selfoff" style="width:18px; height:18px; margin-top:2px; flex:0 0 auto;"/>
+      <span>เปิดให้พนักงาน <strong>ตั้งวันหยุดของตัวเองได้</strong> (เหมาะกับบริษัทที่ทำงาน 7 วัน วันหยุดไม่ตายตัว) — พนักงานจะมีเมนู “🌴 วันหยุดของฉัน” ไว้เลือกวันหยุดในปฏิทินล่วงหน้า · วันที่เลือกจะไม่ถูกนับเป็น “วันขาด”</span>
+    </label>
 
     <div style="margin-top:18px;">
       <button onclick="saveHolidays()">💾 บันทึกวันหยุด</button>
@@ -614,6 +620,7 @@ async function loadHolidays() {
     const h = await fetch(TBASE + '/api/holidays').then(r => r.json());
     holWeekly = new Set((h.weekly || []).map(Number));
     holDates = (h.dates || []).slice();
+    const sc = document.getElementById('hol-selfoff'); if (sc) sc.checked = !!h.allowSelfDayOff;
   } catch {}
   renderHolWeekly(); renderHolDates();
 }
@@ -621,7 +628,7 @@ async function saveHolidays() {
   try {
     const r = await fetch(TBASE + '/api/admin/holidays', {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ weekly: [...holWeekly], dates: holDates }),
+      body: JSON.stringify({ weekly: [...holWeekly], dates: holDates, allowSelfDayOff: document.getElementById('hol-selfoff').checked }),
     });
     if (!r.ok) throw new Error();
     document.getElementById('hol-saved').textContent = '✓ บันทึกแล้ว';

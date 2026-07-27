@@ -425,6 +425,9 @@ function tenantDb(tenantId) {
     // ตารางกะรายคน — 1 ไฟล์/คน: schedules/<userId>.json = { "YYYY-MM-DD": shiftId }
     loadSchedule:   (uid) => readJson(path.join(dir, 'schedules', `${uid}.json`), {}),
     saveSchedule:   (uid, obj) => { const sd = path.join(dir, 'schedules'); if (!fs.existsSync(sd)) fs.mkdirSync(sd, { recursive: true }); writeJson(path.join(sd, `${uid}.json`), obj); },
+    // วันหยุดส่วนตัวที่พนักงานตั้งเอง — 1 ไฟล์/คน: daysoff/<userId>.json = { "YYYY-MM-DD": "วันหยุด" }
+    loadDaysOff:    (uid) => readJson(path.join(dir, 'daysoff', `${uid}.json`), {}),
+    saveDaysOff:    (uid, obj) => { const dd = path.join(dir, 'daysoff'); if (!fs.existsSync(dd)) fs.mkdirSync(dd, { recursive: true }); writeJson(path.join(dd, `${uid}.json`), obj); },
     saveEmployees: (l) => writeJson(F.employees, l),
     saveDivisions: (l) => writeJson(F.divisions, l),
     saveSections:  (l) => writeJson(F.sections, l),
@@ -2400,16 +2403,24 @@ function buildWorklogForUser(db, user, date) {
     }
   }
   const pad = (n) => String(n).padStart(2, '0');
+  // ชั่วโมงที่ลา (ลารายชั่วโมง) — ไม่นับเป็น "ขาดงาน"
+  const leaveHours = new Set((saved && Array.isArray(saved.leaveHours) ? saved.leaveHours : []).map(Number));
   // One row per scheduled hour, each holding 0..n task items (multiple tasks per hour).
-  const entries = hours.map(h => ({ hour: h, label: `${pad(h)}:00–${pad((h + 1) % 24)}:00`, items: byHour[h] || [] }));
-  const filled = entries.filter(e => e.items.length > 0).length;   // hours with at least one task
+  const entries = hours.map(h => ({ hour: h, label: `${pad(h)}:00–${pad((h + 1) % 24)}:00`, items: byHour[h] || [], leave: leaveHours.has(h) }));
+  const workEntries = entries.filter(e => !e.leave);              // ชั่วโมงที่ต้องบันทึกจริง (ตัดชั่วโมงลาออก)
+  const total = workEntries.length;
+  const filled = workEntries.filter(e => e.items.length > 0).length;   // hours with at least one task
   const hs = loadHolidaySet(db);
+  // วันหยุดส่วนตัวที่พนักงานตั้งเอง (ถ้าไม่ได้ทำเครื่องหมายลาไว้แล้ว และยังไม่มีงานบันทึก)
+  const personalOff = !!(db.loadDaysOff(user.id) || {})[date];
   return {
-    date, total: entries.length, filled, entries,
+    date, total, filled, entries,
     updated_at: saved ? saved.updated_at : null,
     holiday: isCompanyHoliday(hs, date),                  // company holiday (weekly or specific)
     holidayLabel: companyHolidayLabel(hs, date),
-    dayOff: saved && saved.dayOff ? saved.dayOff : null,  // personal leave marked by the user
+    dayOff: (saved && saved.dayOff) ? saved.dayOff : ((personalOff && filled === 0) ? 'วันหยุด (ตั้งเอง)' : null),
+    personalOff,                                          // วันนี้เป็นวันหยุดที่ตั้งเอง
+    leaveHours: [...leaveHours],
     shift,                                                // กะของวันนั้น (ถ้ามี) → หน้าเว็บโชว์แบนเนอร์
   };
 }
@@ -2431,7 +2442,7 @@ tenantRouter.put('/api/worklog', (req, res) => {
   if (req.session.role === 'admin') return res.status(400).json({ error: 'admin ไม่มีบันทึกงานส่วนตัว' });
   const user = load.users().find(u => u.id === req.session.user_id);
   if (!user) return res.status(404).json({ error: 'not found' });
-  const { date, entries, dayOff } = req.body || {};
+  const { date, entries, dayOff, leaveHours } = req.body || {};
   const today = todayLocal();
   if (!WORKLOG_DATE_RE.test(String(date || ''))) return res.status(400).json({ error: 'รูปแบบวันที่ผิด (YYYY-MM-DD)' });
   if (String(date) > today) return res.status(400).json({ error: 'บันทึกงานวันในอนาคตไม่ได้' });
@@ -2449,7 +2460,9 @@ tenantRouter.put('/api/worklog', (req, res) => {
     category: String(e.category || '').slice(0, 80),
     recurring: !!e.recurring,
   })).filter(e => Number.isInteger(e.hour) && e.task && e.task.trim()) : [];
-  ctxDb().saveWorklog(user.id, date, { user_id: user.id, date, entries: clean, updated_at: new Date().toISOString() });
+  // ลารายชั่วโมง — ชั่วโมงที่ทำเครื่องหมาย "ลา" (0–23)
+  const lh = Array.isArray(leaveHours) ? [...new Set(leaveHours.map(Number).filter(n => Number.isInteger(n) && n >= 0 && n <= 23))] : [];
+  ctxDb().saveWorklog(user.id, date, { user_id: user.id, date, entries: clean, leaveHours: lh, updated_at: new Date().toISOString() });
   res.json({ ok: true });
 });
 
@@ -2472,14 +2485,40 @@ tenantRouter.get('/api/worklog/status', (req, res) => {
 // Readable by any logged-in user (to show badges / skip reminders); writable by admin.
 tenantRouter.get('/api/holidays', (req, res) => {
   const h = ctxDb().holidays();
-  res.json({ weekly: Array.isArray(h.weekly) ? h.weekly : [], dates: Array.isArray(h.dates) ? h.dates.slice().sort() : [] });
+  res.json({ weekly: Array.isArray(h.weekly) ? h.weekly : [], dates: Array.isArray(h.dates) ? h.dates.slice().sort() : [], allowSelfDayOff: h.allowSelfDayOff === true });
 });
 tenantRouter.put('/api/admin/holidays', requireAdmin, (req, res) => {
   const b = req.body || {};
   const weekly = Array.isArray(b.weekly) ? [...new Set(b.weekly.map(Number).filter(n => n >= 0 && n <= 6))] : [];
   const dates = Array.isArray(b.dates) ? [...new Set(b.dates.filter(d => WORKLOG_DATE_RE.test(String(d))))].sort() : [];
-  ctxDb().saveHolidays({ weekly, dates, updated_at: new Date().toISOString() });
-  res.json({ ok: true, weekly, dates });
+  const cur = ctxDb().holidays() || {};
+  const allowSelfDayOff = (b.allowSelfDayOff !== undefined) ? !!b.allowSelfDayOff : (cur.allowSelfDayOff === true);
+  ctxDb().saveHolidays({ weekly, dates, allowSelfDayOff, updated_at: new Date().toISOString() });
+  res.json({ ok: true, weekly, dates, allowSelfDayOff });
+});
+
+// ---- วันหยุดส่วนตัว (พนักงานตั้งเอง) — ต้องเปิดสวิตช์ที่หน้าแอดมินก่อน ----
+function selfDayOffAllowed(db) { const h = db.holidays() || {}; return h.allowSelfDayOff === true; }
+tenantRouter.get('/api/my/daysoff', (req, res) => {
+  const db = ctxDb();
+  if (!req.session.user_id) return res.json({ enabled: false, days: {} });
+  const all = db.loadDaysOff(req.session.user_id) || {};
+  const { from, to } = req.query;
+  const days = {};
+  for (const [d, v] of Object.entries(all)) { if ((!from || d >= from) && (!to || d <= to)) days[d] = v; }
+  res.json({ enabled: selfDayOffAllowed(db), days });
+});
+tenantRouter.post('/api/my/daysoff', (req, res) => {
+  const db = ctxDb();
+  if (!req.session.user_id) return res.status(403).json({ error: 'forbidden' });
+  if (!selfDayOffAllowed(db)) return res.status(403).json({ error: 'ยังไม่เปิดให้พนักงานตั้งวันหยุดเอง — ติดต่อแอดมิน' });
+  const b = req.body || {};
+  const date = String(b.date || '');
+  if (!WORKLOG_DATE_RE.test(date)) return res.status(400).json({ error: 'วันที่ไม่ถูกต้อง' });
+  const all = db.loadDaysOff(req.session.user_id) || {};
+  if (b.off === false) delete all[date]; else all[date] = 'วันหยุด';
+  db.saveDaysOff(req.session.user_id, all);
+  res.json({ ok: true, off: b.off !== false });
 });
 
 // ============================================================
@@ -3008,9 +3047,11 @@ function computeWorklogReportFor(db, opts) {
     const uhDef = calcUserHours(u);
     const defPerDay = (uhDef && uhDef.hours.length) ? uhDef.hours.length : 8;
     const sched = db.loadSchedule(u.id) || {};                                   // โหลดตารางกะครั้งเดียวต่อคน
+    const personalOff = db.loadDaysOff(u.id) || {};                              // วันหยุดที่พนักงานตั้งเอง
     let filledHours = 0, daysLogged = 0, sumComplete = 0;
     const loggedSet = new Set(), leaveSet = new Set();
     for (const ds of dates) {
+      if (personalOff[ds]) { leaveSet.add(ds); continue; }   // วันหยุดตั้งเอง = ไม่นับขาด
       const wl = db.loadWorklog(u.id, ds);
       if (!wl) continue;
       if (wl.dayOff) { leaveSet.add(ds); continue; }   // personal leave
@@ -3023,6 +3064,8 @@ function computeWorklogReportFor(db, opts) {
       const sh = shiftMap[sched[ds]];                  // มีกะวันนั้น → ใช้ชั่วโมงของกะ, ไม่มี → เวลาปกติ
       let perDay = defPerDay;
       if (sh) { const h = hoursFromTimes(sh.start, sh.end, sh.break_start, sh.break_end); if (h && h.hours.length) perDay = h.hours.length; }
+      const leaveCount = Array.isArray(wl.leaveHours) ? wl.leaveHours.length : 0;   // ลารายชั่วโมง → ลดชั่วโมงที่คาดหวัง
+      perDay = Math.max(1, perDay - leaveCount);
       sumComplete += Math.min(1, hrs.size / perDay);
       for (const e of f) {                              // category/recurring counted per task
         totTasks++;
@@ -3380,6 +3423,7 @@ tenantRouter.get('/admin/org',   requireAdmin, (req, res) => res.sendFile(path.j
 tenantRouter.get('/admin/categories', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-categories.html')));
 tenantRouter.get('/admin/shifts', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-shifts.html')));
 tenantRouter.get('/manage/categories', requireCategoryContributor, (req, res) => res.sendFile(path.join(ROOT, 'public', 'manage-categories.html')));
+tenantRouter.get('/my-daysoff', (req, res) => res.sendFile(path.join(ROOT, 'public', 'my-daysoff.html')));
 tenantRouter.get('/schedule', requireRoles('admin', 'executive', 'manager', 'division_head', 'section_head', 'supervisor', 'officer'), (req, res) => res.sendFile(path.join(ROOT, 'public', 'schedule.html')));
 tenantRouter.get('/profile',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'profile.html')));
 tenantRouter.get('/reports',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'reports.html')));

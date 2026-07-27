@@ -10,6 +10,10 @@
     .wl-prog-track { flex:1; height:8px; background:#e2e8f0; border-radius:999px; overflow:hidden; }
     .wl-prog-fill { height:100%; background:#0284c7; width:0%; transition:width .25s; }
     .wl-hour { border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; margin:10px 0; }
+    .wl-hour.leave { background:#faf5ff; border-color:#e9d5ff; }
+    .wl-hour.leave .wl-tasks { opacity:.4; pointer-events:none; }
+    .wl-leavehour { background:#fff; border:1px solid #e9d5ff; color:#7c3aed; border-radius:8px; padding:8px 12px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; white-space:nowrap; }
+    .wl-leavehour:hover { background:#f5f3ff; }
     .wl-hour-head { display:flex; align-items:center; gap:10px; font-weight:600; color:#334155; font-size:14px; margin-bottom:8px; }
     .wl-hour-head .wl-hour-status { font-size:12px; font-weight:400; }
     .wl-taskline { display:flex; gap:8px; align-items:center; margin-bottom:7px; flex-wrap:wrap; }
@@ -76,7 +80,7 @@
     }
   });
 </script>
-  <script src="/app-shell.js?v=5"></script>
+  <script src="/app-shell.js?v=6"></script>
 </head>
 <body>
 <div class="container">
@@ -210,10 +214,14 @@ function recomputeProgress() {
   const blocks = bodyEl.querySelectorAll('.wl-hour');
   let total = 0, filled = 0;
   blocks.forEach(b => {
+    const st = b.querySelector('.wl-hour-status');
+    if (b.getAttribute('data-leave') === '1') {            // ชั่วโมงลา — ไม่นับเป็น total
+      if (st) st.innerHTML = '<span style="color:#7c3aed;">🌴 ลา</span>';
+      return;
+    }
     total++;
     const has = [...b.querySelectorAll('input[data-field="task"]')].some(i => i.value.trim());
     if (has) filled++;
-    const st = b.querySelector('.wl-hour-status');
     if (st) st.innerHTML = has ? '<span style="color:#16a34a;">✓ บันทึกแล้ว</span>' : '<span style="color:#d97706;">🕒 ยังไม่บันทึก</span>';
   });
   const pct = total ? Math.round((filled / total) * 100) : 0;
@@ -263,11 +271,13 @@ function renderTable(data) {
 
   bodyEl.innerHTML = data.entries.map(e => {
     const items = (e.items && e.items.length) ? e.items : [null];
-    return `<div class="wl-hour" data-hour="${e.hour}">
+    const lv = e.leave ? 1 : 0;
+    return `<div class="wl-hour${lv ? ' leave' : ''}" data-hour="${e.hour}" data-leave="${lv}">
       <div class="wl-hour-head">${esc(e.label)} <span class="wl-hour-status"></span></div>
       <div class="wl-tasks">${items.map(taskLineHTML).join('')}</div>
       <div class="wl-hour-foot">
         <button type="button" class="wl-addtask" data-hour="${e.hour}">+ เพิ่มงานในชั่วโมงนี้</button>
+        <button type="button" class="wl-leavehour" data-hour="${e.hour}">${lv ? '↩ ยกเลิกลา' : '🌴 ลาชั่วโมงนี้'}</button>
         <button type="button" class="wl-hoursave" data-hour="${e.hour}">💾 บันทึกชั่วโมงนี้</button>
       </div>
     </div>`;
@@ -296,6 +306,16 @@ bodyEl.addEventListener('click', e => {
   const add = e.target.closest('.wl-addtask');
   if (add) {
     add.closest('.wl-hour').querySelector('.wl-tasks').insertAdjacentHTML('beforeend', taskLineHTML(null));
+    return;
+  }
+  const lv = e.target.closest('.wl-leavehour');
+  if (lv) {
+    const block = lv.closest('.wl-hour');
+    const on = block.getAttribute('data-leave') === '1';
+    block.setAttribute('data-leave', on ? '0' : '1');
+    block.classList.toggle('leave', !on);
+    lv.textContent = on ? '🌴 ลาชั่วโมงนี้' : '↩ ยกเลิกลา';
+    recomputeProgress();
     return;
   }
   const hs = e.target.closest('.wl-hoursave');
@@ -366,8 +386,13 @@ function collectEntries() {
   return entries;
 }
 
+function collectLeaveHours() {
+  const out = [];
+  bodyEl.querySelectorAll('.wl-hour[data-leave="1"]').forEach(b => out.push(Number(b.getAttribute('data-hour'))));
+  return out;
+}
 async function putEntries() {
-  return fetch(`${TBASE}/api/worklog`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ date: dateEl.value, entries: collectEntries() }) });
+  return fetch(`${TBASE}/api/worklog`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ date: dateEl.value, entries: collectEntries(), leaveHours: collectLeaveHours() }) });
 }
 
 async function saveDay() {

@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>วันหยุดของฉัน | HR-Interview</title>
+  <link rel="stylesheet" href="/styles.css?v=5"/>
+  <link rel="icon" type="image/png" href="/logo.png?v=2"/>
+  <style>
+    .do-monthbar { display:flex; align-items:center; gap:12px; margin:6px 0 12px; }
+    .do-monthbar .mtitle { font-weight:700; font-size:17px; min-width:150px; text-align:center; }
+    .cal { width:100%; border-collapse:collapse; table-layout:fixed; }
+    .cal th { font-size:12px; color:#64748b; padding:6px 2px; font-weight:600; }
+    .cal td { border:1px solid #eef2f7; height:74px; vertical-align:top; padding:4px; cursor:pointer; text-align:left; }
+    .cal td.empty { background:#fafafa; cursor:default; }
+    .cal td:hover:not(.empty):not(.past) { background:#f0f9ff; }
+    .cal td.past { background:#fafafa; color:#cbd5e1; cursor:not-allowed; }
+    .cal .dnum { font-size:12px; color:#94a3b8; }
+    .cal td.today { outline:2px solid #0284c7; outline-offset:-2px; }
+    .cal td.sun .dnum, .cal td.sat .dnum { color:#ef4444; }
+    .cal td.off { background:#fef3c7; }
+    .cal td.off:hover { background:#fde68a; }
+    .cal .offtag { display:block; margin-top:6px; font-size:11px; font-weight:700; color:#92400e; }
+    @media (max-width:600px){ .cal td { height:58px; } }
+  </style>
+<script>
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  function shouldPrefix(href){ return href && href.startsWith('/') && !href.startsWith('/t/') && !href.startsWith('/super') && !href.startsWith('/styles') && !href.startsWith('/logo') && !href.startsWith('/i18n') && !href.startsWith('/favicon'); }
+  function rewriteLinks(root){ if(!window.TBASE||!root)return; if(root.nodeType===1&&root.tagName==='A'&&shouldPrefix(root.getAttribute('href')))root.setAttribute('href',window.TBASE+root.getAttribute('href')); if(typeof root.querySelectorAll==='function')root.querySelectorAll('a[href^="/"]').forEach(a=>{const h=a.getAttribute('href');if(shouldPrefix(h))a.setAttribute('href',window.TBASE+h);}); }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    new MutationObserver(m => { for (const x of m) { rewriteLinks(x.target); for (const n of x.addedNodes) rewriteLinks(n); } }).observe(document.body, { childList: true, subtree: true });
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span'); span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => { span.textContent = c && c.name ? c.name : ''; if (!c || !c.name) span.style.display = 'none'; }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
+  <script src="/app-shell.js?v=6"></script>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="logo"><span>HR-Interview</span></div>
+    <nav>
+      <a href="/">🏠 หน้าหลัก</a>
+      <a href="/worklog">📝 บันทึกงาน</a>
+      <a href="#" onclick="(async()=>{await fetch(TBASE+'/api/logout',{method:'POST'});location.href=TBASE+'/login';})();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <h1>🌴 วันหยุดของฉัน</h1>
+  <p class="sub">คลิกวันในปฏิทินเพื่อกำหนด <b>วันหยุดของตัวเอง</b> (คลิกซ้ำเพื่อยกเลิก) — วันที่เลือกจะไม่ถูกเตือนให้บันทึกงาน และไม่ถูกนับเป็น “วันขาด”</p>
+
+  <div class="card" id="do-card">
+    <div class="do-monthbar">
+      <button class="ghost" id="do-prev">‹ เดือนก่อน</button>
+      <span class="mtitle" id="do-mtitle">—</span>
+      <button class="ghost" id="do-next">เดือนถัดไป ›</button>
+    </div>
+    <div id="do-msg" class="sub" style="min-height:18px;"></div>
+    <div id="do-cal"><p class="sub">กำลังโหลด...</p></div>
+  </div>
+</div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const TH_MONTHS = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+const TH_DOW = ['อา','จ','อ','พ','พฤ','ศ','ส'];
+const pad = n => String(n).padStart(2, '0');
+const ymd = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
+let days = {}, enabled = false;
+const now = new Date();
+let curY = now.getFullYear(), curM = now.getMonth();
+const todayStr = ymd(now.getFullYear(), now.getMonth(), now.getDate());
+const msg = document.getElementById('do-msg');
+const flash = (t, ok) => { msg.style.color = ok ? '#16a34a' : '#b91c1c'; msg.textContent = t; if (ok) setTimeout(() => { if (msg.textContent === t) msg.textContent = ''; }, 2500); };
+
+async function loadMonth() {
+  const from = ymd(curY, curM, 1), to = ymd(curY, curM, new Date(curY, curM + 1, 0).getDate());
+  try {
+    const d = await fetch(`${TBASE}/api/my/daysoff?from=${from}&to=${to}`).then(r => r.json());
+    enabled = !!d.enabled; days = d.days || {};
+  } catch (e) { days = {}; }
+  render();
+}
+function render() {
+  document.getElementById('do-mtitle').textContent = `${TH_MONTHS[curM]} ${curY}`;
+  if (!enabled) {
+    document.getElementById('do-cal').innerHTML = '<p class="sub" style="color:#b45309;">⚠️ ยังไม่เปิดให้พนักงานตั้งวันหยุดเอง — ติดต่อแอดมินให้เปิดในหน้า “วันหยุดของบริษัท”</p>';
+    return;
+  }
+  const first = new Date(curY, curM, 1).getDay();
+  const dcount = new Date(curY, curM + 1, 0).getDate();
+  let cells = [];
+  for (let i = 0; i < first; i++) cells.push('<td class="empty"></td>');
+  for (let d = 1; d <= dcount; d++) {
+    const ds = ymd(curY, curM, d);
+    const wd = new Date(curY, curM, d).getDay();
+    const isOff = !!days[ds];
+    const past = ds < todayStr;
+    const cls = [ds === todayStr ? 'today' : '', wd === 0 ? 'sun' : '', wd === 6 ? 'sat' : '', isOff ? 'off' : '', past ? 'past' : ''].filter(Boolean).join(' ');
+    cells.push(`<td class="${cls}" data-date="${ds}"><span class="dnum">${d}</span>${isOff ? '<span class="offtag">🌴 หยุด</span>' : ''}</td>`);
+  }
+  while (cells.length % 7) cells.push('<td class="empty"></td>');
+  let rows = '';
+  for (let i = 0; i < cells.length; i += 7) rows += '<tr>' + cells.slice(i, i + 7).join('') + '</tr>';
+  document.getElementById('do-cal').innerHTML = `<div style="overflow-x:auto;"><table class="cal"><thead><tr>${TH_DOW.map(d => `<th>${d}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+document.getElementById('do-cal').addEventListener('click', async e => {
+  const td = e.target.closest('td[data-date]'); if (!td || !enabled) return;
+  if (td.classList.contains('past')) { flash('เลือกวันที่ผ่านมาแล้วไม่ได้', false); return; }
+  const date = td.getAttribute('data-date');
+  const willOff = !days[date];
+  const r = await fetch(TBASE + '/api/my/daysoff', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ date, off: willOff }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { flash(d.error || 'บันทึกไม่สำเร็จ', false); return; }
+  if (willOff) days[date] = 'วันหยุด'; else delete days[date];
+  render();
+  flash(willOff ? '✓ ตั้งเป็นวันหยุดแล้ว' : '✓ ยกเลิกวันหยุดแล้ว', true);
+});
+document.getElementById('do-prev').addEventListener('click', () => { curM--; if (curM < 0) { curM = 11; curY--; } loadMonth(); });
+document.getElementById('do-next').addEventListener('click', () => { curM++; if (curM > 11) { curM = 0; curY++; } loadMonth(); });
+loadMonth();
+</script>
+</body>
+</html>
