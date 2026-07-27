@@ -13,8 +13,8 @@
     .cal th { font-size:12px; color:#64748b; padding:6px 2px; font-weight:600; }
     .cal td { border:1px solid #eef2f7; height:74px; vertical-align:top; padding:4px; cursor:pointer; text-align:left; }
     .cal td.empty { background:#fafafa; cursor:default; }
-    .cal td:hover:not(.empty):not(.past) { background:#f0f9ff; }
-    .cal td.past { background:#fafafa; color:#cbd5e1; cursor:not-allowed; }
+    .cal td:hover:not(.empty) { background:#f0f9ff; }
+    .cal td.past .dnum { color:#cbd5e1; }
     .cal .dnum { font-size:12px; color:#94a3b8; }
     .cal td.today { outline:2px solid #0284c7; outline-offset:-2px; }
     .cal td.sun .dnum, .cal td.sat .dnum { color:#ef4444; }
@@ -56,7 +56,7 @@
   </div>
 
   <h1>🌴 วันหยุดของฉัน</h1>
-  <p class="sub">คลิกวันในปฏิทินเพื่อกำหนด <b>วันหยุดของตัวเอง</b> (คลิกซ้ำเพื่อยกเลิก) — วันที่เลือกจะไม่ถูกเตือนให้บันทึกงาน และไม่ถูกนับเป็น “วันขาด”</p>
+  <p class="sub">คลิกวันในปฏิทินเพื่อกำหนด <b>วันหยุดของตัวเอง</b> (คลิกซ้ำเพื่อยกเลิก) — เลือก<b>ล่วงหน้าหรือย้อนหลัง</b>ก็ได้ · วันที่เลือกจะไม่ถูกเตือนให้บันทึกงาน และไม่ถูกนับเป็น “วันขาด”</p>
 
   <div class="card" id="do-card">
     <div class="do-monthbar">
@@ -115,7 +115,6 @@ function render() {
 }
 document.getElementById('do-cal').addEventListener('click', async e => {
   const td = e.target.closest('td[data-date]'); if (!td || !enabled) return;
-  if (td.classList.contains('past')) { flash('เลือกวันที่ผ่านมาแล้วไม่ได้', false); return; }
   const date = td.getAttribute('data-date');
   const willOff = !days[date];
   const r = await fetch(TBASE + '/api/my/daysoff', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ date, off: willOff }) });
