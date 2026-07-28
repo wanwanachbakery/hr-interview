@@ -894,9 +894,14 @@ function analyzeCompany(interviews) {
     `- **${p.name}** (${p.role} · ${p.division})\n  - Pain: ${p.pain || '-'}\n  - Wish: ${p.wish || '-'}`
   ).join('\n');
 
+  const withWorklog = interviews.filter(iv => iv.worklogSummary);
+  const worklogSection = withWorklog.slice(0, 10).map(iv =>
+    `- **${iv.employee.name}** (${iv.employee.division_name || iv.employee.division_id || '-'})\n  - ${String(iv.worklogSummary).replace(/\n/g, '\n  - ')}`
+  ).join('\n');
+
   return `# รายงานวิเคราะห์ภาพรวมบริษัท — Optimization
 
-> รวบรวมจากอินเทอร์วิว ${total} คน · สร้างเมื่อ ${fmtDateTime()}
+> รวบรวมจากอินเทอร์วิว ${total} คน${withWorklog.length ? ` · มีบันทึกงานจริงประกอบ ${withWorklog.length} คน` : ''} · สร้างเมื่อ ${fmtDateTime()}
 
 ## ความครอบคลุมรายฝ่าย
 ${divSection || '(ไม่มีข้อมูล)'}
@@ -906,6 +911,10 @@ ${keywordSection || '(ไม่พบ keyword ที่เกี่ยวข้�
 
 ## Pain points & AI wishlist จากพนักงาน (top 10)
 ${painHighlights || '(ไม่มีข้อมูล)'}
+${withWorklog.length ? `
+## สรุปจากบันทึกงานจริง (30 วันล่าสุด)
+${worklogSection}
+` : ''}
 
 ## ข้อเสนอภาพรวม
 1. งานที่เจอซ้ำหลายคน → ทำ pilot 1 initiative ครอบคลุมหลายฝ่าย เช่น AI meeting summary, auto-report generator

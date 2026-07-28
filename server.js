@@ -99,6 +99,16 @@ function archiveCompanyReport(cmpOutDir) {        // สำรองรายง
   } catch (e) { console.error('[history] archiveCompanyReport:', e.message); }
 }
 async function analyzeCompany(interviews, db) {
+  // เสริม "บันทึกงานจริง" ย้อนหลัง 30 วันต่อคน → ให้การวิเคราะห์อิงสิ่งที่ทำจริง ไม่ใช่แค่คำสัมภาษณ์
+  if (db) {
+    const endDate = nowBangkok().dateStr;
+    for (const iv of (interviews || [])) {
+      const uid = iv && iv.employee && iv.employee.user_id;
+      if (uid && !iv.worklogSummary) {
+        try { const s = summarizeUserWorklog(db, uid, endDate, 30); if (s) iv.worklogSummary = s.text; } catch (_) {}
+      }
+    }
+  }
   if (db && claudeOnForTenant(db)) {
     try {
       return await claude.analyzeCompany(interviews, {
@@ -3216,7 +3226,8 @@ tenantRouter.get('/api/interviews/history', (req, res) => {
 // เกิน ~100 วิ Cloudflare ตัด client → ปุ่มค้าง ถ้ารันสดในรีเควสต์เดียว
 const companyAnalyzeJobs = {};   // tenantId -> { running, done, error, count, startedAt, finishedAt }
 
-tenantRouter.post('/api/company/analyze', requireRoles('admin', 'executive', 'manager'), (req, res) => {
+// รายงานภาพรวมบริษัท = ครอบทุกฝ่าย → จำกัดสิทธิ์เฉพาะ admin + executive (ผู้บริหาร) เท่านั้น
+tenantRouter.post('/api/company/analyze', requireRoles('admin', 'executive'), (req, res) => {
   const tid = req.tenant.id;
   if (companyAnalyzeJobs[tid] && companyAnalyzeJobs[tid].running) {
     return res.status(409).json({ error: 'กำลังวิเคราะห์อยู่แล้ว', job: companyAnalyzeJobs[tid] });
@@ -3239,6 +3250,8 @@ tenantRouter.post('/api/company/analyze', requireRoles('admin', 'executive', 'ma
       if (!fs.existsSync(db.cmpOutDir)) fs.mkdirSync(db.cmpOutDir, { recursive: true });
       archiveCompanyReport(db.cmpOutDir);          // เก็บเวอร์ชันเก่าก่อนสร้างทับ
       fs.writeFileSync(path.join(db.cmpOutDir, 'optimization-report.md'), md);
+      // เก็บ meta ไว้เทียบความล้าสมัย (รายงานนี้อิงกี่คน เมื่อไหร่)
+      try { fs.writeFileSync(path.join(db.cmpOutDir, 'optimization-report.meta.json'), JSON.stringify({ count, at: new Date().toISOString() })); } catch (_) {}
       job.done = true;
     } catch (e) {
       job.error = e.message || 'unknown error';
@@ -3250,12 +3263,18 @@ tenantRouter.post('/api/company/analyze', requireRoles('admin', 'executive', 'ma
   })();
 });
 
-// Company-wide analysis status — admin + executive + manager
-tenantRouter.get('/api/company/analyze/status', requireRoles('admin', 'executive', 'manager'), (req, res) => {
+// Company-wide analysis status + ความครอบคลุม/ความล้าสมัย — admin + executive เท่านั้น
+tenantRouter.get('/api/company/analyze/status', requireRoles('admin', 'executive'), (req, res) => {
+  const db = ctxDb();
   const job = companyAnalyzeJobs[req.tenant.id]
     || { running: false, done: false, error: null, count: 0, startedAt: null, finishedAt: null };
-  const hasReport = fs.existsSync(path.join(ctxDb().cmpOutDir, 'optimization-report.md'));
-  res.json({ ...job, hasReport });
+  const hasReport = fs.existsSync(path.join(db.cmpOutDir, 'optimization-report.md'));
+  const finishedNow = db.employees().map(e => db.loadInterview(e.id)).filter(iv => iv && iv.finishedAt).length;
+  const totalEmployees = db.employees().filter(e => !e.archived).length;
+  let reportCount = null, reportAt = null;
+  try { const m = JSON.parse(fs.readFileSync(path.join(db.cmpOutDir, 'optimization-report.meta.json'), 'utf8')); reportCount = Number(m.count); reportAt = m.at; } catch (_) {}
+  const newSince = (reportCount != null) ? Math.max(0, finishedNow - reportCount) : null;
+  res.json({ ...job, hasReport, finishedNow, totalEmployees, claudeOn: claudeOnForTenant(db), reportCount, reportAt, newSince });
 });
 
 // ---------- Analysis version history (ดูผลวิเคราะห์เวอร์ชันเก่า) ----------
@@ -3263,7 +3282,7 @@ tenantRouter.get('/api/company/analyze/status', requireRoles('admin', 'executive
 const HIST_STAMP_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9a-f]{4}$/;
 const HIST_FILE_RE = /^[A-Za-z0-9._-]+$/;
 // company report history — รายการเวอร์ชัน
-tenantRouter.get('/api/outputs/_company/history', requireRoles('admin', 'executive', 'manager'), (req, res) => {
+tenantRouter.get('/api/outputs/_company/history', requireRoles('admin', 'executive'), (req, res) => {
   const dir = path.join(ctxDb().cmpOutDir, '_history');
   let versions = [];
   try {
@@ -3278,7 +3297,7 @@ tenantRouter.get('/api/outputs/_company/history', requireRoles('admin', 'executi
   res.json({ versions });
 });
 // company report history — เปิด/ดาวน์โหลดเวอร์ชันที่เลือก
-tenantRouter.get('/api/outputs/_company/history/:file', requireRoles('admin', 'executive', 'manager'), (req, res) => {
+tenantRouter.get('/api/outputs/_company/history/:file', requireRoles('admin', 'executive'), (req, res) => {
   const file = req.params.file;
   if (!HIST_FILE_RE.test(file)) return res.status(400).send('bad filename');
   const p = path.join(ctxDb().cmpOutDir, '_history', file);
@@ -3315,7 +3334,7 @@ tenantRouter.get('/api/outputs/:id/history/:stamp/:file', (req, res) => {
 });
 
 // Download company-wide report — admin + executive + manager
-tenantRouter.get('/api/outputs/_company/:file', requireRoles('admin', 'executive', 'manager'), (req, res) => {
+tenantRouter.get('/api/outputs/_company/:file', requireRoles('admin', 'executive'), (req, res) => {
   const file = req.params.file;
   if (file.includes('..') || file.includes('/') || file.includes('\\')) return res.status(400).send('bad filename');
   const p = path.join(ctxDb().cmpOutDir, file);

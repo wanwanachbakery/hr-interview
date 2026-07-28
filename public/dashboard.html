@@ -137,8 +137,11 @@
   <div id="person-list" style="display:none;"></div>
 
   <div class="card" id="report-card" style="display:none;">
-    <h2 style="margin-top:0;">รายงาน Optimization ล่าสุด</h2>
-    <div id="report-preview" class="empty">กดปุ่ม "วิเคราะห์ภาพรวมบริษัท" ข้างบน</div>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <h2 style="margin:0;">รายงาน Optimization ล่าสุด</h2>
+      <button class="ghost" id="report-print" onclick="printReport()" style="font-size:13px;">🖨 พิมพ์ / บันทึก PDF</button>
+    </div>
+    <div id="report-preview" class="empty" style="margin-top:12px;">กดปุ่ม "วิเคราะห์ภาพรวมบริษัท" ข้างบน</div>
   </div>
 </div>
 
@@ -188,17 +191,21 @@ async function load() {
   document.getElementById('summary').innerHTML =
     `${divs.length} ฝ่าย · ${poss.length} ตำแหน่ง · มีคนครอง ${totalEmps} · เสร็จ ${completed} (${pct}%) · กำลังตอบ ${inProgress}`;
 
-  // Analyze button — admin/exec/manager only
-  if (['admin','executive','manager'].includes(me.role)) {
+  // วิเคราะห์ภาพรวมบริษัท = ครอบทุกฝ่าย → เฉพาะ admin + ผู้บริหาร (executive)
+  if (['admin','executive'].includes(me.role)) {
     document.getElementById('analyze-zone').innerHTML = `
-      <button id="analyze-btn">🔍 วิเคราะห์ภาพรวมบริษัท</button>
-      <a id="report-link" href="/api/outputs/_company/optimization-report.md" target="_blank" style="margin-left:8px; display:none;">
-        <button class="ghost">📄 เปิดรายงาน</button>
-      </a>
-      <button class="ghost" id="hist-btn" style="margin-left:8px;">📚 เวอร์ชันเก่า</button>
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+        <span id="analyze-cov" class="sub" style="font-size:13px; text-align:right;"></span>
+        <button id="analyze-btn">🔍 วิเคราะห์ภาพรวมบริษัท</button>
+        <a id="report-link" href="/api/outputs/_company/optimization-report.md" target="_blank" style="display:none;">
+          <button class="ghost">📄 เปิดรายงาน</button>
+        </a>
+        <button class="ghost" id="hist-btn">📚 เวอร์ชันเก่า</button>
+      </div>
     `;
     document.getElementById('analyze-btn').addEventListener('click', runAnalyze);
     document.getElementById('hist-btn').addEventListener('click', openCompanyHistory);
+    loadAnalyzeStatus();
   }
 
   renderTree();
@@ -375,6 +382,36 @@ function setAnalyzeBtn(disabled) {
   btn.textContent = disabled ? '⏳ กำลังวิเคราะห์...' : '🔍 วิเคราะห์ภาพรวมบริษัท';
 }
 
+// ความครอบคลุม (สัมภาษณ์เสร็จกี่คน) + เตือนถ้าต่ำ/ล้าสมัย
+async function loadAnalyzeStatus() {
+  const el = document.getElementById('analyze-cov');
+  if (!el) return;
+  try {
+    const s = await fetch(TBASE + '/api/company/analyze/status').then(r => r.json());
+    window.__aStatus = s;
+    const fin = s.finishedNow || 0, tot = s.totalEmployees || 0;
+    const cov = tot ? Math.round(fin / tot * 100) : 0;
+    let txt = `สัมภาษณ์เสร็จ ${fin}/${tot} คน (${cov}%)`, color = '#64748b';
+    if (tot && cov < 30) { txt = `⚠️ ครอบคลุมต่ำ ${fin}/${tot} คน (${cov}%)`; color = '#b45309'; }
+    if (s.hasReport && s.newSince > 0) { txt += ` · 🔄 มีสัมภาษณ์ใหม่ ${s.newSince} คน — ควรวิเคราะห์ใหม่`; color = '#b45309'; }
+    el.textContent = txt; el.style.color = color;
+  } catch (_) {}
+}
+
+// พิมพ์/บันทึกรายงานเป็น PDF ผ่านหน้าต่างพิมพ์ของเบราว์เซอร์ (ไม่ต้องพึ่งเซิร์ฟเวอร์)
+function printReport() {
+  const el = document.getElementById('report-preview');
+  if (!el || !el.innerHTML.trim() || el.classList.contains('empty')) { alert('ยังไม่มีรายงานให้พิมพ์'); return; }
+  const w = window.open('', '_blank');
+  if (!w) { alert('เบราว์เซอร์บล็อกหน้าต่างพิมพ์ — อนุญาต popup แล้วลองใหม่'); return; }
+  w.document.write('<!doctype html><html lang="th"><head><meta charset="utf-8"><title>รายงานวิเคราะห์ภาพรวมบริษัท</title>'
+    + '<link rel="stylesheet" href="/styles.css?v=5">'
+    + '<style>body{font-family:"TH Sarabun New","Noto Sans Thai","Sarabun",sans-serif;padding:28px;max-width:820px;margin:0 auto;} .md-body{font-size:16px;line-height:1.7;}</style>'
+    + '</head><body><div class="md-body">' + el.innerHTML + '</div>'
+    + '<scr' + 'ipt>window.onload=function(){setTimeout(function(){window.print();},300);};</scr' + 'ipt></body></html>');
+  w.document.close();
+}
+
 // วน poll สถานะจนกว่า job จะ done/error หรือหมดเวลา — ปุ่มรีเซ็ตเสมอไม่ว่าจบทางไหน
 async function pollAnalyze(count) {
   if (analyzePolling) return;
@@ -423,6 +460,15 @@ async function pollAnalyze(count) {
 
 async function runAnalyze() {
   if (analyzePolling) return;
+  const s = window.__aStatus || {};
+  const fin = s.finishedNow || 0, tot = s.totalEmployees || 0;
+  const cov = tot ? Math.round(fin / tot * 100) : 0;
+  let msg = `จะวิเคราะห์ภาพรวมบริษัทจากสัมภาษณ์ที่เสร็จแล้ว ${fin}/${tot} คน (${cov}%)`;
+  if (tot && cov < 30) msg += `\n\n⚠️ ครอบคลุมค่อนข้างต่ำ — รายงานอาจไม่เป็นตัวแทนทั้งองค์กร`;
+  msg += s.claudeOn ? `\n\nโหมด: ใช้ AI จริง (Claude) — มีค่าโทเคนตามจำนวนคน`
+                    : `\n\nโหมด: ใช้เทมเพลตสรุป (ฟรี ไม่มีค่าใช้จ่าย)`;
+  msg += `\n\nดำเนินการต่อ?`;
+  if (!confirm(msg)) return;
   setAnalyzeBtn(true);
   let data;
   try {
@@ -448,7 +494,7 @@ async function runAnalyze() {
 
 // ตอนโหลดหน้า ถ้ามี job running อยู่ ให้ resume popup + poll ต่อ (เผื่อผู้ใช้รีเฟรชระหว่างวิเคราะห์)
 async function resumeAnalyzeIfRunning() {
-  if (!['admin','executive','manager'].includes(ME?.role)) return;
+  if (!['admin','executive'].includes(ME?.role)) return;
   try {
     const r = await fetch(TBASE + '/api/company/analyze/status');
     if (!r.ok) return;
