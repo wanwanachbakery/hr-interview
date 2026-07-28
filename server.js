@@ -58,14 +58,18 @@ function recordClaudeUsage(db, rec) {
   } catch (e) { console.error('[claude-usage] record failed:', e.message); }
 }
 async function generateDocuments(interview, db) {
+  let usedModel = null, docs = null;
   if (db && claudeOnForTenant(db)) {
     try {
-      return await claude.generateDocuments(interview, {
-        onUsage: (rec) => recordClaudeUsage(db, { kind: 'documents', label: (interview.employee && interview.employee.name) || '', ...rec }),
+      docs = await claude.generateDocuments(interview, {
+        onUsage: (rec) => { usedModel = rec.model || 'Claude'; recordClaudeUsage(db, { kind: 'documents', label: (interview.employee && interview.employee.name) || '', ...rec }); },
       });
     } catch (e) { console.error('[ai] generateDocuments fell back to mock:', e.message); }
   }
-  return ai.generateDocuments(interview);
+  if (!docs) docs = ai.generateDocuments(interview);
+  // ต่อท้าย footer ให้เอกสาร markdown ทุกฉบับ (ไม่แตะไฟล์ .csv)
+  for (const k of Object.keys(docs)) { if (/\.md$/i.test(k)) docs[k] = appendReportFooter(docs[k], usedModel); }
+  return docs;
 }
 
 // ---------- Analysis version history (snapshot before overwrite) ----------
@@ -111,17 +115,34 @@ async function analyzeCompany(interviews, db) {
   }
   if (db && claudeOnForTenant(db)) {
     try {
-      return await claude.analyzeCompany(interviews, {
-        onUsage: (rec) => recordClaudeUsage(db, { kind: 'company', label: `รายงานภาพรวม (${(interviews || []).length} คน)`, ...rec }),
+      let usedModel = null;
+      const text = await claude.analyzeCompany(interviews, {
+        onUsage: (rec) => { usedModel = rec.model || 'Claude'; recordClaudeUsage(db, { kind: 'company', label: `รายงานภาพรวม (${(interviews || []).length} คน)`, ...rec }); },
       });
+      return appendReportFooter(text, usedModel);
     } catch (e) { console.error('[ai] analyzeCompany fell back to mock:', e.message); }
   }
-  return ai.analyzeCompany(interviews);
+  return appendReportFooter(ai.analyzeCompany(interviews), null);
 }
 console.log('[ai] document engine:', claude.isEnabled() ? ('Claude available (' + claude.MODEL + ') — per-tenant toggle') : 'mock-ai (set ANTHROPIC_API_KEY to enable Claude)');
 
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
+// เวอร์ชันระบบ — อ่านจากหัว CHANGELOG.md (อัปเดตทุก release อยู่แล้ว) ใช้ต่อท้ายรายงาน
+let APP_VERSION = '';
+try {
+  const _ch = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
+  const _m = _ch.match(/##\s*\[([0-9]+\.[0-9]+\.[0-9]+)\]/);
+  if (_m) APP_VERSION = _m[1];
+} catch (_) {}
+// ต่อท้ายรายงานทุกฉบับด้วยแหล่งที่จัดทำ (AI/เทมเพลต) · วันที่ · เวอร์ชันระบบ
+function reportMadeBy(model) { return model ? `AI: Claude (${model})` : 'เทมเพลตระบบ (ไม่ใช้ AI)'; }
+function appendReportFooter(md, model) {
+  if (typeof md !== 'string') return md;
+  let dateStr = ''; try { dateStr = nowBangkok().dateStr; } catch (_) {}
+  const ver = APP_VERSION ? ` · ระบบ HR-Interview v${APP_VERSION}` : ' · ระบบ HR-Interview';
+  return md.replace(/\s*$/, '') + `\n\n---\n\n> _จัดทำโดย ${reportMadeBy(model)} · วันที่ ${dateStr}${ver}_\n`;
+}
 // DATA_DIR / OUTPUT_DIR can be overridden via env so a persistent volume
 // (e.g. Fly.io) can mount outside the source tree without breaking dev defaults.
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
@@ -3443,6 +3464,7 @@ tenantRouter.get('/admin/categories', requireAdmin, (req, res) => res.sendFile(p
 tenantRouter.get('/admin/shifts', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-shifts.html')));
 tenantRouter.get('/manage/categories', requireCategoryContributor, (req, res) => res.sendFile(path.join(ROOT, 'public', 'manage-categories.html')));
 tenantRouter.get('/my-daysoff', (req, res) => res.sendFile(path.join(ROOT, 'public', 'my-daysoff.html')));
+tenantRouter.get('/company-report', requireRoles('admin', 'executive'), (req, res) => res.sendFile(path.join(ROOT, 'public', 'company-report.html')));
 tenantRouter.get('/schedule', requireRoles('admin', 'executive', 'manager', 'division_head', 'section_head', 'supervisor', 'officer'), (req, res) => res.sendFile(path.join(ROOT, 'public', 'schedule.html')));
 tenantRouter.get('/profile',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'profile.html')));
 tenantRouter.get('/reports',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'reports.html')));

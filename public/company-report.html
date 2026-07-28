@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>รายงานภาพรวมบริษัท | HR-Interview</title>
+  <link rel="stylesheet" href="/styles.css?v=5"/>
+  <link rel="icon" type="image/png" href="/logo.png?v=2"/>
+<script>
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  function shouldPrefix(href){ return href && href.startsWith('/') && !href.startsWith('/t/') && !href.startsWith('/super') && !href.startsWith('/styles') && !href.startsWith('/logo') && !href.startsWith('/i18n') && !href.startsWith('/favicon') && !href.startsWith('/md') && !href.startsWith('/app-shell'); }
+  function rewriteLinks(root){ if(!window.TBASE||!root)return; if(root.nodeType===1&&root.tagName==='A'&&shouldPrefix(root.getAttribute('href')))root.setAttribute('href',window.TBASE+root.getAttribute('href')); if(typeof root.querySelectorAll==='function')root.querySelectorAll('a[href^="/"]').forEach(a=>{const h=a.getAttribute('href');if(shouldPrefix(h))a.setAttribute('href',window.TBASE+h);}); }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    new MutationObserver(m => { for (const x of m) { rewriteLinks(x.target); for (const n of x.addedNodes) rewriteLinks(n); } }).observe(document.body, { childList: true, subtree: true });
+    const logo = document.querySelector('.topbar .logo');
+    if (logo && !document.getElementById('tenant-company-name')) {
+      const span = document.createElement('span'); span.id = 'tenant-company-name';
+      span.style.cssText = 'color:#0369a1; font-size:14px; font-weight:600; margin-left:12px; padding-left:12px; border-left:1px solid #cbd5e1;';
+      logo.appendChild(span);
+      fetch(window.TBASE + '/api/company').then(r => r.ok ? r.json() : null).then(c => { span.textContent = c && c.name ? c.name : ''; if (!c || !c.name) span.style.display = 'none'; }).catch(() => { span.style.display = 'none'; });
+    }
+  });
+</script>
+  <script src="/md.js"></script>
+  <script src="/app-shell.js?v=7"></script>
+  <style>
+    .cr-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+    .cr-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .cr-meta { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+    .cr-chip { font-size:13px; padding:5px 12px; border-radius:999px; background:#eff6ff; color:#0369a1; border:1px solid #bae6fd; }
+    .cr-chip.warn { background:#fffbeb; color:#b45309; border-color:#fde68a; }
+    .doc-card { background:#fff; border:1px solid var(--border); border-radius:14px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+    .doc-card .doc-head { display:flex; align-items:center; gap:10px; padding:14px 22px; border-bottom:1px solid var(--border); background:#f8fafc; }
+    .doc-card .doc-head h2 { margin:0; font-size:17px; border:0; padding:0; }
+    .doc-card .doc-content { padding:22px 24px; }
+    @media print {
+      .app-sidebar, .app-topbar, .app-backdrop, .cr-actions, #cr-back { display:none !important; }
+      .app-content, .container, .doc-card { all:unset; display:block; }
+      .doc-card .doc-head { display:none; }
+    }
+  </style>
+</head>
+<body>
+<div class="container wide">
+  <div class="topbar">
+    <div class="logo"><span>HR-Interview</span></div>
+    <nav>
+      <a href="/dashboard">📋 Dashboard</a>
+      <a href="#" onclick="(async()=>{await fetch(TBASE+'/api/logout',{method:'POST'});location.href=TBASE+'/login';})();return false;">ออกจากระบบ</a>
+    </nav>
+  </div>
+
+  <div class="cr-head">
+    <div>
+      <h1 style="margin:0;">🧠 รายงานภาพรวมบริษัท</h1>
+      <p class="sub" style="margin:4px 0 0;">สรุปวิเคราะห์ทั้งองค์กรจากการสัมภาษณ์ + บันทึกงานจริง</p>
+    </div>
+    <div class="cr-actions">
+      <a id="cr-back" href="/dashboard"><button class="ghost">← กลับ Dashboard</button></a>
+      <a id="cr-md" href="/api/outputs/_company/optimization-report.md" target="_blank"><button class="ghost">⬇ ไฟล์ .md</button></a>
+      <button id="cr-print" onclick="window.print()">🖨 พิมพ์ / บันทึก PDF</button>
+    </div>
+  </div>
+
+  <div class="cr-meta" id="cr-meta"></div>
+
+  <div class="doc-card">
+    <div class="doc-head"><span style="font-size:18px;">📄</span><h2>Optimization Report</h2></div>
+    <div class="doc-content md-body" id="cr-body"><p class="sub">กำลังโหลดรายงาน…</p></div>
+  </div>
+</div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtDate = iso => { if (!iso) return ''; const d = new Date(iso); if (isNaN(d)) return ''; const p = n => String(n).padStart(2, '0'); return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+
+(async () => {
+  // เนื้อหารายงาน
+  try {
+    const r = await fetch(TBASE + '/api/outputs/_company/optimization-report.md');
+    if (r.status === 403) { document.getElementById('cr-body').innerHTML = '<p class="empty">คุณไม่มีสิทธิ์ดูรายงานนี้ (เฉพาะแอดมิน/ผู้บริหาร)</p>'; return; }
+    if (!r.ok) { document.getElementById('cr-body').innerHTML = '<p class="empty">ยังไม่มีรายงาน — ไปที่ Dashboard แล้วกด “วิเคราะห์ภาพรวมบริษัท” ก่อน</p>'; return; }
+    const md = await r.text();
+    document.getElementById('cr-body').innerHTML = window.renderMarkdown ? window.renderMarkdown(md) : `<pre style="white-space:pre-wrap;">${esc(md)}</pre>`;
+  } catch (e) { document.getElementById('cr-body').innerHTML = '<p class="empty" style="color:#b91c1c;">โหลดรายงานไม่สำเร็จ</p>'; }
+  // แถบข้อมูลสรุป (ความครอบคลุม/วันที่/ล้าสมัย)
+  try {
+    const s = await fetch(TBASE + '/api/company/analyze/status').then(r => r.json());
+    const chips = [];
+    if (s.reportCount != null) chips.push(`<span class="cr-chip">อิงสัมภาษณ์ ${s.reportCount} คน</span>`);
+    if (s.reportAt) chips.push(`<span class="cr-chip">สร้างเมื่อ ${fmtDate(s.reportAt)}</span>`);
+    chips.push(`<span class="cr-chip">โหมด: ${s.claudeOn ? 'AI (Claude)' : 'เทมเพลต'}</span>`);
+    if (s.newSince > 0) chips.push(`<span class="cr-chip warn">🔄 มีสัมภาษณ์ใหม่ ${s.newSince} คน — ควรวิเคราะห์ใหม่</span>`);
+    document.getElementById('cr-meta').innerHTML = chips.join('');
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>
