@@ -115,6 +115,58 @@ cloudflared tunnel run hrwwn
 
 ---
 
+## ขั้นตอนที่ 3C: หลายโปรแกรมบนโดเมนเดียว (แยกด้วย subdomain)
+
+เป้าหมาย: ใช้โดเมนเดียว (`wanwanachapp.com`) แต่มีหลายโปรแกรม แยกกันด้วย **subdomain นำหน้า** เช่น
+`hr-interview.wanwanachapp.com` · `shop.wanwanachapp.com` · `kpi-system.wanwanachapp.com`
+
+**ทำไมใช้ subdomain (ไม่ใช่ path เช่น /hr-interview/):** แต่ละแอปอยู่ที่ root ของ subdomain ตัวเอง →
+ไฟล์ CSS/JS/ไอคอน และ cookie/PWA ทำงานถูกต้องโดย **ไม่ต้องแก้โค้ดแอปเลย** และแยกขาดจากกันสะอาด
+
+### 3C.1 — เพิ่ม subdomain ให้โปรแกรมที่มีอยู่ (HR-Interview)
+
+แต่ละโปรแกรม 1 แอป = 1 พอร์ต (HR ใช้ 3000). เพิ่ม hostname เข้า tunnel เดียวกันได้เลย:
+
+1. เขียน config.yml ใหม่ให้ครอบทุก hostname (สคริปต์ช่วยเขียนให้):
+   ```powershell
+   node scripts\_write-tunnel-config.js hrwwn wanwanachapp.com=3000 hr-interview.wanwanachapp.com=3000
+   ```
+   (`hostname=port` · เว้น port = 3000 · ใส่ได้หลายตัวคั่นด้วยช่องว่าง)
+
+2. ผูก DNS ให้ subdomain ใหม่ (ครั้งเดียว):
+   ```powershell
+   cloudflared tunnel route dns hrwwn hr-interview.wanwanachapp.com
+   ```
+
+3. restart tunnel:
+   ```powershell
+   cloudflared tunnel run hrwwn
+   ```
+   (ถ้ารันเป็น service: `net stop cloudflared` แล้ว `net start cloudflared` — หรือ restart service)
+
+เสร็จ! เข้าได้ทั้ง `https://wanwanachapp.com/t/wanwanach/` และ
+`https://hr-interview.wanwanachapp.com/t/wanwanach/` (แอปเดียวกัน)
+
+> **ทางเลือกที่ง่ายกว่าถ้าใช้ Cloudflare Dashboard:** Zero Trust → Networks → Tunnels →
+> เลือก tunnel → **Public Hostnames** → **Add a public hostname** →
+> Subdomain: `hr-interview`, Domain: `wanwanachapp.com`, Service: `HTTP` → `localhost:3000` → Save
+> (Dashboard สร้าง DNS ให้อัตโนมัติ ไม่ต้องแก้ config.yml เอง)
+
+### 3C.2 — เพิ่มโปรแกรม "ใหม่" ในอนาคต (เช่น ระบบร้านค้า)
+
+1. รันแอปใหม่ที่ **พอร์ตอื่น** (เช่น 3001) — คนละโปรเจกต์/โฟลเดอร์กับ HR
+2. เพิ่ม hostname ของมันเข้า config เดียวกัน แล้วรันสคริปต์ซ้ำ (ใส่ครบทุกโปรแกรม):
+   ```powershell
+   node scripts\_write-tunnel-config.js hrwwn wanwanachapp.com=3000 hr-interview.wanwanachapp.com=3000 shop.wanwanachapp.com=3001
+   ```
+3. `cloudflared tunnel route dns hrwwn shop.wanwanachapp.com`  แล้ว restart tunnel
+
+โปรแกรมเก่า (HR) **ไม่ถูกกระทบเลย** — แค่เพิ่ม ingress rule ของโปรแกรมใหม่
+
+> สรุปการเพิ่มโปรแกรมใหม่ = (1) รันแอปใหม่คนละพอร์ต (2) เพิ่ม hostname=port ในสคริปต์ (3) route dns + restart
+
+---
+
 ## ขั้นตอนที่ 4: ทำให้ทำงาน 24/7 (Auto-start)
 
 ถ้าปิด PowerShell ที่รัน tunnel/server อยู่ บริการจะหยุด → ต้องทำเป็น Windows service

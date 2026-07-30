@@ -2,6 +2,14 @@
 
 รูปแบบเวอร์ชันตาม [Semantic Versioning](https://semver.org/lang/th/)
 
+## [1.14.2] - 2026-07-28
+
+### 🌐 รองรับหลายโปรแกรมบนโดเมนเดียว (แยกด้วย subdomain)
+- เลือกแนวทาง **subdomain ต่อโปรแกรม** (`hr-interview.wanwanachapp.com`, `shop.wanwanachapp.com`, …) แทน path prefix — **แอปไม่ต้องแก้โค้ดเลย** (ตรวจแล้วไม่มี hardcode โดเมน · manifest/cookie อิง host ปัจจุบัน)
+- อัปเกรด `scripts/_write-tunnel-config.js` ให้รับ **หลาย hostname** (`hostname=port` คั่นช่องว่าง) → เขียน config.yml ครอบทุกโปรแกรมในครั้งเดียว
+- เพิ่มคู่มือ `docs/CLOUDFLARE-TUNNEL.md` หัวข้อ 3C: เพิ่ม subdomain ให้ HR + recipe เพิ่มโปรแกรมใหม่ในอนาคต (รันคนละพอร์ต → เพิ่ม hostname → route dns → restart)
+> ตั้งค่าที่ Cloudflare/tunnel เท่านั้น ไม่มีการเปลี่ยนพฤติกรรมแอป
+
 ## [1.14.1] - 2026-07-28
 
 ### 🖼️ หน้ารายงานภาพรวมบริษัทแบบสวยงาม + ส่งออก PDF
