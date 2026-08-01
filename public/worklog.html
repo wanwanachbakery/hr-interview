@@ -332,8 +332,13 @@ async function loadDay(date) {
       categories = (c && c.categories) || [];
     }
     refreshCatDatalist();
-    const data = await fetch(`${TBASE}/api/worklog?date=${date}`).then(r => r.json());
-    renderTable(data);
+    const res = await fetch(`${TBASE}/api/worklog?date=${date}`);
+    if (res.status === 401) {   // เซสชันหมดอายุตั้งแต่เปิดหน้า → พาไปเข้าสู่ระบบใหม่ (ยังไม่มีข้อมูลกรอกให้เสีย)
+      bodyEl.innerHTML = '<p class="sub" style="color:#b45309;">⚠️ เซสชันหมดอายุ กำลังพาไปเข้าสู่ระบบใหม่…</p>';
+      setTimeout(() => { location.href = TBASE + '/login'; }, 1500);
+      return;
+    }
+    renderTable(await res.json());
   } catch (e) {
     bodyEl.innerHTML = '<p class="sub" style="color:#b91c1c;">โหลดข้อมูลไม่สำเร็จ</p>';
   }
@@ -395,12 +400,21 @@ async function putEntries() {
   return fetch(`${TBASE}/api/worklog`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ date: dateEl.value, entries: collectEntries(), leaveHours: collectLeaveHours() }) });
 }
 
+// เซสชันหมดอายุ/ถูกยกเลิก (401) — แจ้งภาษาไทยชัดเจน + ลิงก์เข้าสู่ระบบใหม่ (แท็บใหม่ ข้อมูลที่กรอกไม่หาย)
+function sessionExpired(r) {
+  if (!r || r.status !== 401) return false;
+  savedMsg.style.color = '#b45309';
+  savedMsg.innerHTML = '⚠️ เซสชันหมดอายุ — <a href="' + TBASE + '/login" target="_blank" style="color:#0369a1; font-weight:700; text-decoration:underline;">เข้าสู่ระบบใหม่</a> (เปิดแท็บใหม่) แล้วกลับมากด “บันทึก” อีกครั้ง · ข้อมูลที่กรอกไว้ยังอยู่ ไม่หาย';
+  return true;
+}
+
 async function saveDay() {
   const btn = document.getElementById('wl-save');
   btn.disabled = true; const old = btn.textContent; btn.textContent = 'กำลังบันทึก...';
   try {
     const r = await putEntries();
-    if (r.ok) { savedMsg.style.color = '#16a34a'; savedMsg.textContent = '✓ บันทึกแล้ว'; recomputeProgress(); setTimeout(() => savedMsg.textContent = '', 3000); }
+    if (sessionExpired(r)) { /* คงข้อมูลไว้ ให้ผู้ใช้ล็อกอินใหม่แล้วกดซ้ำ */ }
+    else if (r.ok) { savedMsg.style.color = '#16a34a'; savedMsg.textContent = '✓ บันทึกแล้ว'; recomputeProgress(); setTimeout(() => savedMsg.textContent = '', 3000); }
     else { const d = await r.json().catch(() => ({})); savedMsg.style.color = '#b91c1c'; savedMsg.textContent = d.error || 'บันทึกไม่สำเร็จ'; }
   } catch (e) { savedMsg.style.color = '#b91c1c'; savedMsg.textContent = 'เชื่อมต่อไม่สำเร็จ'; }
   btn.disabled = false; btn.textContent = old;
@@ -413,6 +427,7 @@ async function saveHour(btn) {
   btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
   try {
     const r = await putEntries();
+    if (sessionExpired(r)) { btn.innerHTML = old; btn.disabled = false; return; }
     if (r.ok) {
       btn.classList.add('saved'); btn.innerHTML = '✓ บันทึกแล้ว';
       recomputeProgress();
@@ -437,6 +452,7 @@ async function markLeave(type) {
   }
   try {
     const r = await fetch(`${TBASE}/api/worklog`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ date: dateEl.value, dayOff: t }) });
+    if (sessionExpired(r)) { if (sel) sel.value = ''; return; }
     if (!r.ok) throw new Error();
     loadDay(dateEl.value);
   } catch { alert('บันทึกไม่สำเร็จ'); if (sel) sel.value = ''; }
