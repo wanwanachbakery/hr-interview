@@ -3186,6 +3186,148 @@ tenantRouter.get('/api/worklog/report/csv', (req, res) => {
   res.send(csv.toCsv(rows));
 });
 
+// ============================================================
+// รายงานรายละเอียดบันทึกงานรายคน (เลือกคน + ช่วงวัน) → JSON / CSV / Text
+// สรุป (%/ชั่วโมง) ใช้ /api/worklog/report เดิม · อันนี้คือ "รายการงานที่ทำจริงแต่ละวัน"
+// ============================================================
+function buildDetailedWorklog(db, user, fromRaw, toRaw) {
+  const today = todayLocal();
+  let to = String(toRaw || '').trim();
+  let from = String(fromRaw || '').trim();
+  if (!WORKLOG_DATE_RE.test(to) || to > today) to = today;
+  if (!WORKLOG_DATE_RE.test(from)) from = today.slice(0, 8) + '01';   // ค่าเริ่มต้น: วันที่ 1 ของเดือนนี้
+  if (from > to) from = to;
+  let dates = worklogDateRange(from, to);
+  if (dates.length > 92) dates = dates.slice(-92);                    // จำกัด ~3 เดือน (กันอ่านไฟล์เยอะ)
+
+  const days = [];
+  let filledHours = 0, tasks = 0, daysLogged = 0;
+  for (const ds of dates) {
+    const wl = buildWorklogForUser(db, user, ds);
+    const filled = wl.entries.filter(e => e.items && e.items.length).length;
+    if (filled) daysLogged++;
+    filledHours += filled;
+    for (const e of wl.entries) if (e.items) tasks += e.items.length;
+    days.push({
+      date: ds, holiday: wl.holiday, holidayLabel: wl.holidayLabel,
+      dayOff: wl.dayOff, personalOff: wl.personalOff, leaveHours: wl.leaveHours,
+      filled, total: wl.total, entries: wl.entries,
+    });
+  }
+  const divMap = Object.fromEntries(db.divisions().map(d => [d.id, d.name]));
+  const secMap = Object.fromEntries(db.sections().map(s => [s.id, s.name]));
+  const posMap = Object.fromEntries(db.positions().map(p => [p.id, p.name]));
+  return {
+    applicable: true, from, to,
+    user: {
+      user_id: user.id, name: user.name, position_name: posMap[user.position_id] || '',
+      division_name: divMap[user.division_id] || '', section_name: secMap[user.section_id] || '',
+    },
+    totals: { dayCount: dates.length, daysLogged, filledHours, tasks },
+    days,
+  };
+}
+
+// สร้างแถว CSV จากรายละเอียด (1 แถว/งาน · แถวเดียวสำหรับวันหยุด/ลา/ไม่บันทึก)
+function detailCsvRows(detail) {
+  const rows = [['วันที่', 'ชั่วโมง', 'งาน', 'หมวดหมู่', 'เครื่องมือ', 'งานประจำ']];
+  for (const day of detail.days) {
+    if (day.holiday) { rows.push([day.date, '', '— วันหยุดบริษัท' + (day.holidayLabel ? ': ' + day.holidayLabel : '') + ' —', '', '', '']); continue; }
+    if (day.dayOff)  { rows.push([day.date, '', '— ' + day.dayOff + ' —', '', '', '']); continue; }
+    if (!day.entries.some(e => e.items && e.items.length)) { rows.push([day.date, '', '(ไม่ได้บันทึก)', '', '', '']); continue; }
+    for (const e of day.entries) {
+      if (e.leave) { rows.push([day.date, e.label, '— ลาชั่วโมงนี้ —', '', '', '']); continue; }
+      for (const it of (e.items || [])) {
+        rows.push([day.date, e.label, it.task || '', it.category || '', it.tools || '', it.recurring ? 'ใช่' : '']);
+      }
+    }
+  }
+  return rows;
+}
+
+// สร้างข้อความ (plain text) จากรายละเอียด
+function detailText(detail) {
+  const u = detail.user;
+  const L = [`รายงานบันทึกงานรายวัน — ${u.name}`];
+  const meta = [u.position_name, [u.division_name, u.section_name].filter(Boolean).join(' / ')].filter(Boolean).join(' · ');
+  if (meta) L.push(meta);
+  L.push(`ช่วงวันที่ ${detail.from} ถึง ${detail.to}`);
+  L.push(`บันทึก ${detail.totals.daysLogged} วัน · ${detail.totals.filledHours} ชั่วโมง · ${detail.totals.tasks} งาน`);
+  L.push('='.repeat(48));
+  for (const day of detail.days) {
+    if (day.holiday) { L.push(`\n[${day.date}]  — วันหยุดบริษัท${day.holidayLabel ? ': ' + day.holidayLabel : ''} —`); continue; }
+    if (day.dayOff)  { L.push(`\n[${day.date}]  — ${day.dayOff} —`); continue; }
+    if (!day.entries.some(e => e.items && e.items.length)) { L.push(`\n[${day.date}]  (ไม่ได้บันทึก)`); continue; }
+    L.push(`\n[${day.date}]`);
+    for (const e of day.entries) {
+      if (e.leave) { L.push(`  ${e.label}  — ลาชั่วโมงนี้ —`); continue; }
+      if (!e.items || !e.items.length) continue;
+      L.push(`  ${e.label}`);
+      for (const it of e.items) {
+        const extra = [it.category ? 'หมวด: ' + it.category : '', it.tools ? 'เครื่องมือ: ' + it.tools : '', it.recurring ? 'งานประจำ' : ''].filter(Boolean).join(' · ');
+        L.push(`    - ${it.task}${extra ? '  (' + extra + ')' : ''}`);
+      }
+    }
+  }
+  L.push('', '-'.repeat(48), `จัดทำจากระบบ HR-Interview${APP_VERSION ? ' v' + APP_VERSION : ''} · วันที่ ${nowBangkok().dateStr}`);
+  return L.join('\n');
+}
+
+// สิทธิ์: หัวหน้า/ผู้ดูแลดูของลูกทีมได้ · ทุกคนดูของตัวเองได้
+function resolveWorklogTarget(req) {
+  const target = load.users().find(u => u.id === req.params.userId);
+  if (!target) return { err: 404 };
+  if (!(canViewUserWorklog(req.session, target) || target.id === req.session.user_id)) return { err: 403 };
+  return { target };
+}
+
+// รายชื่อคนที่ viewer ดูบันทึกได้ (สำหรับ dropdown เลือกคน)
+tenantRouter.get('/api/worklog/people', (req, res) => {
+  const db = ctxDb();
+  const divMap = Object.fromEntries(db.divisions().map(d => [d.id, d.name]));
+  const secMap = Object.fromEntries(db.sections().map(s => [s.id, s.name]));
+  const posMap = Object.fromEntries(db.positions().map(p => [p.id, p.name]));
+  const people = db.users()
+    .filter(u => canViewUserWorklog(req.session, u) || u.id === req.session.user_id)
+    .map(u => ({
+      user_id: u.id, name: u.name, position_name: posMap[u.position_id] || '',
+      division_name: divMap[u.division_id] || '', section_name: secMap[u.section_id] || '',
+    }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'th'));
+  res.json(people);
+});
+
+// รายละเอียดบันทึกงานรายคน — JSON
+tenantRouter.get('/api/worklog/detail/:userId', (req, res) => {
+  const { target, err } = resolveWorklogTarget(req);
+  if (err) return res.status(err).json({ error: err === 404 ? 'not found' : 'ไม่มีสิทธิ์ดูบันทึกของผู้ใช้นี้' });
+  res.json(buildDetailedWorklog(ctxDb(), target, req.query.from, req.query.to));
+});
+
+// รายละเอียดบันทึกงานรายคน — CSV
+tenantRouter.get('/api/worklog/detail/:userId/csv', (req, res) => {
+  const { target, err } = resolveWorklogTarget(req);
+  if (err) return res.status(err).send(err === 404 ? 'not found' : 'forbidden');
+  const detail = buildDetailedWorklog(ctxDb(), target, req.query.from, req.query.to);
+  const safe = String(target.name || 'user').replace(/[^\wก-๙ .-]/g, '').trim() || 'user';
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', csv.contentDisposition(`worklog-${safe}_${detail.from}_${detail.to}.csv`));
+  res.send(csv.toCsv(detailCsvRows(detail)));
+});
+
+// รายละเอียดบันทึกงานรายคน — Text
+tenantRouter.get('/api/worklog/detail/:userId/txt', (req, res) => {
+  const { target, err } = resolveWorklogTarget(req);
+  if (err) return res.status(err).send(err === 404 ? 'not found' : 'forbidden');
+  const detail = buildDetailedWorklog(ctxDb(), target, req.query.from, req.query.to);
+  const safe = String(target.name || 'user').replace(/[^\wก-๙ .-]/g, '').trim() || 'user';
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', csv.contentDisposition(`worklog-${safe}_${detail.from}_${detail.to}.txt`, 'worklog.txt'));
+  res.send('﻿' + detailText(detail));
+});
+
 // Interview JSON — read access via canViewEmployee so hierarchy can inspect subordinates'
 // answers (including archived/historical records).
 tenantRouter.get('/api/interview/:id', (req, res) => {

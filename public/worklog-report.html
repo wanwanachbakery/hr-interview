@@ -25,6 +25,27 @@
     .rp-ok   { background:#fef9c3; color:#854d0e; }
     .rp-low  { background:#fee2e2; color:#991b1b; }
     .rp-none { background:#f1f5f9; color:#64748b; }
+    /* mode toggle */
+    .wr-modes { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+    .wr-mode { background:#f1f5f9; color:#475569; border:1px solid #e2e8f0; padding:8px 16px; border-radius:999px; font-size:14px; cursor:pointer; }
+    .wr-mode.active { background:#378ADD; color:#fff; border-color:#378ADD; }
+    /* detail per-day blocks */
+    .dt-day { border:1px solid #e2e8f0; border-radius:10px; margin-bottom:12px; overflow:hidden; break-inside:avoid; page-break-inside:avoid; }
+    .dt-day-head { background:#f8fafc; padding:8px 14px; font-weight:600; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+    .dt-day-head .dt-sub { font-weight:400; color:#64748b; font-size:12px; }
+    .dt-hour { padding:8px 14px; border-top:1px solid #f1f5f9; }
+    .dt-hour .hr { font-size:12px; color:#0369a1; font-weight:600; }
+    .dt-task { margin:3px 0 0 8px; font-size:14px; }
+    .dt-task .cat { font-size:11px; color:#64748b; background:#f1f5f9; border-radius:6px; padding:1px 7px; margin-left:6px; }
+    .dt-flag { color:#0d9488; font-size:11px; margin-left:6px; }
+    .dt-off { padding:8px 14px; border-top:1px solid #f1f5f9; color:#64748b; font-size:13px; }
+    @media print {
+      .topbar, nav, .wr-modes { display:none !important; }
+      body.detail-mode #mode-summary, body.detail-mode #dt-controls, body.detail-mode #dt-actions { display:none !important; }
+      body:not(.detail-mode) #mode-detail { display:none !important; }
+      body { background:#fff; }
+      .card { border:0; box-shadow:none; padding:0; }
+    }
   </style>
 <script>
   window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
@@ -93,6 +114,11 @@
       </div>
     </div>
 
+    <div class="wr-modes">
+      <button type="button" class="wr-mode active" id="wr-mode-summary">📊 สรุป</button>
+      <button type="button" class="wr-mode" id="wr-mode-detail">📋 รายละเอียดรายคน</button>
+    </div>
+
     <div id="rp-main">
       <div class="rp-controls">
         <select id="rp-preset">
@@ -109,6 +135,27 @@
       </div>
 
       <div id="rp-result"><p class="sub">กำลังโหลด...</p></div>
+    </div>
+
+    <div id="mode-detail" style="display:none;">
+      <div class="rp-controls" id="dt-controls">
+        <select id="dt-person"><option value="">— เลือกคน —</option></select>
+        <select id="dt-preset">
+          <option value="month" selected>เดือนนี้</option>
+          <option value="week">สัปดาห์นี้</option>
+          <option value="d7">7 วันล่าสุด</option>
+          <option value="d30">30 วันล่าสุด</option>
+          <option value="custom">กำหนดเอง</option>
+        </select>
+        <input type="date" id="dt-from"/>
+        <input type="date" id="dt-to"/>
+      </div>
+      <div id="dt-actions" style="display:none; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+        <button type="button" class="ghost" id="dt-csv">⬇️ CSV (Excel)</button>
+        <button type="button" class="ghost" id="dt-txt">⬇️ Text</button>
+        <button type="button" id="dt-pdf">🖨 ส่งออก PDF</button>
+      </div>
+      <div id="dt-result"><p class="sub">เลือกคนเพื่อดูรายการงานรายวัน</p></div>
     </div>
   </div>
 </div>
@@ -236,6 +283,106 @@ elSec.addEventListener('change', loadReport);
   await populateFilters();
   loadReport();
 })();
+
+// ============ โหมดรายละเอียดรายคน ============
+const elMSum = document.getElementById('wr-mode-summary');
+const elMDet = document.getElementById('wr-mode-detail');
+const elRpMain = document.getElementById('rp-main');
+const elModeDetail = document.getElementById('mode-detail');
+const elDtPerson = document.getElementById('dt-person');
+const elDtPreset = document.getElementById('dt-preset');
+const elDtFrom = document.getElementById('dt-from');
+const elDtTo = document.getElementById('dt-to');
+const elDtActions = document.getElementById('dt-actions');
+const elDtResult = document.getElementById('dt-result');
+let dtInited = false;
+
+function setMode(mode) {
+  const detail = mode === 'detail';
+  const rng = document.getElementById('rp-range');
+  if (detail) { if (!rng.dataset.saved) rng.dataset.saved = rng.textContent; rng.textContent = 'รายการงานที่ทำจริงแต่ละวัน (รายคน)'; }
+  else { rng.textContent = rng.dataset.saved || rng.textContent; rng.dataset.saved = ''; }
+  elMSum.classList.toggle('active', !detail);
+  elMDet.classList.toggle('active', detail);
+  elRpMain.style.display = detail ? 'none' : '';
+  elModeDetail.style.display = detail ? '' : 'none';
+  document.body.classList.toggle('detail-mode', detail);
+  if (detail && !dtInited) { dtInited = true; initDetail(); }
+}
+elMSum.addEventListener('click', () => setMode('summary'));
+elMDet.addEventListener('click', () => setMode('detail'));
+
+function applyPresetTo(p, fromEl, toEl) {
+  const t = new Date();
+  let from = ymd(t), to = ymd(t);
+  if (p === 'month') from = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-01`;
+  else if (p === 'week') { const d = new Date(t); const off = (d.getDay() + 6) % 7; d.setDate(d.getDate() - off); from = ymd(d); }
+  else if (p === 'd7') { const d = new Date(t); d.setDate(d.getDate() - 6); from = ymd(d); }
+  else if (p === 'd30') { const d = new Date(t); d.setDate(d.getDate() - 29); from = ymd(d); }
+  else return; // custom
+  fromEl.value = from; toEl.value = to;
+}
+
+async function initDetail() {
+  elDtFrom.max = ymd(today); elDtTo.max = ymd(today);
+  applyPresetTo('month', elDtFrom, elDtTo);
+  try {
+    const people = await fetch(TBASE + '/api/worklog/people').then(r => r.json());
+    elDtPerson.innerHTML = '<option value="">— เลือกคน —</option>' + (people || []).map(p =>
+      `<option value="${esc(p.user_id)}">${esc(p.name)}${p.position_name ? ' — ' + esc(p.position_name) : ''}</option>`).join('');
+  } catch (e) {}
+  elDtPreset.addEventListener('change', () => { applyPresetTo(elDtPreset.value, elDtFrom, elDtTo); loadDetail(); });
+  elDtFrom.addEventListener('change', () => { elDtPreset.value = 'custom'; if (elDtFrom.value > elDtTo.value) elDtTo.value = elDtFrom.value; loadDetail(); });
+  elDtTo.addEventListener('change', () => { elDtPreset.value = 'custom'; if (elDtTo.value > ymd(today)) elDtTo.value = ymd(today); loadDetail(); });
+  elDtPerson.addEventListener('change', loadDetail);
+  document.getElementById('dt-csv').addEventListener('click', () => dtDownload('csv'));
+  document.getElementById('dt-txt').addEventListener('click', () => dtDownload('txt'));
+  document.getElementById('dt-pdf').addEventListener('click', () => window.print());
+}
+
+function dtQs() { return `from=${encodeURIComponent(elDtFrom.value)}&to=${encodeURIComponent(elDtTo.value)}`; }
+function dtDownload(kind) {
+  if (!elDtPerson.value) return;
+  const a = document.createElement('a');
+  a.href = `${TBASE}/api/worklog/detail/${encodeURIComponent(elDtPerson.value)}/${kind}?${dtQs()}`;
+  a.rel = 'noopener';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+async function loadDetail() {
+  if (!elDtPerson.value) { elDtActions.style.display = 'none'; elDtResult.innerHTML = '<p class="sub">เลือกคนเพื่อดูรายการงานรายวัน</p>'; return; }
+  elDtResult.innerHTML = '<p class="sub">กำลังโหลด...</p>';
+  let d;
+  try { d = await fetch(`${TBASE}/api/worklog/detail/${encodeURIComponent(elDtPerson.value)}?${dtQs()}`).then(r => r.json()); }
+  catch (e) { elDtResult.innerHTML = '<p class="sub" style="color:#b91c1c;">โหลดไม่สำเร็จ</p>'; return; }
+  if (!d || d.applicable === false || !d.user) { elDtResult.innerHTML = '<p class="sub" style="color:#b91c1c;">ไม่มีสิทธิ์ดู หรือไม่พบข้อมูล</p>'; return; }
+  elDtActions.style.display = 'flex';
+  const u = d.user;
+  const metaBits = [u.position_name, [u.division_name, u.section_name].filter(Boolean).join(' / ')].filter(Boolean).join(' · ');
+  const header = `
+    <div style="margin-bottom:14px;">
+      <div style="font-size:18px; font-weight:600;">${esc(u.name)}</div>
+      ${metaBits ? `<div class="sub">${esc(metaBits)}</div>` : ''}
+      <div class="sub">${fmt(d.from)} – ${fmt(d.to)} · บันทึก ${d.totals.daysLogged} วัน · ${d.totals.filledHours} ชั่วโมง · ${d.totals.tasks} งาน</div>
+    </div>`;
+  const blocks = (d.days || []).map(renderDay).join('');
+  elDtResult.innerHTML = header + (blocks || '<p class="sub">ไม่มีข้อมูลในช่วงนี้</p>');
+}
+
+function renderDay(day) {
+  const dhead = (sub) => `<div class="dt-day-head"><span>${fmt(day.date)}</span><span class="dt-sub">${sub}</span></div>`;
+  if (day.holiday) return `<div class="dt-day">${dhead('วันหยุดบริษัท' + (day.holidayLabel ? ': ' + esc(day.holidayLabel) : ''))}<div class="dt-off">— วันหยุดบริษัท —</div></div>`;
+  if (day.dayOff)  return `<div class="dt-day">${dhead(esc(day.dayOff))}<div class="dt-off">— ${esc(day.dayOff)} —</div></div>`;
+  const worked = (day.entries || []).filter(e => (e.items && e.items.length) || e.leave);
+  if (!worked.length) return `<div class="dt-day">${dhead('ไม่ได้บันทึก')}<div class="dt-off">(ไม่ได้บันทึก)</div></div>`;
+  const body = worked.map(e => {
+    if (e.leave) return `<div class="dt-hour"><span class="hr">${esc(e.label)}</span> <span class="dt-flag">🌴 ลาชั่วโมงนี้</span></div>`;
+    const tasks = e.items.map(it =>
+      `<div class="dt-task">• ${esc(it.task)}${it.category ? `<span class="cat">${esc(it.category)}</span>` : ''}${it.tools ? ` <span class="sub" style="font-size:12px;">🔧 ${esc(it.tools)}</span>` : ''}${it.recurring ? '<span class="dt-flag">🔁 งานประจำ</span>' : ''}</div>`).join('');
+    return `<div class="dt-hour"><span class="hr">${esc(e.label)}</span>${tasks}</div>`;
+  }).join('');
+  return `<div class="dt-day">${dhead(day.filled + ' ชั่วโมงที่บันทึก')}${body}</div>`;
+}
 </script>
 </body>
 </html>
