@@ -80,6 +80,16 @@
 </script>
   <script src="/md.js"></script>
   <script src="/app-shell.js?v=7"></script>
+  <style>
+    @media print {
+      .app-sidebar, .app-topbar, .app-backdrop, .topbar, nav,
+      #reanalyze-card, .doc-jump, #rv-actions, #rv-bottom-nav { display:none !important; }
+      .app-content, .container { all:unset; display:block; }
+      .doc-card .doc-open { display:none !important; }
+      .doc-card { break-inside:avoid; page-break-inside:avoid; border:0; box-shadow:none; }
+      body { background:#fff; }
+    }
+  </style>
 </head>
 <body>
 <div class="container">
@@ -98,6 +108,12 @@
 
   <h1 id="title">...</h1>
   <p class="sub" id="sub"></p>
+
+  <!-- แถบส่งออก -->
+  <div class="rv-actions" id="rv-actions" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:2px 0 16px;">
+    <button id="rv-print" onclick="window.print()">🖨 ส่งออก PDF (เอกสารทั้งชุด)</button>
+    <span class="sub" style="margin:0;">· ดาวน์โหลดแยกไฟล์ (Text) กด “⬇ ดาวน์โหลด” ที่การ์ดแต่ละใบ</span>
+  </div>
 
   <!-- Re-analyze panel (shown only to the owner or an admin) -->
   <div class="card" id="reanalyze-card" style="display:none; background:#f0f9ff; border-color:#bae6fd;">
@@ -126,7 +142,7 @@
     <div id="answers"></div>
   </div>
 
-  <div style="display:flex; gap:8px; margin-top:16px;">
+  <div id="rv-bottom-nav" style="display:flex; gap:8px; margin-top:16px;">
     <a href="/"><button class="ghost" data-i18n="rv_back">← กลับหน้าแรก</button></a>
     <a href="/dashboard"><button data-i18n="rv_to_dashboard">ไป Dashboard →</button></a>
   </div>
@@ -195,7 +211,7 @@ document.getElementById('docs').innerHTML = DOCS.map((d, i) => `
   <div class="doc-card" id="doc-${i}">
     <div class="doc-head">
       <h2>${d.icon} ${esc(d.title)}</h2>
-      <a class="doc-open" href="${TBASE}/api/outputs/${encodeURIComponent(id)}/${d.file}" target="_blank">เปิดไฟล์ ↗</a>
+      <a class="doc-open" href="${TBASE}/api/outputs/${encodeURIComponent(id)}/${d.file}" download="${d.file}">⬇ ดาวน์โหลด</a>
     </div>
     <div class="doc-content md-body" id="doc-content-${i}"><p class="sub">กำลังโหลด…</p></div>
   </div>`).join('');
