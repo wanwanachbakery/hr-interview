@@ -349,8 +349,12 @@ const SYS_COMPANY = `คุณเป็นที่ปรึกษาด้า�
 - ## ข้อเสนอภาพรวม + Roadmap 3–6 เดือน (แบ่ง Quick Wins / ระยะกลาง / ระยะยาว)
 - ## ความเสี่ยงและข้อควรระวัง`;
 
-function buildCompanyContext(interviews) {
+function buildCompanyContext(interviews, scope) {
   const lines = [];
+  if (scope) {
+    lines.push(`ขอบเขตของรายงานนี้: ${scope} — วิเคราะห์เฉพาะกลุ่มนี้เท่านั้น ไม่ใช่ทั้งบริษัท`);
+    lines.push(`ให้หัวข้อ เนื้อหา และบทสรุปสะท้อน "${scope}" (แทนคำว่า "องค์กร/บริษัท" ด้วยชื่อกลุ่มนี้)`);
+  }
   lines.push(`วันที่จัดทำรายงาน (ใช้วันที่นี้เท่านั้น): ${todayStr()}`);
   lines.push(`จำนวนพนักงานที่สัมภาษณ์เสร็จแล้ว: ${interviews.length} คน`);
   lines.push('');
@@ -383,11 +387,11 @@ async function analyzeCompany(interviews, opts = {}) {
   try {
     const { text, usage } = await runClaude({
       system: SYS_COMPANY,
-      user: buildCompanyContext(list),
+      user: buildCompanyContext(list, opts.scope),
       // รายงานภาพรวมองค์กร: คนเยอะ (เช่น 27 คน) รายงานยาวเกิน 8000 เลยถูกตัดกลางคัน
       // ขยับเป็น 20000 ให้พอ + เผื่อ thinking(adaptive) กินงบโทเคนร่วมด้วย
       maxTokens: 20000,
-      label: 'company:' + list.length + ' คน',
+      label: (opts.scope ? 'scope:' + opts.scope + ' — ' : 'company:') + list.length + ' คน',
     });
     if (usage && typeof opts.onUsage === 'function') {
       try { opts.onUsage(usageRecord(usage)); } catch (_) {}

@@ -102,7 +102,13 @@ function archiveCompanyReport(cmpOutDir) {        // สำรองรายง
     fs.copyFileSync(cur, path.join(hist, `optimization-report-${archiveStamp()}.md`));
   } catch (e) { console.error('[history] archiveCompanyReport:', e.message); }
 }
-async function analyzeCompany(interviews, db) {
+// แทนหัว H1 ของโมเดลด้วยหัวที่เจาะจงขอบเขต (กันเนื้อหาขึ้นว่า "ภาพรวมองค์กร" ตอนที่เป็นรายฝ่าย/แผนก)
+function retitleReport(md, title) {
+  const body = String(md || '').replace(/^﻿?\s*#\s+.*(?:\r?\n)+/, '');
+  return `# ${title}\n\n${body}`;
+}
+// scope = { level:'division'|'section', name } | undefined  (undefined = วิเคราะห์ทั้งบริษัท)
+async function analyzeCompany(interviews, db, scope) {
   // เสริม "บันทึกงานจริง" ย้อนหลัง 30 วันต่อคน → ให้การวิเคราะห์อิงสิ่งที่ทำจริง ไม่ใช่แค่คำสัมภาษณ์
   if (db) {
     const endDate = nowBangkok().dateStr;
@@ -113,16 +119,20 @@ async function analyzeCompany(interviews, db) {
       }
     }
   }
+  const scLabel = scope ? `${scope.level === 'division' ? 'ฝ่าย' : 'แผนก'}: ${scope.name}` : null;
+  const scTitle = scope ? `รายงานวิเคราะห์${scope.level === 'division' ? 'ฝ่าย' : 'แผนก'}: ${scope.name}` : null;
   if (db && claudeOnForTenant(db)) {
     try {
       let usedModel = null;
       const text = await claude.analyzeCompany(interviews, {
-        onUsage: (rec) => { usedModel = rec.model || 'Claude'; recordClaudeUsage(db, { kind: 'company', label: `รายงานภาพรวม (${(interviews || []).length} คน)`, ...rec }); },
+        scope: scLabel,
+        onUsage: (rec) => { usedModel = rec.model || 'Claude'; recordClaudeUsage(db, { kind: 'company', label: `${scLabel ? 'รายงาน' + scLabel : 'รายงานภาพรวม'} (${(interviews || []).length} คน)`, ...rec }); },
       });
-      return appendReportFooter(text, usedModel);
+      return appendReportFooter(scope ? retitleReport(text, scTitle) : text, usedModel);
     } catch (e) { console.error('[ai] analyzeCompany fell back to mock:', e.message); }
   }
-  return appendReportFooter(ai.analyzeCompany(interviews), null);
+  const mockMd = ai.analyzeCompany(interviews);
+  return appendReportFooter(scope ? retitleReport(mockMd, scTitle) : mockMd, null);
 }
 console.log('[ai] document engine:', claude.isEnabled() ? ('Claude available (' + claude.MODEL + ') — per-tenant toggle') : 'mock-ai (set ANTHROPIC_API_KEY to enable Claude)');
 
@@ -3298,6 +3308,93 @@ tenantRouter.get('/api/company/analyze/status', requireRoles('admin', 'executive
   res.json({ ...job, hasReport, finishedNow, totalEmployees, claudeOn: claudeOnForTenant(db), reportCount, reportAt, newSince });
 });
 
+// ============================================================
+// รายงานวิเคราะห์แบบเจาะขอบเขต: รายฝ่าย / รายแผนก / รายบุคคล
+// (ภาพรวมบริษัทใช้ /api/company/analyze เดิม · รายบุคคลใช้เอกสาร optimization.md เดิม)
+// ============================================================
+const companyScopeJobs = {};   // "tid:level:id" -> { running, done, error, count, ... }
+const scopeFileBase = (level, id) => level + '-' + String(id || '').replace(/[^A-Za-z0-9_]/g, '');
+
+// รายการฝ่าย/แผนก/บุคคล (พร้อมจำนวนคนที่สัมภาษณ์เสร็จ) ให้หน้าเลือกขอบเขต
+tenantRouter.get('/api/company/scope/list', requireRoles('admin', 'executive'), (req, res) => {
+  const db = ctxDb();
+  const rows = db.employees().filter(e => !e.archived).map(e => ({ e, iv: db.loadInterview(e.id) }));
+  const fDiv = {}, tDiv = {}, fSec = {}, tSec = {};
+  for (const { e, iv } of rows) {
+    const done = !!(iv && iv.finishedAt);
+    if (e.division_id) { tDiv[e.division_id] = (tDiv[e.division_id] || 0) + 1; if (done) fDiv[e.division_id] = (fDiv[e.division_id] || 0) + 1; }
+    if (e.section_id)  { tSec[e.section_id]  = (tSec[e.section_id]  || 0) + 1; if (done) fSec[e.section_id]  = (fSec[e.section_id]  || 0) + 1; }
+  }
+  const divisions = db.divisions().map(d => ({ id: d.id, name: d.name, finished: fDiv[d.id] || 0, total: tDiv[d.id] || 0 }));
+  const sections  = db.sections().map(s => ({ id: s.id, name: s.name, division_id: s.division_id, finished: fSec[s.id] || 0, total: tSec[s.id] || 0 }));
+  const persons   = rows.filter(({ iv }) => iv && iv.finishedAt)
+    .map(({ e }) => ({ id: e.id, name: e.name, role: e.role || '', division_id: e.division_id || null, section_id: e.section_id || null }));
+  res.json({ divisions, sections, persons });
+});
+
+// สั่งวิเคราะห์เฉพาะฝ่าย/แผนก (async job เหมือนรายงานภาพรวม)
+tenantRouter.post('/api/company/analyze/scope', requireRoles('admin', 'executive'), (req, res) => {
+  const level = String((req.body || {}).level || '');
+  const id = String((req.body || {}).id || '');
+  if (!['division', 'section'].includes(level)) return res.status(400).json({ error: 'level ต้องเป็น division หรือ section' });
+  const db = ctxDb();
+  const group = level === 'division' ? db.divisions().find(d => d.id === id) : db.sections().find(s => s.id === id);
+  if (!group) return res.status(404).json({ error: 'ไม่พบฝ่าย/แผนกนี้' });
+  const key = req.tenant.id + ':' + level + ':' + id;
+  if (companyScopeJobs[key] && companyScopeJobs[key].running) {
+    return res.status(409).json({ error: 'กำลังวิเคราะห์อยู่แล้ว', job: companyScopeJobs[key] });
+  }
+  const interviews = db.employees()
+    .filter(e => !e.archived && (level === 'division' ? e.division_id === id : e.section_id === id))
+    .map(e => db.loadInterview(e.id))
+    .filter(iv => iv && iv.finishedAt);
+  const count = interviews.length;
+  if (!count) return res.status(400).json({ error: 'ยังไม่มีพนักงานในกลุ่มนี้ที่สัมภาษณ์เสร็จ' });
+  const job = companyScopeJobs[key] = {
+    running: true, done: false, error: null, count, level, id,
+    startedAt: new Date().toISOString(), finishedAt: null,
+  };
+  res.json({ ok: true, status: 'processing', count });
+
+  (async () => {
+    try {
+      const md = await analyzeCompany(interviews, db, { level, name: group.name });
+      const dir = path.join(db.cmpOutDir, 'scope');
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const base = scopeFileBase(level, id);
+      fs.writeFileSync(path.join(dir, base + '.md'), md);
+      try { fs.writeFileSync(path.join(dir, base + '.meta.json'), JSON.stringify({ count, at: new Date().toISOString(), name: group.name, level })); } catch (_) {}
+      job.done = true;
+    } catch (e) {
+      job.error = e.message || 'unknown error';
+      console.error('[company/analyze/scope]', key, '-', e.message);
+    } finally {
+      job.running = false;
+      job.finishedAt = new Date().toISOString();
+    }
+  })();
+});
+
+// สถานะ + ความล้าสมัยของรายงานฝ่าย/แผนก
+tenantRouter.get('/api/company/analyze/scope/status', requireRoles('admin', 'executive'), (req, res) => {
+  const level = String(req.query.level || '');
+  const id = String(req.query.id || '');
+  if (!['division', 'section'].includes(level)) return res.status(400).json({ error: 'level ไม่ถูกต้อง' });
+  const db = ctxDb();
+  const key = req.tenant.id + ':' + level + ':' + id;
+  const job = companyScopeJobs[key] || { running: false, done: false, error: null, count: 0, startedAt: null, finishedAt: null };
+  const base = scopeFileBase(level, id);
+  const dir = path.join(db.cmpOutDir, 'scope');
+  const hasReport = fs.existsSync(path.join(dir, base + '.md'));
+  let reportCount = null, reportAt = null;
+  try { const m = JSON.parse(fs.readFileSync(path.join(dir, base + '.meta.json'), 'utf8')); reportCount = Number(m.count); reportAt = m.at; } catch (_) {}
+  const finishedNow = db.employees()
+    .filter(e => !e.archived && (level === 'division' ? e.division_id === id : e.section_id === id))
+    .map(e => db.loadInterview(e.id)).filter(iv => iv && iv.finishedAt).length;
+  const newSince = (reportCount != null) ? Math.max(0, finishedNow - reportCount) : null;
+  res.json({ ...job, hasReport, finishedNow, claudeOn: claudeOnForTenant(db), reportCount, reportAt, newSince });
+});
+
 // ---------- Analysis version history (ดูผลวิเคราะห์เวอร์ชันเก่า) ----------
 // literal routes ต้อง register ก่อน param routes (/:id/:file) — ลำดับสำคัญ (standards §1)
 const HIST_STAMP_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9a-f]{4}$/;
@@ -3350,6 +3447,15 @@ tenantRouter.get('/api/outputs/:id/history/:stamp/:file', (req, res) => {
   if (!canViewEmployee(req.session, emp)) return res.status(403).send('forbidden');
   const safeId = String(id).replace(/[^a-zA-Z0-9_]/g, '');
   const p = path.join(ctxDb().outDir, safeId, '_history', stamp, file);
+  if (!fs.existsSync(p)) return res.status(404).send('not found');
+  res.sendFile(p);
+});
+
+// Download รายงานฝ่าย/แผนก (เจาะขอบเขต) — admin + executive
+tenantRouter.get('/api/outputs/_company/scope/:file', requireRoles('admin', 'executive'), (req, res) => {
+  const file = req.params.file;
+  if (!/^(division|section)-[A-Za-z0-9_]+\.(md|txt|meta\.json)$/.test(file)) return res.status(400).send('bad filename');
+  const p = path.join(ctxDb().cmpOutDir, 'scope', file);
   if (!fs.existsSync(p)) return res.status(404).send('not found');
   res.sendFile(p);
 });
