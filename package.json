@@ -8,7 +8,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.69.0",
+    "exceljs": "^4.4.0",
     "express": "^4.19.2",
+    "jszip": "^3.10.2",
     "web-push": "^3.6.7",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }

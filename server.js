@@ -13,6 +13,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const xlsx = require('xlsx');
+const xlsxReport = require('./scripts/xlsx-report');  // สร้างรายงาน .xlsx (exceljs) หลายชีต
+const JSZip = require('jszip');                       // รวมไฟล์รายคนเป็น .zip (ส่งออกทั้งกลุ่ม)
 const csv = require('./scripts/csv');   // serializer กลางสำหรับ CSV ฝั่ง server
 const ai = require('./scripts/mock-ai');
 // Real-Claude layer (Sonnet 4.6) for JD/KPI/Optimization + company report.
@@ -3328,6 +3330,272 @@ tenantRouter.get('/api/worklog/detail/:userId/txt', (req, res) => {
   res.send('﻿' + detailText(detail));
 });
 
+// ============================================================
+// รายงาน Excel (.xlsx) — บริษัท/ฝ่าย/แผนก (5 ชีต) · รายตำแหน่ง/บุคคล (7 ชีต) · ZIP ทั้งกลุ่ม
+// ============================================================
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+function sendXlsx(res, filename, buf) {
+  res.setHeader('Content-Type', XLSX_MIME);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', csv.contentDisposition(filename, 'report.xlsx'));
+  res.send(buf);
+}
+function safeFileName(s) { return String(s || '').replace(/[^\wก-๙ .-]/g, '').trim(); }
+function ivAnswer(iv, key) {
+  if (!iv || !Array.isArray(iv.answers)) return '';
+  const a = iv.answers.find(x => x.key === key);
+  return a ? String(a.value || '').trim() : '';
+}
+function readEmpDoc(db, empId, file) {
+  try { return fs.readFileSync(path.join(db.outDir, String(empId).replace(/[^a-zA-Z0-9_]/g, ''), file), 'utf8'); }
+  catch (_) { return ''; }
+}
+// แยก markdown เป็นช่วง ## heading → [{heading, body}]
+function mdSections(md) {
+  const lines = String(md || '').replace(/\r/g, '').split('\n');
+  const out = []; let cur = null;
+  for (const ln of lines) {
+    const m = ln.match(/^##\s+(.*)/);
+    if (m) { cur = { heading: m[1].trim(), body: [] }; out.push(cur); }
+    else if (cur) cur.body.push(ln);
+  }
+  return out.map(s => ({ heading: s.heading, body: s.body.join('\n').trim() }));
+}
+// แยกบล็อก ### heading → [{heading, lines[]}]
+function mdBlocks(md) {
+  const lines = String(md || '').replace(/\r/g, '').split('\n');
+  const out = []; let cur = null;
+  for (const ln of lines) {
+    const m = ln.match(/^###\s+(.*)/);
+    if (m) { cur = { heading: m[1].trim(), lines: [] }; out.push(cur); }
+    else if (cur) cur.lines.push(ln);
+  }
+  return out;
+}
+// ดึงค่าจากบุลเล็ตแบบ "- **label:** value"
+function labelVal(lines, label) {
+  for (const ln of lines) {
+    const s = ln.replace(/\*\*/g, '').replace(/^[-*•]\s*/, '').trim();
+    const i = s.indexOf(label);
+    if (i === 0) {
+      const rest = s.slice(label.length).replace(/^[^:：]*[:：]\s*/, '');
+      if (rest !== s) return rest.trim();
+    }
+  }
+  return '';
+}
+// ล้าง markdown ของเนื้อหา body → ข้อความอ่านง่าย (บุลเล็ต → •)
+function cleanBody(body) {
+  return String(body || '').replace(/\r/g, '').split('\n')
+    .filter(l => l.trim() && !/^>\s?/.test(l))
+    .map(l => l.replace(/^#{1,6}\s+/, '').replace(/^\s*[-*]\s+/, '• ').replace(/\*\*/g, '').replace(/`/g, '').trim())
+    .join('\n');
+}
+function parseJdMd(md) {
+  const r = {};
+  for (const s of mdSections(md)) {
+    const h = s.heading, b = cleanBody(s.body);
+    if (/บทบาท/.test(h)) r.role = b;
+    else if (/หน้าที่หลัก/.test(h)) r.main = b;
+    else if (/หน้าที่รอง/.test(h)) r.secondary = b;
+    else if (/เครื่องมือ/.test(h)) r.tools = b;
+    else if (/ประสานงาน/.test(h)) r.coord = b;
+    else if (/คุณสมบัติ/.test(h)) r.qualities = b;
+    else if (/ตำแหน่ง/.test(h)) r.position = b;
+  }
+  return r;
+}
+function parseKpiMd(md) {
+  return mdBlocks(md).map(bk => {
+    const title = bk.heading.replace(/^KPI\s*\d+\s*[:：]\s*/i, '').trim();
+    return [title,
+      labelVal(bk.lines, 'สิ่งที่วัด'), labelVal(bk.lines, 'สูตร'),
+      labelVal(bk.lines, 'เป้าหมาย'), labelVal(bk.lines, 'ความถี่')];
+  }).filter(r => r[0] || r[1]);
+}
+function parseOptMd(md) {
+  return mdBlocks(md).map((bk, i) => [String(i + 1),
+    labelVal(bk.lines, 'ปัญหา'), labelVal(bk.lines, 'ข้อเสนอ'),
+    labelVal(bk.lines, 'ผลกระทบ'), labelVal(bk.lines, 'ความเสี่ยง')])
+    .filter(r => r[1] || r[2]);
+}
+// Workflow จากคำสัมภาษณ์ (hour_* หรือ legacy)
+function interviewWorkflow(iv) {
+  if (!iv || !Array.isArray(iv.answers)) return [];
+  const pad = n => String(n).padStart(2, '0');
+  const hours = [];
+  for (const a of iv.answers) {
+    const m = String(a.key).match(/^hour_(\d+)$/);
+    if (m && String(a.value || '').trim()) hours.push([Number(m[1]), String(a.value).trim()]);
+  }
+  hours.sort((x, y) => x[0] - y[0]);
+  if (hours.length) return hours.map(([h, t]) => [`${pad(h)}:00–${pad((h + 1) % 24)}:00`, t]);
+  const legacy = [['ช่วงเช้า', 'morning_main'], ['ช่วงบ่าย', 'afternoon_main'], ['รายงาน/ปิดงาน', 'evening_closing']];
+  const rows = [];
+  for (const [lbl, k] of legacy) { const v = ivAnswer(iv, k); if (v) rows.push([lbl, v]); }
+  return rows;
+}
+function splitWishlist(s) {
+  return String(s || '').split(/\s*[\/\n]+\s*/).map(x => x.trim()).filter(Boolean);
+}
+// รวมข้อมูลโปรไฟล์รายคน (13 หัวข้อ) → ส่งให้ xlsx-report
+function gatherPersonProfile(db, user) {
+  const posMap = Object.fromEntries(db.positions().map(p => [p.id, p.name]));
+  const divMap = Object.fromEntries(db.divisions().map(d => [d.id, d.name]));
+  const secMap = Object.fromEntries(db.sections().map(s => [s.id, s.name]));
+  const emps = db.employees();
+  const emp = emps.find(e => e.user_id === user.id && !e.archived) || emps.find(e => e.user_id === user.id);
+  const iv = emp ? db.loadInterview(emp.id) : null;
+  const jd = emp ? parseJdMd(readEmpDoc(db, emp.id, 'job-description.md')) : {};
+  const kpis = emp ? parseKpiMd(readEmpDoc(db, emp.id, 'kpi.md')) : [];
+  const opt = emp ? parseOptMd(readEmpDoc(db, emp.id, 'optimization.md')) : [];
+  const posName = (emp && emp.role) || posMap[user.position_id] || '';
+  const divName = (emp && emp.division_name) || divMap[user.division_id] || '';
+  const secName = (emp && emp.section_name) || secMap[user.section_id] || '';
+  const wf = interviewWorkflow(iv);
+  const weekly = ivAnswer(iv, 'weekly_tasks');
+  const A = (k) => ivAnswer(iv, k);
+  const okUnset = (v) => v && !/ไม่ระบุ|ดูในตาราง|ดูในตารางชั่วโมง/.test(v);
+  const profile = [
+    ['1. ตำแหน่ง', [posName, [divName, secName].filter(Boolean).join(' / ')].filter(Boolean).join(' — ') || '-'],
+    ['2. สรุปบทบาท', jd.role || A('warmup') || '-'],
+    ['3. หน้าที่หลัก', jd.main || (wf.length ? wf.map(w => '• ' + w[1]).join('\n') : '-')],
+    ['4. หน้าที่รอง', jd.secondary || (weekly ? '• ' + weekly : '-')],
+    ['5. เครื่องมือ/ระบบที่ต้องใช้เป็น', okUnset(jd.tools) ? jd.tools : (A('morning_tools') || '(ดูขั้นตอนงานในชีต Workflow)')],
+    ['6. การประสานงาน', okUnset(jd.coord) ? jd.coord : (A('morning_people') || '(ไม่ระบุ — ดูปัญหา/คอขวดประกอบ)')],
+    ['7. คุณสมบัติที่สังเกตได้จากงานจริง', jd.qualities || '-'],
+  ];
+  const problems = [];
+  if (A('pain_points')) problems.push(['งานที่เสียเวลามากที่สุด', A('pain_points')]);
+  if (A('bottlenecks')) problems.push(['รอจากคน/ระบบอื่น', A('bottlenecks')]);
+  return {
+    name: user.name, position: posName, division: divName, section: secName,
+    profile, kpis, opt, workflow: wf, weekly, problems,
+    voice: A('own_kpi'), ai: splitWishlist(A('ai_wishlist')),
+    dateStr: nowBangkok().dateStr, version: APP_VERSION,
+  };
+}
+// แปลงผลวิเคราะห์ (optimization md) → 5 ชีต
+function analysisToSheets(md) {
+  const targets = [
+    { name: '1.บทสรุป', heading: 'บทสรุป', re: /บทสรุป|สรุปผู้บริหาร|ครอบคลุม/ },
+    { name: '2.ธีมปัญหา-คอขวด', heading: 'ธีมปัญหา/คอขวดที่พบซ้ำ', re: /ธีม|คอขวด|ปัญหา/ },
+    { name: '3.โอกาส AI', heading: 'โอกาสใช้ AI/Automation', re: /โอกาส|AI|Automation|อัตโนมัติ/ },
+    { name: '4.ข้อเสนอ+Roadmap', heading: 'ข้อเสนอภาพรวม + Roadmap', re: /ข้อเสนอ|Roadmap|แผน/ },
+    { name: '5.ความเสี่ยง', heading: 'ความเสี่ยงและข้อควรระวัง', re: /เสี่ยง|ข้อควรระวัง/ },
+  ];
+  const buckets = targets.map(() => []);
+  for (const sec of mdSections(md)) {
+    const idx = targets.findIndex(t => t.re.test(sec.heading));
+    if (idx < 0) continue;
+    const lines = buckets[idx];
+    if (lines.length) lines.push({ text: '' });
+    lines.push({ text: sec.heading, bold: true, sub: true });
+    for (const l of cleanBody(sec.body).split('\n')) if (l) lines.push({ text: l });
+  }
+  return targets.map((t, i) => ({ name: t.name, heading: t.heading, lines: buckets[i] }));
+}
+function gatherCompanyAnalysis(db, level, id) {
+  const company = (db.company() || {}).name || 'บริษัท';
+  let mdPath, title, fname;
+  if (level === 'division' || level === 'section') {
+    const group = level === 'division' ? db.divisions().find(d => d.id === id) : db.sections().find(s => s.id === id);
+    if (!group) return null;
+    const kind = level === 'division' ? 'ฝ่าย' : 'แผนก';
+    mdPath = path.join(db.cmpOutDir, 'scope', scopeFileBase(level, id) + '.md');
+    title = `รายงานวิเคราะห์${kind}: ${group.name}`;
+    fname = `วิเคราะห์-${kind}-${safeFileName(group.name)}.xlsx`;
+  } else {
+    mdPath = path.join(db.cmpOutDir, 'optimization-report.md');
+    title = 'รายงานวิเคราะห์ภาพรวมองค์กร';
+    fname = `วิเคราะห์-${safeFileName(company)}.xlsx`;
+  }
+  let md = '';
+  try { md = fs.readFileSync(mdPath, 'utf8'); } catch (_) {}
+  return {
+    title, filename: fname,
+    subs: [`${company} · ออกรายงาน ${nowBangkok().dateStr}`,
+           md ? 'ที่มา: ผลวิเคราะห์ AI ของระบบ' : 'ยังไม่ได้วิเคราะห์ — กรุณากด “วิเคราะห์” ก่อน แล้วส่งออกอีกครั้ง'],
+    sheets: analysisToSheets(md),
+  };
+}
+function groupPeople(db, level, id) {
+  const users = db.users().filter(u => u.role !== 'admin');
+  if (level === 'division') return users.filter(u => u.division_id === id);
+  if (level === 'section') return users.filter(u => u.section_id === id);
+  if (level === 'position') return users.filter(u => u.position_id === id);
+  return [];
+}
+
+// รายงานบริษัท/ฝ่าย/แผนก (5 ชีต) — admin + executive
+tenantRouter.get('/api/report/company/excel', requireRoles('admin', 'executive'), async (req, res) => {
+  const level = String(req.query.level || 'company');
+  const id = String(req.query.id || '');
+  const db = ctxDb();
+  try {
+    const data = gatherCompanyAnalysis(db, level, id);
+    if (!data) return res.status(404).send('ไม่พบฝ่าย/แผนกนี้');
+    const wb = xlsxReport.companyAnalysisWorkbook(data);
+    sendXlsx(res, data.filename, await xlsxReport.workbookBuffer(wb));
+  } catch (e) { console.error('[report/company]', e.message); res.status(500).send('สร้างไฟล์ไม่สำเร็จ'); }
+});
+
+// รายงานรายตำแหน่ง/บุคคล (7 ชีต) — หัวหน้า/ผู้ดูแลดูลูกทีม · ทุกคนดูของตัวเอง
+tenantRouter.get('/api/report/person/:userId/excel', async (req, res) => {
+  const { target, err } = resolveWorklogTarget(req);
+  if (err) return res.status(err).send(err === 404 ? 'not found' : 'forbidden');
+  try {
+    const data = gatherPersonProfile(ctxDb(), target);
+    const wb = xlsxReport.personProfileWorkbook(data);
+    sendXlsx(res, `วิเคราะห์-${safeFileName(target.name) || target.id}.xlsx`, await xlsxReport.workbookBuffer(wb));
+  } catch (e) { console.error('[report/person]', e.message); res.status(500).send('สร้างไฟล์ไม่สำเร็จ'); }
+});
+
+// รายชื่อคนในกลุ่ม (ฝ่าย/แผนก/ตำแหน่ง) — ให้หน้าเว็บทำปุ่มดาวน์โหลดรายคน
+tenantRouter.get('/api/report/group/people', requireRoles('admin', 'executive'), (req, res) => {
+  const level = String(req.query.level || '');
+  const id = String(req.query.id || '');
+  if (!['division', 'section', 'position'].includes(level)) return res.status(400).json({ error: 'level ไม่ถูกต้อง' });
+  const db = ctxDb();
+  const posMap = Object.fromEntries(db.positions().map(p => [p.id, p.name]));
+  const people = groupPeople(db, level, id).map(u => ({
+    user_id: u.id, name: u.name, position_name: posMap[u.position_id] || '',
+  })).sort((a, b) => String(a.name).localeCompare(String(b.name), 'th'));
+  res.json({ people });
+});
+
+// ส่งออกทั้งกลุ่มเป็น ZIP (ไฟล์ .xlsx แยกรายคน) — admin + executive
+tenantRouter.get('/api/report/group/zip', requireRoles('admin', 'executive'), async (req, res) => {
+  const level = String(req.query.level || '');
+  const id = String(req.query.id || '');
+  if (!['division', 'section', 'position'].includes(level)) return res.status(400).send('level ไม่ถูกต้อง');
+  const db = ctxDb();
+  const people = groupPeople(db, level, id);
+  if (!people.length) return res.status(400).send('ไม่มีพนักงานในกลุ่มนี้');
+  try {
+    const zip = new JSZip();
+    const used = {};
+    for (const u of people) {
+      const data = gatherPersonProfile(db, u);
+      const wb = xlsxReport.personProfileWorkbook(data);
+      const buf = await xlsxReport.workbookBuffer(wb);
+      let base = safeFileName(u.name) || u.id;
+      if (used[base]) base += '-' + String(u.id).slice(-4);
+      used[base] = 1;
+      zip.file(base + '.xlsx', buf);
+    }
+    const posMap = Object.fromEntries(db.positions().map(p => [p.id, p.name]));
+    const gname = level === 'division' ? (db.divisions().find(d => d.id === id) || {}).name
+      : level === 'section' ? (db.sections().find(s => s.id === id) || {}).name
+      : (posMap[id] || id);
+    const zbuf = await zip.generateAsync({ type: 'nodebuffer' });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', csv.contentDisposition(`วิเคราะห์-${safeFileName(gname || id)}.zip`, 'report.zip'));
+    res.send(zbuf);
+  } catch (e) { console.error('[report/group/zip]', e.message); res.status(500).send('สร้างไฟล์ไม่สำเร็จ'); }
+});
+
 // Interview JSON — read access via canViewEmployee so hierarchy can inspect subordinates'
 // answers (including archived/historical records).
 tenantRouter.get('/api/interview/:id', (req, res) => {
@@ -3467,11 +3735,16 @@ tenantRouter.get('/api/company/scope/list', requireRoles('admin', 'executive'), 
     if (e.division_id) { tDiv[e.division_id] = (tDiv[e.division_id] || 0) + 1; if (done) fDiv[e.division_id] = (fDiv[e.division_id] || 0) + 1; }
     if (e.section_id)  { tSec[e.section_id]  = (tSec[e.section_id]  || 0) + 1; if (done) fSec[e.section_id]  = (fSec[e.section_id]  || 0) + 1; }
   }
+  const fPos = {}, tPos = {};
+  for (const { e, iv } of rows) {
+    if (e.position_id) { tPos[e.position_id] = (tPos[e.position_id] || 0) + 1; if (iv && iv.finishedAt) fPos[e.position_id] = (fPos[e.position_id] || 0) + 1; }
+  }
   const divisions = db.divisions().map(d => ({ id: d.id, name: d.name, finished: fDiv[d.id] || 0, total: tDiv[d.id] || 0 }));
   const sections  = db.sections().map(s => ({ id: s.id, name: s.name, division_id: s.division_id, finished: fSec[s.id] || 0, total: tSec[s.id] || 0 }));
+  const positions = db.positions().map(p => ({ id: p.id, name: p.name, division_id: p.division_id || null, section_id: p.section_id || null, finished: fPos[p.id] || 0, total: tPos[p.id] || 0 }));
   const persons   = rows.filter(({ iv }) => iv && iv.finishedAt)
-    .map(({ e }) => ({ id: e.id, name: e.name, role: e.role || '', division_id: e.division_id || null, section_id: e.section_id || null }));
-  res.json({ divisions, sections, persons });
+    .map(({ e }) => ({ id: e.id, user_id: e.user_id || null, name: e.name, role: e.role || '', division_id: e.division_id || null, section_id: e.section_id || null, position_id: e.position_id || null }));
+  res.json({ divisions, sections, positions, persons });
 });
 
 // สั่งวิเคราะห์เฉพาะฝ่าย/แผนก (async job เหมือนรายงานภาพรวม)

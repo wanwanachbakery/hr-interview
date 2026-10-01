@@ -112,6 +112,7 @@
   <!-- แถบส่งออก -->
   <div class="rv-actions" id="rv-actions" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:2px 0 16px;">
     <button id="rv-print" onclick="window.print()">🖨 ส่งออก PDF (เอกสารทั้งชุด)</button>
+    <button id="rv-xlsx" style="display:none;">📊 Excel (โปรไฟล์ 7 ชีต)</button>
     <span class="sub" style="margin:0;">· ดาวน์โหลดแยกไฟล์ (Text) กด “⬇ ดาวน์โหลด” ที่การ์ดแต่ละใบ</span>
   </div>
 
@@ -277,6 +278,17 @@ fetch(`${TBASE}/api/interview/${id}`).then(r=>r.json()).then(iv => {
     (titleTxt && titleTxt !== 'rv_heading_tpl') ? titleTxt : ('📄 เอกสารของ ' + e.name);
   document.getElementById('sub').textContent =
     `${e.role} · ${e.department || ''} · ${formatDateTime(iv.finishedAt || iv.startedAt)}`;
+
+  // ปุ่มส่งออกโปรไฟล์ Excel (7 ชีต) — ใช้ user_id ของเจ้าของเอกสาร
+  const rvXlsx = document.getElementById('rv-xlsx');
+  if (rvXlsx && e.user_id) {
+    rvXlsx.style.display = '';
+    rvXlsx.onclick = () => {
+      const a = document.createElement('a');
+      a.href = `${TBASE}/api/report/person/${encodeURIComponent(e.user_id)}/excel`;
+      a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
+    };
+  }
 
   const rows = iv.answers.map(a => `
     <div style="padding:10px 0; border-bottom:1px solid #e2e8f0;">

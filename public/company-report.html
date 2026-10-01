@@ -43,7 +43,7 @@
     .doc-card .doc-head h2 { margin:0; font-size:17px; border:0; padding:0; }
     .doc-card .doc-content { padding:22px 24px; }
     @media print {
-      .app-sidebar, .app-topbar, .app-backdrop, .cr-actions, #cr-back, .cr-picker, .cr-meta { display:none !important; }
+      .app-sidebar, .app-topbar, .app-backdrop, .cr-actions, #cr-back, .cr-picker, .cr-meta, #cr-profiles { display:none !important; }
       .app-content, .container, .doc-card { all:unset; display:block; }
       .doc-card .doc-head { border:0; background:none; padding:0 0 8px; }
       .doc-card .doc-head span { display:none; }
@@ -63,11 +63,12 @@
   <div class="cr-head">
     <div>
       <h1 style="margin:0;">🧠 รายงานวิเคราะห์</h1>
-      <p class="sub" style="margin:4px 0 0;">เลือกขอบเขต (บริษัท / ฝ่าย / แผนก / บุคคล) แล้วดูหรือส่งออกผลวิเคราะห์เป็น Text และ PDF</p>
+      <p class="sub" style="margin:4px 0 0;">เลือกขอบเขต (บริษัท / ฝ่าย / แผนก / ตำแหน่ง / บุคคล) แล้วดูหรือส่งออก (Text · PDF · Excel)</p>
     </div>
     <div class="cr-actions">
       <a id="cr-back" href="/dashboard"><button class="ghost">← กลับ Dashboard</button></a>
       <a id="cr-md" href="#"><button class="ghost">📝 ไฟล์ Text (.md)</button></a>
+      <button id="cr-xlsx" class="ghost" style="display:none;">📊 ส่งออก Excel</button>
       <button id="cr-print" onclick="window.print()">🖨 ส่งออก PDF</button>
     </div>
   </div>
@@ -80,6 +81,7 @@
           <option value="company">บริษัท (ภาพรวม)</option>
           <option value="division">รายฝ่าย</option>
           <option value="section">รายแผนก</option>
+          <option value="position">รายตำแหน่ง</option>
           <option value="person">รายบุคคล</option>
         </select>
       </label>
@@ -94,9 +96,18 @@
 
   <div class="cr-meta" id="cr-meta"></div>
 
-  <div class="doc-card">
+  <div class="doc-card" id="cr-doccard">
     <div class="doc-head"><span style="font-size:18px;">📄</span><h2 id="report-title">Optimization Report</h2></div>
     <div class="doc-content md-body" id="cr-body"><p class="sub">กำลังโหลดรายงาน…</p></div>
+  </div>
+
+  <!-- แผงโปรไฟล์รายคน (Excel 7 ชีต/คน) — แสดงเฉพาะระดับ ฝ่าย/แผนก/ตำแหน่ง -->
+  <div class="card" id="cr-profiles" style="display:none; margin-top:16px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+      <strong>👥 โปรไฟล์รายคนในกลุ่มนี้ <span class="sub" style="font-weight:400;">(Excel 7 ชีต/คน)</span></strong>
+      <button id="cr-zip">📦 ดาวน์โหลดทั้งกลุ่ม (ZIP)</button>
+    </div>
+    <div id="cr-people"><p class="sub">กำลังโหลดรายชื่อ…</p></div>
   </div>
 </div>
 
@@ -111,9 +122,11 @@ const $ = id => document.getElementById(id);
 const elLevel = $('sel-level'), elTarget = $('sel-target'), elTargetWrap = $('target-wrap');
 const elAnalyze = $('btn-analyze'), elReviewLink = $('link-review'), elHint = $('picker-hint');
 const elMeta = $('cr-meta'), elBody = $('cr-body'), elTitle = $('report-title'), elMd = $('cr-md');
+const elXlsx = $('cr-xlsx'), elDocCard = $('cr-doccard'), elProfiles = $('cr-profiles'), elPeople = $('cr-people'), elZip = $('cr-zip');
 
-let SCOPE = { divisions: [], sections: [], persons: [] };
+let SCOPE = { divisions: [], sections: [], positions: [], persons: [] };
 let polling = null;
+const dl = (url) => { const a = document.createElement('a'); a.href = url; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); };
 
 // โหลดรายการฝ่าย/แผนก/บุคคล ครั้งเดียว
 async function loadScopeList() {
@@ -126,6 +139,7 @@ async function loadScopeList() {
 function targetOptions(level) {
   if (level === 'division') return SCOPE.divisions.map(d => ({ value: d.id, label: `${d.name} (สัมภาษณ์เสร็จ ${d.finished}/${d.total})`, finished: d.finished }));
   if (level === 'section')  return SCOPE.sections.map(s => ({ value: s.id, label: `${s.name} (สัมภาษณ์เสร็จ ${s.finished}/${s.total})`, finished: s.finished }));
+  if (level === 'position') return SCOPE.positions.map(p => ({ value: p.id, label: `${p.name} (สัมภาษณ์เสร็จ ${p.finished}/${p.total})`, finished: p.finished }));
   if (level === 'person')   return SCOPE.persons.map(p => ({ value: p.id, label: `${p.name}${p.role ? ' — ' + p.role : ''}`, finished: 1 }));
   return [];
 }
@@ -152,37 +166,50 @@ function onLevelChange(keepTarget) {
 function currentScope() {
   const level = elLevel.value;
   if (level === 'company') {
-    return { level, title: 'รายงานภาพรวมบริษัท', mdUrl: TBASE + '/api/outputs/_company/optimization-report.md',
+    return { level, title: 'รายงานภาพรวมบริษัท', hasAnalysis: true, isGroup: false,
+      mdUrl: TBASE + '/api/outputs/_company/optimization-report.md',
       statusUrl: TBASE + '/api/company/analyze/status', analyzeUrl: TBASE + '/api/company/analyze', analyzeBody: {},
-      dl: 'รายงานภาพรวมบริษัท.md', canAnalyze: true };
+      dl: 'รายงานภาพรวมบริษัท.md', xlsxUrl: TBASE + '/api/report/company/excel?level=company', canAnalyze: true };
   }
   const id = elTarget.value;
   if (level === 'person') {
     const p = SCOPE.persons.find(x => x.id === id);
-    return { level, id, title: 'รายงานรายบุคคล: ' + (p ? p.name : ''), mdUrl: TBASE + '/api/outputs/' + encodeURIComponent(id) + '/optimization.md',
-      statusUrl: null, analyzeUrl: null, dl: 'รายงาน-' + (p ? p.name : id) + '.md', canAnalyze: false, reviewId: id };
+    return { level, id, title: 'รายงานรายบุคคล: ' + (p ? p.name : ''), hasAnalysis: true, isGroup: false,
+      mdUrl: TBASE + '/api/outputs/' + encodeURIComponent(id) + '/optimization.md',
+      statusUrl: null, analyzeUrl: null, dl: 'รายงาน-' + (p ? p.name : id) + '.md', canAnalyze: false, reviewId: id,
+      xlsxUrl: (p && p.user_id) ? TBASE + '/api/report/person/' + encodeURIComponent(p.user_id) + '/excel' : null };
+  }
+  if (level === 'position') {
+    const g = SCOPE.positions.find(x => x.id === id);
+    return { level, id, title: `รายตำแหน่ง: ${g ? g.name : ''}`, hasAnalysis: false, isGroup: true, canAnalyze: false };
   }
   const list = level === 'division' ? SCOPE.divisions : SCOPE.sections;
   const g = list.find(x => x.id === id);
   const kind = level === 'division' ? 'ฝ่าย' : 'แผนก';
   const base = scopeBase(level, id);
-  return { level, id, title: `รายงานวิเคราะห์${kind}: ${g ? g.name : ''}`,
+  return { level, id, title: `รายงานวิเคราะห์${kind}: ${g ? g.name : ''}`, hasAnalysis: true, isGroup: true,
     mdUrl: TBASE + '/api/outputs/_company/scope/' + base + '.md',
     statusUrl: TBASE + '/api/company/analyze/scope/status?level=' + level + '&id=' + encodeURIComponent(id),
     analyzeUrl: TBASE + '/api/company/analyze/scope', analyzeBody: { level, id },
-    dl: `รายงาน${kind}-${g ? g.name : id}.md`, canAnalyze: true };
+    dl: `รายงาน${kind}-${g ? g.name : id}.md`,
+    xlsxUrl: TBASE + '/api/report/company/excel?level=' + level + '&id=' + encodeURIComponent(id), canAnalyze: true };
 }
 
 async function render() {
   const sc = currentScope();
   elTitle.textContent = sc.title;
-  elMd.setAttribute('href', sc.mdUrl);
-  elMd.setAttribute('download', sc.dl);
   elReviewLink.style.display = 'none';
   elAnalyze.style.display = 'none';
   elHint.textContent = '';
 
-  // ปุ่มดูเอกสารทั้งหมด (เฉพาะรายบุคคล)
+  // ปุ่ม Text (.md) — เฉพาะระดับที่มีรายงาน
+  if (sc.mdUrl) { elMd.style.display = ''; elMd.setAttribute('href', sc.mdUrl); elMd.setAttribute('download', sc.dl || 'report.md'); }
+  else elMd.style.display = 'none';
+  // ปุ่ม Excel
+  if (sc.xlsxUrl) { elXlsx.style.display = ''; elXlsx.onclick = () => dl(sc.xlsxUrl); }
+  else elXlsx.style.display = 'none';
+
+  // ปุ่มดูเอกสารทั้งหมด (รายบุคคล)
   if (sc.level === 'person' && sc.reviewId) {
     elReviewLink.style.display = '';
     elReviewLink.setAttribute('href', TBASE + '/review?id=' + encodeURIComponent(sc.reviewId));
@@ -194,19 +221,27 @@ async function render() {
     elAnalyze.disabled = false;
   }
 
-  if ((sc.level === 'division' || sc.level === 'section') && !sc.id) {
-    elBody.innerHTML = '<p class="empty">ยังไม่มีข้อมูลในระดับนี้</p>';
-    elMeta.innerHTML = '';
+  // แผงโปรไฟล์รายคน (ฝ่าย/แผนก/ตำแหน่ง)
+  if (sc.isGroup && sc.id) renderProfiles(sc); else elProfiles.style.display = 'none';
+
+  // ระดับตำแหน่ง — ไม่มีรายงานวิเคราะห์ (ใช้แค่โปรไฟล์รายคน)
+  if (!sc.hasAnalysis) {
+    elDocCard.style.display = 'none'; elMeta.innerHTML = '';
+    elHint.textContent = 'ระดับตำแหน่ง: ใช้ส่งออกโปรไฟล์รายคน (Excel) ของคนในตำแหน่งนี้';
     return;
   }
+  elDocCard.style.display = '';
+  if (sc.isGroup && !sc.id) {
+    elBody.innerHTML = '<p class="empty">ยังไม่มีข้อมูลในระดับนี้</p>'; elMeta.innerHTML = ''; return;
+  }
 
-  // โหลดเนื้อหารายงาน
+  // โหลดเนื้อหารายงาน (md)
   elBody.innerHTML = '<p class="sub">กำลังโหลดรายงาน…</p>';
   try {
     const r = await fetch(sc.mdUrl);
     if (r.status === 403) { elBody.innerHTML = '<p class="empty">คุณไม่มีสิทธิ์ดูรายงานนี้ (เฉพาะแอดมิน/ผู้บริหาร)</p>'; }
     else if (!r.ok) {
-      if (sc.level === 'person') elBody.innerHTML = '<p class="empty">คนนี้ยังไม่มีผลวิเคราะห์ — ให้เจ้าตัวหรือแอดมินกด “วิเคราะห์ใหม่” ในหน้าเอกสารของเขา (ปุ่มด้านบน)</p>';
+      if (sc.level === 'person') elBody.innerHTML = '<p class="empty">คนนี้ยังไม่มีผลวิเคราะห์ — ให้เจ้าตัวหรือแอดมินกด “วิเคราะห์ใหม่” ในหน้าเอกสารของเขา</p>';
       else elBody.innerHTML = '<p class="empty">ยังไม่มีรายงาน — กดปุ่ม “🔄 วิเคราะห์กลุ่มนี้” เพื่อสร้าง</p>';
     } else {
       const md = await r.text();
@@ -214,8 +249,28 @@ async function render() {
     }
   } catch (e) { elBody.innerHTML = '<p class="empty" style="color:#b91c1c;">โหลดรายงานไม่สำเร็จ</p>'; }
 
-  // แถบข้อมูลสรุป
   renderMeta(sc);
+}
+
+// แผงโปรไฟล์รายคน (Excel 7 ชีต/คน) + ปุ่ม ZIP ทั้งกลุ่ม
+async function renderProfiles(sc) {
+  elProfiles.style.display = '';
+  elZip.onclick = () => dl(TBASE + '/api/report/group/zip?level=' + sc.level + '&id=' + encodeURIComponent(sc.id));
+  elPeople.innerHTML = '<p class="sub">กำลังโหลดรายชื่อ…</p>';
+  try {
+    const j = await fetch(TBASE + '/api/report/group/people?level=' + sc.level + '&id=' + encodeURIComponent(sc.id)).then(r => r.json());
+    const people = (j && j.people) || [];
+    if (!people.length) { elPeople.innerHTML = '<p class="empty">ไม่มีพนักงานในกลุ่มนี้</p>'; return; }
+    elPeople.innerHTML = people.map(p => `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 2px; border-bottom:1px solid #eef2f7;">
+        <span>${esc(p.name)}${p.position_name ? ' <span class="sub" style="font-size:12px;">· ' + esc(p.position_name) + '</span>' : ''}</span>
+        <a class="dlp" data-uid="${esc(p.user_id)}" href="#"><button class="ghost" style="font-size:13px; padding:5px 12px;">📊 Excel</button></a>
+      </div>`).join('');
+    elPeople.querySelectorAll('a.dlp').forEach(a => a.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      dl(TBASE + '/api/report/person/' + encodeURIComponent(a.getAttribute('data-uid')) + '/excel');
+    }));
+  } catch (e) { elPeople.innerHTML = '<p class="empty" style="color:#b91c1c;">โหลดรายชื่อไม่สำเร็จ</p>'; }
 }
 
 async function renderMeta(sc) {
@@ -279,7 +334,7 @@ elAnalyze.addEventListener('click', doAnalyze);
   // deep-link: ?level=division&id=... หรือ ?id=<empId> (รายบุคคลจาก dashboard)
   const qs = new URLSearchParams(location.search);
   const qlevel = qs.get('level'), qid = qs.get('id');
-  if (qlevel && ['company','division','section','person'].includes(qlevel)) {
+  if (qlevel && ['company','division','section','position','person'].includes(qlevel)) {
     elLevel.value = qlevel;
     onLevelChange(false);
     if (qid && elTargetWrap.style.display !== 'none') { elTarget.value = qid; render(); }

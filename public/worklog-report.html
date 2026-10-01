@@ -151,9 +151,10 @@
         <input type="date" id="dt-to"/>
       </div>
       <div id="dt-actions" style="display:none; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
-        <button type="button" class="ghost" id="dt-csv">⬇️ CSV (Excel)</button>
+        <button type="button" class="ghost" id="dt-csv">⬇️ CSV (บันทึกงาน)</button>
         <button type="button" class="ghost" id="dt-txt">⬇️ Text</button>
-        <button type="button" id="dt-pdf">🖨 ส่งออก PDF</button>
+        <button type="button" class="ghost" id="dt-pdf">🖨 PDF</button>
+        <button type="button" id="dt-xlsx">📊 โปรไฟล์ Excel (7 ชีต)</button>
       </div>
       <div id="dt-result"><p class="sub">เลือกคนเพื่อดูรายการงานรายวัน</p></div>
     </div>
@@ -338,6 +339,12 @@ async function initDetail() {
   document.getElementById('dt-csv').addEventListener('click', () => dtDownload('csv'));
   document.getElementById('dt-txt').addEventListener('click', () => dtDownload('txt'));
   document.getElementById('dt-pdf').addEventListener('click', () => window.print());
+  document.getElementById('dt-xlsx').addEventListener('click', () => {
+    if (!elDtPerson.value) return;
+    const a = document.createElement('a');
+    a.href = `${TBASE}/api/report/person/${encodeURIComponent(elDtPerson.value)}/excel`;
+    a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
+  });
 }
 
 function dtQs() { return `from=${encodeURIComponent(elDtFrom.value)}&to=${encodeURIComponent(elDtTo.value)}`; }

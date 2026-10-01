@@ -1,0 +1,197 @@
+/**
+ * scripts/xlsx-report.js — สร้างไฟล์ Excel (.xlsx) รายงานวิเคราะห์ ด้วย exceljs
+ *
+ * แยกเป็น 2 แบบ:
+ *   companyAnalysisWorkbook(data)  → รายงานบริษัท/ฝ่าย/แผนก (5 ชีต: บทสรุป/ธีมปัญหา/โอกาส AI/ข้อเสนอ+Roadmap/ความเสี่ยง)
+ *   personProfileWorkbook(data)    → โปรไฟล์รายตำแหน่ง/บุคคล (7 ชีต ครอบคลุม 13 หัวข้อ)
+ *
+ * รับ "ข้อมูลที่จัดโครงแล้ว" (plain object) จาก server.js — ไฟล์นี้ทำแค่จัดรูปแบบ/สไตล์
+ * คืนค่าเป็น ExcelJS.Workbook — ผู้เรียกใช้ workbookBuffer(wb) เพื่อได้ Buffer
+ */
+'use strict';
+const ExcelJS = require('exceljs');
+
+const BLUE = 'FF378ADD';
+const DARK = 'FF0F3D6B';
+const MUTE = 'FF64748B';
+const ZEBRA = 'FFF6F9FC';
+const BORDER_C = 'FFD5DDE5';
+const FONT = 'Tahoma';
+
+const headFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+const zebraFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
+const thin = { style: 'thin', color: { argb: BORDER_C } };
+const allBorder = { top: thin, left: thin, right: thin, bottom: thin };
+const wrapTop = { vertical: 'top', wrapText: true };
+const wrapCenter = { vertical: 'middle', horizontal: 'center', wrapText: true };
+
+function titleBlock(ws, title, subs) {
+  ws.getCell('A1').value = title;
+  ws.getCell('A1').font = { name: FONT, bold: true, size: 15, color: { argb: DARK } };
+  let r = 2;
+  for (const s of (subs || [])) {
+    ws.getCell('A' + r).value = s;
+    ws.getCell('A' + r).font = { name: FONT, size: 10, color: { argb: MUTE } };
+    r++;
+  }
+  return r + 1; // เว้น 1 บรรทัดก่อนหัวตาราง
+}
+
+function headerRow(ws, rowNum, cols) {
+  const row = ws.getRow(rowNum);
+  cols.forEach((c, i) => {
+    const cell = row.getCell(i + 1);
+    cell.value = c;
+    cell.fill = headFill;
+    cell.font = { name: FONT, bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+    cell.border = allBorder;
+    cell.alignment = wrapCenter;
+  });
+  row.height = 24;
+}
+
+// rows: array of arrays. opts.centerCols = [idx...], opts.boldCol0 = bool
+function dataRows(ws, startRow, rows, opts = {}) {
+  const centerCols = new Set(opts.centerCols || []);
+  let r = startRow;
+  for (const vals of rows) {
+    const row = ws.getRow(r);
+    let maxLines = 1;
+    vals.forEach((v, i) => {
+      const cell = row.getCell(i + 1);
+      cell.value = v == null ? '' : v;
+      cell.border = allBorder;
+      cell.alignment = centerCols.has(i) ? wrapCenter : wrapTop;
+      cell.font = (opts.boldCol0 && i === 0)
+        ? { name: FONT, size: 10, bold: true, color: { argb: DARK } }
+        : { name: FONT, size: 10 };
+      if ((r - startRow) % 2 === 1) cell.fill = zebraFill;
+      const lines = String(v == null ? '' : v).split('\n').length;
+      if (lines > maxLines) maxLines = lines;
+    });
+    row.height = Math.max(opts.minHeight || 18, 15 * maxLines);
+    r++;
+  }
+  return r;
+}
+
+function setWidths(ws, widths) { widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; }); }
+function freezeAt(ws, rowNum) { ws.views = [{ state: 'frozen', ySplit: rowNum - 1 }]; }
+
+// ============================================================
+// A) รายงานวิเคราะห์ บริษัท/ฝ่าย/แผนก — 5 ชีต
+// data = { title, subs:[...], sheets:[ { name, lines:[{text,bold,sub}] } x5 ] }
+// ============================================================
+function companyAnalysisWorkbook(data) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'HR-Interview';
+  for (const sh of data.sheets) {
+    const ws = wb.addWorksheet(sh.name.slice(0, 31), { views: [{ showGridLines: false }] });
+    let r = titleBlock(ws, data.title + (sh.heading ? ' — ' + sh.heading : ''), r0Subs(data.subs, sh));
+    headerRow(ws, r, ['รายละเอียด']);
+    r++;
+    const lines = (sh.lines && sh.lines.length) ? sh.lines : [{ text: '(ยังไม่มีข้อมูล — กรุณากดวิเคราะห์ก่อน)' }];
+    const rows = lines.map(l => [l.text]);
+    const endR = dataRows(ws, r, rows);
+    // ทำ bold/หัวข้อย่อย
+    lines.forEach((l, i) => {
+      if (l.bold || l.sub) {
+        const cell = ws.getCell(r + i, 1);
+        cell.font = { name: FONT, size: l.sub ? 12 : 10, bold: true, color: { argb: DARK } };
+      }
+    });
+    setWidths(ws, [110]);
+    freezeAt(ws, r);
+    void endR;
+  }
+  return wb;
+}
+function r0Subs(subs, sh) { return subs; }
+
+// ============================================================
+// B) โปรไฟล์รายตำแหน่ง/บุคคล — 7 ชีต (13 หัวข้อ)
+// data = {
+//   name, position, division, section,
+//   profile: [[หัวข้อ, รายละเอียด] x7],
+//   kpis: [[kpi, วัดอะไร, สูตร, เป้า, ความถี่] ...],
+//   opt:  [[#, ปัญหา, ข้อเสนอ, ผลกระทบ, ความเสี่ยง] ...],
+//   workflow: [[ช่วงเวลา, งาน] ...], weekly: '...',
+//   problems: [[ประเด็น, รายละเอียด] ...],
+//   voice: '...',
+//   ai: [ '...', ... ],
+//   savedHint: '...'  (ข้อความเตือนถ้าข้อมูลไม่ครบ)
+// }
+// opts.tabPrefix = เติมหน้าชื่อแท็บ (สำหรับ ZIP หลายคน — ปกติไม่ใส่)
+// ============================================================
+function personProfileWorkbook(data, opts = {}) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'HR-Interview';
+  const pre = opts.tabPrefix ? (opts.tabPrefix + '·') : '';
+  const sub = [
+    `${data.position || '-'} · ${[data.division, data.section].filter(Boolean).join(' / ') || '-'}`,
+    `ออกรายงาน ${data.dateStr || ''} · ระบบ HR-Interview${data.version ? ' v' + data.version : ''}`,
+  ];
+
+  // ชีต 1: โปรไฟล์ตำแหน่ง (ข้อ 1-7)
+  let ws = wb.addWorksheet((pre + 'โปรไฟล์ตำแหน่ง').slice(0, 31), { views: [{ showGridLines: false }] });
+  let r = titleBlock(ws, `โปรไฟล์ตำแหน่ง — ${data.name || ''}`, sub);
+  headerRow(ws, r, ['หัวข้อ', 'รายละเอียด']); r++;
+  dataRows(ws, r, data.profile || [], { boldCol0: true, minHeight: 28 });
+  setWidths(ws, [28, 92]); freezeAt(ws, r);
+
+  // ชีต 2: KPI (ข้อ 8)
+  ws = wb.addWorksheet((pre + 'KPI').slice(0, 31), { views: [{ showGridLines: false }] });
+  r = titleBlock(ws, `KPI — ${data.name || ''}`, ['8. ตัวชี้วัด พร้อมวิธีวัด · ควรทบทวนร่วมกับหัวหน้า']);
+  headerRow(ws, r, ['KPI', 'สิ่งที่วัด', 'สูตร/วิธีวัด', 'เป้าหมาย', 'ความถี่']); r++;
+  dataRows(ws, r, (data.kpis && data.kpis.length) ? data.kpis : [['(ยังไม่มีข้อมูล KPI)', '', '', '', '']], { centerCols: [3, 4], minHeight: 28 });
+  setWidths(ws, [32, 34, 32, 22, 16]); freezeAt(ws, r);
+
+  // ชีต 3: Optimization (ข้อ 9)
+  ws = wb.addWorksheet((pre + 'Optimization').slice(0, 31), { views: [{ showGridLines: false }] });
+  r = titleBlock(ws, `Optimization — ${data.name || ''}`, ['9. ข้อเสนอปรับปรุงงาน']);
+  headerRow(ws, r, ['#', 'ปัญหา', 'ข้อเสนอ', 'ผลกระทบ', 'ความเสี่ยง']); r++;
+  dataRows(ws, r, (data.opt && data.opt.length) ? data.opt : [['', '(ยังไม่มีข้อเสนอ)', '', '', '']], { centerCols: [0, 3], minHeight: 26 });
+  setWidths(ws, [5, 40, 44, 11, 22]); freezeAt(ws, r);
+
+  // ชีต 4: Workflow (ข้อ 10)
+  ws = wb.addWorksheet((pre + 'Workflow').slice(0, 31), { views: [{ showGridLines: false }] });
+  r = titleBlock(ws, `Workflow — ${data.name || ''}`, ['10. ขั้นตอนงานประจำวัน/สัปดาห์']);
+  headerRow(ws, r, ['ช่วงเวลา', 'งานที่ทำ']); r++;
+  let endR = dataRows(ws, r, (data.workflow && data.workflow.length) ? data.workflow : [['', '(ยังไม่มีข้อมูล)']], { centerCols: [0], minHeight: 22 });
+  if (data.weekly) {
+    const wr = ws.getRow(endR + 1);
+    wr.getCell(1).value = 'รายสัปดาห์'; wr.getCell(1).font = { name: FONT, size: 10, bold: true, color: { argb: DARK } }; wr.getCell(1).border = allBorder; wr.getCell(1).alignment = wrapTop;
+    wr.getCell(2).value = data.weekly; wr.getCell(2).font = { name: FONT, size: 10 }; wr.getCell(2).border = allBorder; wr.getCell(2).alignment = wrapTop;
+  }
+  setWidths(ws, [16, 80]); freezeAt(ws, r);
+
+  // ชีต 5: ปัญหา/คอขวด (ข้อ 11)
+  ws = wb.addWorksheet((pre + 'ปัญหา-คอขวด').slice(0, 31), { views: [{ showGridLines: false }] });
+  r = titleBlock(ws, `ปัญหา / คอขวด — ${data.name || ''}`, ['11. ปัญหา/คอขวดที่เจอ (จากคำบอกเล่าจริง)']);
+  headerRow(ws, r, ['ประเด็น', 'รายละเอียด']); r++;
+  dataRows(ws, r, (data.problems && data.problems.length) ? data.problems : [['', '(ยังไม่มีข้อมูล)']], { boldCol0: true, minHeight: 28 });
+  setWidths(ws, [28, 82]); freezeAt(ws, r);
+
+  // ชีต 6: เสียงพนักงาน / KPI ดิบ (ข้อ 12)
+  ws = wb.addWorksheet((pre + 'เสียงพนักงาน').slice(0, 31), { views: [{ showGridLines: false }] });
+  r = titleBlock(ws, `ตัวชี้วัดที่พนักงานรู้สึก (ดิบ) — ${data.name || ''}`, ['12. คำพูดดิบจากการสัมภาษณ์ ใช้ตั้ง KPI']);
+  headerRow(ws, r, ['หัวข้อ', 'คำตอบดิบ']); r++;
+  dataRows(ws, r, [['พนักงานคิดว่าควรวัดอะไร', data.voice || '(ยังไม่มีข้อมูล)']], { boldCol0: true, minHeight: 40 });
+  setWidths(ws, [28, 82]); freezeAt(ws, r);
+
+  // ชีต 7: งานที่อยากให้ AI ช่วย (ข้อ 13)
+  ws = wb.addWorksheet((pre + 'AIที่อยากให้ช่วย').slice(0, 31), { views: [{ showGridLines: false }] });
+  r = titleBlock(ws, `งานที่อยากให้ AI ช่วย — ${data.name || ''}`, ['13. จากคำตอบจริง ใช้จัดลำดับความต้องการ']);
+  headerRow(ws, r, ['#', 'สิ่งที่อยากให้ AI/ระบบช่วย']); r++;
+  const aiRows = (data.ai && data.ai.length) ? data.ai.map((a, i) => [String(i + 1), a]) : [['', '(ยังไม่มีข้อมูล)']];
+  dataRows(ws, r, aiRows, { centerCols: [0], minHeight: 22 });
+  setWidths(ws, [5, 80]); freezeAt(ws, r);
+
+  return wb;
+}
+
+async function workbookBuffer(wb) {
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+module.exports = { companyAnalysisWorkbook, personProfileWorkbook, workbookBuffer };
