@@ -4356,15 +4356,18 @@ function ovChanged(rep, users, sigCtx) {
 }
 
 // ---------- งานเบื้องหลัง (1 งานต่อบริษัท — กันกด AI ซ้อนกัน) ----------
-const reportJobs = {};   // tenantId -> { kind, mode, running, total, index, current, done, failed, errors[], startedAt, finishedAt }
+const reportJobs = {};   // tenantId -> { kind, mode, running, total, index, current, done, failed, errors[], cancelRequested, cancelled, startedAt, finishedAt }
 function reportJobBusy(tid) { const j = reportJobs[tid]; return (j && j.running) ? j : null; }
 function startReportJob(tid, kind, mode, items, runItem) {
   const job = reportJobs[tid] = {
     kind, mode, running: true, total: items.length, index: 0, current: items[0] ? items[0].title : '',
-    done: 0, failed: 0, errors: [], startedAt: new Date().toISOString(), finishedAt: null,
+    done: 0, failed: 0, errors: [], cancelRequested: false, cancelled: false, cancelledBy: null,
+    startedAt: new Date().toISOString(), finishedAt: null,
   };
   (async () => {
     for (let i = 0; i < items.length; i++) {
+      // กดยกเลิก → หยุดก่อนเริ่มรายการถัดไป (รายการที่กำลังทำอยู่ทำให้เสร็จก่อน · ที่เสร็จแล้วเก็บไว้ครบ)
+      if (job.cancelRequested) { job.cancelled = true; break; }
       job.index = i; job.current = items[i].title;
       try { await runItem(items[i]); job.done++; }
       catch (e) {
@@ -4373,12 +4376,23 @@ function startReportJob(tid, kind, mode, items, runItem) {
         console.error('[report-job]', tid, kind, items[i].title, '-', e.message || e);
       }
     }
-    job.index = items.length; job.current = ''; job.running = false; job.finishedAt = new Date().toISOString();
+    job.index = job.cancelled ? job.done + job.failed : items.length; job.current = '';
+    job.running = false; job.finishedAt = new Date().toISOString();
   })();
   return job;
 }
 tenantRouter.get('/api/report-job', requireRoles('admin', 'executive'), (req, res) => {
   res.json(reportJobs[req.tenant.id] || { running: false, total: 0, done: 0, failed: 0, errors: [] });
+});
+// ยกเลิกงานที่กำลังทำ — คนที่สั่งงานชนิดนั้นได้เท่านั้น (รายงานรายคน = แอดมิน · ภาพรวม = แอดมิน/ผู้บริหาร)
+tenantRouter.post('/api/report-job/cancel', requireRoles('admin', 'executive'), (req, res) => {
+  const job = reportJobBusy(req.tenant.id);
+  if (!job) return res.status(409).json({ error: 'ไม่มีงานวิเคราะห์ที่กำลังทำอยู่' });
+  if (job.kind === 'person' && req.session.role !== 'admin') return res.status(403).json({ error: 'งานสร้างรายงานรายคน ยกเลิกได้เฉพาะแอดมิน' });
+  job.cancelRequested = true;
+  job.cancelledBy = rptActor(req);
+  writeAudit(req.tenant.id, { actor: tenantActor(req), action: 'report.job.cancel', target: job.kind, ip: req.ip, result: 'ok', meta: { done: job.done, total: job.total } });
+  res.json({ ok: true, job });
 });
 
 // ---------- API: รายงานรายคน ----------

@@ -20,6 +20,7 @@
 </script>
   <script src="/md.js"></script>
   <script src="/app-shell.js?v=8"></script>
+  <script src="/report-job.js?v=1"></script>
   <style>
     .ov-cols { display:grid; grid-template-columns:290px minmax(0,1fr); gap:14px; align-items:start; }
     @media (max-width:760px) { .ov-cols { grid-template-columns:1fr; } }
@@ -334,55 +335,13 @@ $('btn-all').addEventListener('click', () => {
   }));
 });
 
-// ---------- ป๊อปอัป "กำลังวิเคราะห์" ----------
+// ---------- ป๊อปอัปของหน้านี้ (เลือกแบบวิเคราะห์ทั้งหมด / เวอร์ชันเก่า) ----------
 function modal(html) { $('ov-modal-box').innerHTML = html; $('ov-modal').style.display = 'flex'; }
 function closeModal() { $('ov-modal').style.display = 'none'; }
-let polling = false;
-async function startJob(url, body, title) {
-  if (polling) return;
-  modal(`<div style="text-align:center"><div class="spin"></div><div style="margin-top:12px; font-weight:600;">กำลังเริ่ม…</div></div>`);
-  try {
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
-    const j = await r.json().catch(() => ({}));
-    if (r.status === 409) { pollJob(title); return; }
-    if (!r.ok) throw new Error(j.error || 'สั่งวิเคราะห์ไม่สำเร็จ');
-    if (j.total === 0) {
-      modal(`<div style="text-align:center"><div style="font-size:38px;">👍</div><div style="font-weight:600; color:#0f3d6b; margin:6px 0;">ทุกกลุ่มเป็นปัจจุบันแล้ว</div><div class="muted" style="font-size:13px; margin-bottom:14px;">ไม่มีข้อมูลเปลี่ยน — ถ้าต้องการวิเคราะห์ซ้ำ ให้เลือก “วิเคราะห์ใหม่ทั้งหมด”</div><button onclick="closeModal()">ปิด</button></div>`);
-      return;
-    }
-    pollJob(title);
-  } catch (e) { modal(`<div style="text-align:center"><div style="font-size:38px;">⚠️</div><div style="font-weight:600; margin:6px 0;">${esc(e.message)}</div><button onclick="closeModal()">ปิด</button></div>`); }
-}
-function drawProgress(title, s) {
-  const pct = s.total ? Math.round((s.index / s.total) * 100) : 0;
-  modal(`<div style="text-align:center"><div class="spin"></div>
-    <div style="font-weight:600; color:#0f3d6b; font-size:16px; margin:12px 0 4px;">${esc(title)}</div>
-    <div class="muted" style="font-size:13px;">กำลังวิเคราะห์ <b>${Math.min(s.index + 1, s.total)}/${s.total}</b> · ${esc(s.current || '')}</div>
-    <div class="prog"><div style="width:${pct}%"></div></div>
-    <div class="muted" style="font-size:12px;">🧠 AI กำลังทำงานอยู่ — ปิดหน้านี้ได้ งานจะทำต่อเบื้องหลัง</div></div>`);
-}
-async function pollJob(title) {
-  polling = true;
-  let fails = 0;
-  const tick = async () => {
-    let s;
-    try { const r = await fetch(TBASE + '/api/report-job'); if (!r.ok) throw 0; s = await r.json(); fails = 0; }
-    catch (_) { if (++fails > 20) { polling = false; modal(`<div style="text-align:center"><div style="font-size:38px;">⚠️</div><div style="margin:6px 0;">เชื่อมต่อไม่สำเร็จ — งานอาจยังทำอยู่เบื้องหลัง ลองรีเฟรชภายหลัง</div><button onclick="closeModal()">ปิด</button></div>`); return; } setTimeout(tick, 3000); return; }
-    if (s.running) { drawProgress(title || 'กำลังวิเคราะห์', s); setTimeout(tick, 1500); return; }
-    polling = false;
-    const errs = (s.errors || []).length ? `<div style="text-align:left; font-size:12px; color:#b91c1c; margin:8px 0; max-height:140px; overflow:auto;">${s.errors.map(e => '• ' + esc(e)).join('<br>')}</div>` : '';
-    modal(`<div style="text-align:center"><div style="font-size:42px;">${s.failed ? '⚠️' : '✅'}</div><div style="font-weight:600; color:#0f3d6b; font-size:16px; margin:6px 0;">${s.failed ? 'เสร็จแล้ว (มีบางกลุ่มไม่สำเร็จ)' : 'วิเคราะห์เสร็จแล้ว'}</div>
-      <div class="muted" style="font-size:13px;">สำเร็จ ${s.done} · ไม่สำเร็จ ${s.failed} · ทั้งหมด ${s.total}</div>${errs}
-      <button style="margin-top:12px;" onclick="closeModal()">ปิด</button></div>`);
-    VIEW_V = '';
-    await loadTree();
-    loadReport();
-  };
-  tick();
-}
-async function resumeIfRunning() {
-  try { const r = await fetch(TBASE + '/api/report-job'); if (!r.ok) return; const s = await r.json(); if (s.running) pollJob(s.kind === 'person' ? 'กำลังสร้างรายงานรายคน' : 'กำลังวิเคราะห์ภาพรวม'); } catch (_) {}
-}
+// ---------- งานเบื้องหลัง: ป๊อปอัปความคืบหน้า + ซ่อนหน้าต่าง + ยกเลิก (public/report-job.js) ----------
+ReportJob.init({ unit: 'กลุ่ม', kind: 'overview', onDone: async () => { VIEW_V = ''; await loadTree(); loadReport(); } });
+const startJob = (url, body, title) => { closeModal(); ReportJob.start(url, body, title); };
+const resumeIfRunning = () => ReportJob.resume();
 
 (async () => {
   const qs = new URLSearchParams(location.search);

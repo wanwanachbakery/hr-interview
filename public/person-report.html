@@ -19,6 +19,7 @@
   });
 </script>
   <script src="/app-shell.js?v=8"></script>
+  <script src="/report-job.js?v=1"></script>
   <style>
     .rp-cols { display:grid; grid-template-columns:280px minmax(0,1fr); gap:14px; align-items:start; }
     @media (max-width:760px) { .rp-cols { grid-template-columns:1fr; } }
@@ -55,12 +56,6 @@
     .tw tr.brk td { background:#f1f5f9; color:#64748b; }
     .subh { font-weight:600; color:#334155; font-size:13.5px; margin:12px 0 6px; display:flex; align-items:center; gap:6px; }
     .tagd { font-size:11px; font-weight:500; background:#e0f2fe; color:#0c4a6e; border-radius:999px; padding:1px 8px; }
-    .rp-modal { display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:9999; align-items:center; justify-content:center; }
-    .rp-modal-box { background:#fff; border-radius:16px; padding:24px 22px 18px; max-width:440px; width:92%; box-shadow:0 20px 50px rgba(0,0,0,.3); text-align:center; }
-    .spin { width:44px; height:44px; margin:0 auto; border:4px solid #e0f2fe; border-top-color:#0284c7; border-radius:50%; animation:rp-sp .9s linear infinite; }
-    @keyframes rp-sp { to { transform:rotate(360deg); } }
-    .prog { height:8px; background:#e2e8f0; border-radius:999px; overflow:hidden; margin:12px 0 6px; }
-    .prog > div { height:100%; background:var(--brand); transition:width .3s; }
     @media print {
       .app-sidebar, .app-topbar, .app-backdrop, .app-help, .rp-bar, #rp-treecard, .no-print, h1, p.sub { display:none !important; }
       .app-content, .container, .rp-cols, .rp-card { all:unset; display:block; }
@@ -88,7 +83,6 @@
   </div>
 </div>
 
-<div class="rp-modal" id="rp-modal"><div class="rp-modal-box" id="rp-modal-box"></div></div>
 
 <script>
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -270,52 +264,11 @@ function wireGen(p) {
   if (b) b.addEventListener('click', () => startJob(TBASE + '/api/person-report/' + encodeURIComponent(p.user_id) + '/generate', 'สร้าง/อัปเดตรายงาน: ' + p.name));
 }
 
-// ---------- ป๊อปอัป "กำลังวิเคราะห์" (งานเบื้องหลัง + poll สถานะ) ----------
-function modal(html) { $('rp-modal-box').innerHTML = html; $('rp-modal').style.display = 'flex'; }
-function closeModal() { $('rp-modal').style.display = 'none'; }
-let polling = false;
-async function startJob(url, title) {
-  if (polling) return;
-  modal(`<div class="spin"></div><div style="margin-top:12px; font-weight:600;">กำลังเริ่ม…</div>`);
-  try {
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    const j = await r.json().catch(() => ({}));
-    if (r.status === 409) { pollJob(title); return; }
-    if (!r.ok) throw new Error(j.error || 'สั่งงานไม่สำเร็จ');
-    if (j.total === 0) { modal(`<div style="font-size:38px;">👍</div><div style="font-weight:600; margin:6px 0;">ทุกคนมีรายงานแล้ว</div><button onclick="closeModal()">ปิด</button>`); return; }
-    pollJob(title);
-  } catch (e) { modal(`<div style="font-size:38px;">⚠️</div><div style="font-weight:600; margin:6px 0;">${esc(e.message)}</div><button onclick="closeModal()">ปิด</button>`); }
-}
-function drawProgress(title, s) {
-  const pct = s.total ? Math.round((s.index / s.total) * 100) : 0;
-  modal(`<div class="spin"></div>
-    <div style="font-weight:600; color:#0f3d6b; font-size:16px; margin:12px 0 4px;">${esc(title)}</div>
-    <div class="muted" style="font-size:13px;">กำลังวิเคราะห์ <b>${Math.min(s.index + 1, s.total)}/${s.total}</b> · ${esc(s.current || '')}</div>
-    <div class="prog"><div style="width:${pct}%"></div></div>
-    <div class="muted" style="font-size:12px;">🧠 AI กำลังทำงานอยู่ — ปิดหน้านี้ได้ งานจะทำต่อเบื้องหลัง</div>`);
-}
-async function pollJob(title) {
-  polling = true;
-  let fails = 0;
-  const tick = async () => {
-    let s;
-    try { const r = await fetch(TBASE + '/api/report-job'); if (!r.ok) throw 0; s = await r.json(); fails = 0; }
-    catch (_) { if (++fails > 20) { polling = false; modal(`<div style="font-size:38px;">⚠️</div><div style="margin:6px 0;">เชื่อมต่อไม่สำเร็จ — งานอาจยังทำอยู่เบื้องหลัง ลองรีเฟรชภายหลัง</div><button onclick="closeModal()">ปิด</button>`); return; } setTimeout(tick, 3000); return; }
-    if (s.running) { drawProgress(title || 'กำลังวิเคราะห์', s); setTimeout(tick, 1500); return; }
-    polling = false;
-    const errs = (s.errors || []).length ? `<div style="text-align:left; font-size:12px; color:#b91c1c; margin:8px 0; max-height:140px; overflow:auto;">${s.errors.map(e => '• ' + esc(e)).join('<br>')}</div>` : '';
-    modal(`<div style="font-size:42px;">${s.failed ? '⚠️' : '✅'}</div><div style="font-weight:600; color:#0f3d6b; font-size:16px; margin:6px 0;">${s.failed ? 'เสร็จแล้ว (มีบางรายการไม่สำเร็จ)' : 'วิเคราะห์เสร็จแล้ว'}</div>
-      <div class="muted" style="font-size:13px;">สำเร็จ ${s.done} · ไม่สำเร็จ ${s.failed} · ทั้งหมด ${s.total}</div>${errs}
-      <button style="margin-top:12px;" onclick="closeModal()">ปิด</button>`);
-    loadTree(true);
-  };
-  tick();
-}
-// รีเฟรชระหว่างงานยังรันอยู่ → แสดงป๊อปอัปความคืบหน้าต่อ (แอดมินเท่านั้นที่สั่งงานได้)
-async function resumeIfRunning() {
-  if (!CAN_GEN) return;
-  try { const r = await fetch(TBASE + '/api/report-job'); if (!r.ok) return; const s = await r.json(); if (s.running && s.kind === 'person') pollJob('กำลังสร้างรายงานรายคน'); } catch (_) {}
-}
+// ---------- งานเบื้องหลัง: ป๊อปอัปความคืบหน้า + ซ่อนหน้าต่าง + ยกเลิก (public/report-job.js) ----------
+ReportJob.init({ unit: 'คน', kind: 'person', kindOnly: true, onDone: () => loadTree(true) });
+const startJob = (url, title) => ReportJob.start(url, {}, title);
+// รีเฟรชระหว่างงานยังรันอยู่ → แถบย่อด้านบน (แอดมินเท่านั้นที่สั่ง/ยกเลิกงานรายคนได้)
+async function resumeIfRunning() { if (CAN_GEN) ReportJob.resume(); }
 
 loadTree(false).then(resumeIfRunning);
 </script>
