@@ -181,8 +181,9 @@ async function loadReport() {
   if (!same(sc, CUR)) return;
   renderReport(j);
 }
+const noHr = s => String(s ?? '').split('\n').filter(l => !/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)).join('\n').trim();
 function secBlock(icon, title, body) {
-  return `<div class="sb"><div class="st">${esc(icon)} ${esc(title)}</div><div class="sc">${esc(body)}</div></div>`;
+  return `<div class="sb"><div class="st">${esc(icon)} ${esc(title)}</div><div class="sc">${esc(noHr(body))}</div></div>`;
 }
 function scheduleTable(rows, n) {
   if (!rows.length) return '<p class="muted" style="font-size:13px;">(ยังไม่มีข้อมูลตารางงาน)</p>';

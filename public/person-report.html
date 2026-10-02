@@ -184,7 +184,9 @@ async function loadPerson(uid) {
   if (uid !== CUR) return;
   renderPerson(j);
 }
-function topic(n, content) { return `<div class="topic"><div class="tt"><span class="tn">${n}</span>${esc(TOPICS[n - 1])}</div><div class="tc">${esc(content || '-')}</div></div>`; }
+// ตัดเส้นคั่น markdown (---) ที่ติดมากับเอกสารเดิม — รวมรายงานที่สร้างไว้ก่อนแก้
+const noHr = s => String(s ?? '').split('\n').filter(l => !/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)).join('\n').trim();
+function topic(n, content) { return `<div class="topic"><div class="tt"><span class="tn">${n}</span>${esc(TOPICS[n - 1])}</div><div class="tc">${esc(noHr(content) || '-')}</div></div>`; }
 function tableTopic(n, cols, rows, firstShade) {
   const body = rows.length ? rows.map(r => '<tr>' + r.map((c, i) => `<td${firstShade && i === 0 && !DAYS.includes(r[0]) ? ' class="per"' : ''}>${i === 0 && firstShade ? '<b>' + esc(c || '-') + '</b>' : esc(c || '-')}</td>`).join('') + '</tr>').join('')
     : `<tr><td colspan="${cols.length}" class="muted">(ยังไม่มีข้อมูล)</td></tr>`;

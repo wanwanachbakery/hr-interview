@@ -3387,7 +3387,7 @@ function labelVal(lines, label) {
 // ล้าง markdown ของเนื้อหา body → ข้อความอ่านง่าย (บุลเล็ต → •)
 function cleanBody(body) {
   return String(body || '').replace(/\r/g, '').split('\n')
-    .filter(l => l.trim() && !/^>\s?/.test(l))
+    .filter(l => l.trim() && !/^>\s?/.test(l) && !/^\s*([-*_])(\s*\1){2,}\s*$/.test(l))   // ตัดเส้นคั่น --- / *** / ___ ของ markdown
     .map(l => l.replace(/^#{1,6}\s+/, '').replace(/^\s*[-*]\s+/, '• ').replace(/\*\*/g, '').replace(/`/g, '').trim())
     .join('\n');
 }
