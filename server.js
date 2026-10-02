@@ -3545,7 +3545,10 @@ tenantRouter.get('/api/report/person/:userId/excel', async (req, res) => {
   const { target, err } = resolveWorklogTarget(req);
   if (err) return res.status(err).send(err === 404 ? 'not found' : 'forbidden');
   try {
-    const data = gatherPersonProfile(ctxDb(), target);
+    const db = ctxDb();
+    const data = gatherPersonProfile(db, target);
+    const pr = readPersonReport(db, target.id);          // v1.17: ข้อ 10 = ตารางงาน (ถ้าสร้างรายงานรายคนแล้ว)
+    if (pr && Array.isArray(pr.schedule)) data.schedule = pr.schedule;
     const wb = xlsxReport.personProfileWorkbook(data);
     sendXlsx(res, `วิเคราะห์-${safeFileName(target.name) || target.id}.xlsx`, await xlsxReport.workbookBuffer(wb));
   } catch (e) { console.error('[report/person]', e.message); res.status(500).send('สร้างไฟล์ไม่สำเร็จ'); }
@@ -3577,6 +3580,8 @@ tenantRouter.get('/api/report/group/zip', requireRoles('admin', 'executive'), as
     const used = {};
     for (const u of people) {
       const data = gatherPersonProfile(db, u);
+      const pr = readPersonReport(db, u.id);
+      if (pr && Array.isArray(pr.schedule)) data.schedule = pr.schedule;
       const wb = xlsxReport.personProfileWorkbook(data);
       const buf = await xlsxReport.workbookBuffer(wb);
       let base = safeFileName(u.name) || u.id;
@@ -3594,6 +3599,847 @@ tenantRouter.get('/api/report/group/zip', requireRoles('admin', 'executive'), as
     res.setHeader('Content-Disposition', csv.contentDisposition(`วิเคราะห์-${safeFileName(gname || id)}.zip`, 'report.zip'));
     res.send(zbuf);
   } catch (e) { console.error('[report/group/zip]', e.message); res.status(500).send('สร้างไฟล์ไม่สำเร็จ'); }
+});
+
+// ============================================================
+// v1.17 — หน้า "รายงานรายคน" + "รายงานภาพรวม" (แทนหน้า /company-report เดิม)
+//   รายงานรายคน   = ข้อมูลอ้างอิงรายคน 13 หัวข้อ (snapshot) + ตารางงานที่ AI อนุมานจากบันทึกงานจริง
+//   รายงานภาพรวม = AI วิเคราะห์ทิศทาง บริษัท/ฝ่าย/แผนก (10 ส่วน) + วิเคราะห์ตำแหน่ง (ไม่อิงชื่อคน)
+// ไฟล์: <cmpOutDir>/reports/person/<userId>.json · <cmpOutDir>/reports/overview/<base>.json
+//       เวอร์ชันเก่า → <...>/_history/<key>/<stamp>.json (เก็บก่อนเขียนทับทุกครั้ง)
+// ใช้ id เป็น key เสมอ (ไม่ใช้ชื่อ) · งาน AI รันเบื้องหลังทีละรายการ (1 งานต่อบริษัท)
+// ============================================================
+const RPT_DAYS = 90;                                   // ช่วงบันทึกงานย้อนหลังที่ใช้วิเคราะห์
+const RPT_HEAD_ROLES = ['admin', 'executive', 'manager', 'division_head', 'section_head', 'supervisor'];
+const SCHED_DAYS = ['จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์', 'อาทิตย์'];
+const SCHED_PERIODS = ['ทุกวันทำงาน', ...SCHED_DAYS, 'รายสัปดาห์', 'รายเดือน', 'รายไตรมาส', 'รายปี'];
+const TH_DOW = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];   // index = Date#getDay()
+const rptKey = (s) => String(s || '').replace(/[^A-Za-z0-9_]/g, '');
+const rptDir = (db, ...p) => path.join(db.cmpOutDir, 'reports', ...p);
+const rptTrunc = (s, n) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
+const rptActor = (req) => ({ name: (req.session && req.session.name) || 'แอดมิน', role: (req.session && req.session.role) || '' });
+
+function rptRange() {
+  const to = todayLocal();
+  const d = new Date(to + 'T00:00:00'); d.setDate(d.getDate() - (RPT_DAYS - 1));
+  const p = (n) => String(n).padStart(2, '0');
+  return { from: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`, to };
+}
+// เก็บไฟล์ปัจจุบันเป็นเวอร์ชันเก่าก่อนเขียนทับ
+function rptArchive(file, histDir) {
+  try {
+    if (!fs.existsSync(file)) return;
+    fs.mkdirSync(histDir, { recursive: true });
+    fs.copyFileSync(file, path.join(histDir, archiveStamp() + '.json'));
+  } catch (e) { console.error('[report] archive:', e.message); }
+}
+
+// ---------- ลายเซ็นข้อมูลรายคน — ใช้เช็ค "ข้อมูลเปลี่ยน" / รายงานล้าสมัย ----------
+// เปลี่ยนเมื่อ: สัมภาษณ์เสร็จใหม่ · เอกสาร JD สร้างใหม่ · มี/แก้บันทึกงาน · ย้ายฝ่าย/แผนก/ตำแหน่ง
+function rptSigCtx(db) {
+  const empByUser = {};
+  for (const e of db.employees()) {
+    if (!e.user_id) continue;
+    const cur = empByUser[e.user_id];
+    if (!cur || (cur.archived && !e.archived)) empByUser[e.user_id] = e;
+  }
+  return { db, empByUser, memo: {} };
+}
+function rptUserSig(ctx, u) {
+  if (ctx.memo[u.id]) return ctx.memo[u.id];
+  const db = ctx.db, emp = ctx.empByUser[u.id];
+  let docM = 0, n = 0, last = '', maxM = 0;
+  if (emp) { try { docM = Math.round(fs.statSync(path.join(db.outDir, rptKey(emp.id), 'job-description.md')).mtimeMs); } catch (_) {} }
+  try {
+    // saveWorklog เขียนแบบ temp+rename → mtime ของโฟลเดอร์เปลี่ยนทุกครั้งที่บันทึก (ไม่ต้อง stat ทีละไฟล์)
+    const wd = path.join(db.dir, 'worklogs', rptKey(u.id));
+    maxM = fs.statSync(wd).mtimeMs;
+    for (const f of fs.readdirSync(wd)) {
+      if (!/^\d{4}-\d{2}-\d{2}\.json$/.test(f)) continue;
+      n++; if (f > last) last = f;
+    }
+  } catch (_) {}
+  const sig = [emp ? (emp.completedAt || '') : '', docM, n, last, Math.round(maxM),
+    u.division_id || '', u.section_id || '', u.position_id || ''].join('|');
+  return (ctx.memo[u.id] = sig);
+}
+
+// ---------- ต้นไม้องค์กร ฝ่าย → แผนก → ตำแหน่ง → คน (มีกลุ่ม "ยังไม่ระบุ") ----------
+function rptOrgTree(db, users) {
+  const divs = db.divisions(), secs = db.sections(), poss = db.positions();
+  const divIdx = Object.fromEntries(divs.map((d, i) => [d.id, i]));
+  const secIdx = Object.fromEntries(secs.map((s, i) => [s.id, i]));
+  const posIdx = Object.fromEntries(poss.map((p, i) => [p.id, i]));
+  const D = {};
+  for (const u of users) {
+    const dId = (u.division_id && divIdx[u.division_id] != null) ? u.division_id : '_none';
+    const dn = D[dId] || (D[dId] = { id: dId, none: dId === '_none', name: dId === '_none' ? 'ยังไม่ระบุฝ่าย' : divs[divIdx[dId]].name, S: {} });
+    const sReal = u.section_id && secIdx[u.section_id] != null;
+    const sId = sReal ? u.section_id : '_none_' + rptKey(dId);
+    const sn = dn.S[sId] || (dn.S[sId] = { id: sId, none: !sReal, name: sReal ? secs[secIdx[sId]].name : 'ยังไม่ระบุแผนก', P: {} });
+    const pReal = u.position_id && posIdx[u.position_id] != null;
+    const pId = pReal ? u.position_id : '_none_' + rptKey(sId);
+    const pn = sn.P[pId] || (sn.P[pId] = { id: pId, none: !pReal, name: pReal ? poss[posIdx[pId]].name : 'ยังไม่ระบุตำแหน่ง', people: [] });
+    pn.people.push(u);
+  }
+  const ord = (idx) => (a, b) => (a.none - b.none) || ((idx[a.id] ?? 1e9) - (idx[b.id] ?? 1e9));
+  return Object.values(D).sort(ord(divIdx)).map(d => ({
+    id: d.id, name: d.name, none: d.none,
+    sections: Object.values(d.S).sort(ord(secIdx)).map(s => ({
+      id: s.id, name: s.name, none: s.none,
+      positions: Object.values(s.P).sort(ord(posIdx)).map(p => ({
+        id: p.id, name: p.name, none: p.none,
+        people: p.people.slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'th')),
+      })),
+    })),
+  }));
+}
+
+// ---------- รายงานรายคน ----------
+const personReportPath = (db, uid) => rptDir(db, 'person', rptKey(uid) + '.json');
+const readPersonReport = (db, uid) => readJson(personReportPath(db, uid), null);
+function activeEmpOf(db, uid) {
+  const emps = db.employees();
+  return emps.find(e => e.user_id === uid && !e.archived) || emps.find(e => e.user_id === uid) || null;
+}
+
+// อ่านบันทึกงานจริง 90 วัน → รูปแบบงานแยกตามวันในสัปดาห์ + งานต้น/ปลายเดือน + กะที่ลง
+function worklogPatterns(db, user) {
+  const range = rptRange();
+  const shiftMap = Object.fromEntries((db.shifts() || []).map(s => [s.id, s]));
+  const sched = db.loadSchedule(user.id) || {};
+  const byDow = {}, edge = { start: {}, end: {} }, shiftUse = {}, taskDays = {};
+  let daysLogged = 0, tasks = 0, hours = 0;
+  for (const ds of worklogDateRange(range.from, range.to)) {
+    const wl = db.loadWorklog(user.id, ds);
+    if (!wl || !Array.isArray(wl.entries)) continue;
+    const f = wl.entries.filter(e => e && e.task && String(e.task).trim());
+    if (!f.length) continue;
+    daysLogged++;
+    const D = byDow[dowOf(ds)] || (byDow[dowOf(ds)] = { days: 0, tasks: {} });
+    D.days++;
+    const y = Number(ds.slice(0, 4)), m = Number(ds.slice(5, 7)), dom = Number(ds.slice(8, 10));
+    const dim = new Date(y, m, 0).getDate();
+    const hrs = new Set();
+    for (const e of f) {
+      tasks++;
+      const h = Number(e.hour);
+      if (Number.isFinite(h)) hrs.add(h);
+      const label = String(e.task).trim().replace(/\s+/g, ' ').slice(0, 80);
+      const key = label.toLowerCase();
+      const T = D.tasks[key] || (D.tasks[key] = { label, days: new Set(), minH: 99, maxH: -1, recurring: false, cat: '' });
+      T.days.add(ds);
+      if (Number.isFinite(h)) { T.minH = Math.min(T.minH, h); T.maxH = Math.max(T.maxH, h); }
+      if (e.recurring) T.recurring = true;
+      if (!T.cat && e.category) T.cat = String(e.category);
+      (taskDays[key] || (taskDays[key] = new Set())).add(ds);
+      const bucket = dom <= 5 ? edge.start : (dom > dim - 5 ? edge.end : null);
+      if (bucket) (bucket[key] || (bucket[key] = { key, label, months: new Set() })).months.add(ds.slice(0, 7));
+    }
+    hours += hrs.size;
+    const sh = shiftMap[sched[ds]];
+    if (sh) shiftUse[sh.name] = (shiftUse[sh.name] || 0) + 1;
+  }
+  return { range, daysLogged, tasks, hours, byDow, edge, shiftUse, taskDays };
+}
+function patternTime(T) {
+  const p = (n) => String(n).padStart(2, '0');
+  return T.maxH >= 0 ? `${p(T.minH)}:00–${p((T.maxH + 1) % 24)}:00` : '-';
+}
+// งานที่ซ้ำช่วงต้น/ปลายเดือน ≥ 2 เดือน และไม่ได้ทำทุกวัน = งานรายเดือน
+function monthlyCandidates(pt, bucket) {
+  return Object.values(bucket)
+    .filter(x => x.months.size >= 2 && (pt.taskDays[x.key] ? pt.taskDays[x.key].size : 0) <= x.months.size * 3)
+    .sort((a, b) => b.months.size - a.months.size).slice(0, 4);
+}
+function patternsText(pt) {
+  if (!pt.daysLogged) return `บันทึกงานจริง (${pt.range.from} ถึง ${pt.range.to}): ยังไม่มีบันทึก`;
+  const L = [`บันทึกงานจริง ${pt.range.from} ถึง ${pt.range.to}: มีบันทึก ${pt.daysLogged} วัน · ${pt.hours} ชั่วโมง · ${pt.tasks} รายการงาน`];
+  const sh = Object.entries(pt.shiftUse);
+  if (sh.length) L.push('กะที่ลงในช่วงนี้: ' + sh.map(([n, c]) => `${n} ${c} วัน`).join(', '));
+  for (const dow of [1, 2, 3, 4, 5, 6, 0]) {
+    const D = pt.byDow[dow];
+    if (!D) continue;
+    const top = Object.values(D.tasks).sort((a, b) => b.days.size - a.days.size || a.minH - b.minH).slice(0, 10);
+    L.push(`วัน${TH_DOW[dow]} (มีบันทึก ${D.days} วัน): ` + top.map(t =>
+      `${t.label} [${t.days.size} วัน, ~${patternTime(t)}${t.recurring ? ', งานประจำ' : ''}${t.cat ? ', หมวด ' + t.cat : ''}]`).join(' ; '));
+  }
+  const ms = monthlyCandidates(pt, pt.edge.start), me = monthlyCandidates(pt, pt.edge.end);
+  if (ms.length) L.push('งานที่พบซ้ำช่วงต้นเดือน (วันที่ 1–5): ' + ms.map(x => `${x.label} (${x.months.size} เดือน)`).join(', '));
+  if (me.length) L.push('งานที่พบซ้ำช่วงปลายเดือน (5 วันสุดท้าย): ' + me.map(x => `${x.label} (${x.months.size} เดือน)`).join(', '));
+  return L.join('\n');
+}
+// ตารางงานแบบไม่ใช้ AI (fallback) — จากบันทึกจริง + คำสัมภาษณ์
+function mechanicalSchedule(pt, iv) {
+  const rows = [];
+  for (const dow of [1, 2, 3, 4, 5, 6, 0]) {
+    const D = pt.byDow[dow];
+    if (!D) continue;
+    // งานที่ "เฉพาะวันนี้" (เช่น ประชุมทุกศุกร์) มาก่อน แล้วตามด้วยงานที่ทำบ่อย · ได้ไม่เกิน 5 งาน เรียงตามเวลา
+    const spec = (t) => t.days.size / Math.max(1, (pt.taskDays[t.label.toLowerCase()] || t.days).size);
+    const all = Object.values(D.tasks);
+    let list = all.filter(t => t.days.size >= Math.max(2, Math.ceil(D.days * 0.3)));
+    if (!list.length) list = all.slice().sort((a, b) => b.days.size - a.days.size).slice(0, 3);
+    list = list.sort((a, b) => (spec(b) - spec(a)) || (b.days.size - a.days.size)).slice(0, 5).sort((a, b) => a.minH - b.minH);
+    for (const t of list) rows.push([TH_DOW[dow], patternTime(t), t.label, '-', `จากบันทึกจริง (${t.days.size}/${D.days} วัน)${t.recurring ? ' · งานประจำ' : ''}`]);
+  }
+  for (const x of monthlyCandidates(pt, pt.edge.start)) rows.push(['รายเดือน', 'ต้นเดือน', x.label, '-', `จากบันทึกจริง (${x.months.size} เดือน)`]);
+  for (const x of monthlyCandidates(pt, pt.edge.end)) rows.push(['รายเดือน', 'สิ้นเดือน', x.label, '-', `จากบันทึกจริง (${x.months.size} เดือน)`]);
+  if (!pt.daysLogged && iv) for (const [t, task] of interviewWorkflow(iv)) rows.push(['ทุกวันทำงาน', t, rptTrunc(task, 200), '-', 'จากการสัมภาษณ์']);
+  const weekly = iv ? ivAnswer(iv, 'weekly_tasks') : '';
+  if (weekly) rows.push(['รายสัปดาห์', '-', rptTrunc(weekly, 200), '-', 'จากการสัมภาษณ์ (งานรายสัปดาห์/รายเดือน)']);
+  return rows;
+}
+function normPeriod(s) {
+  let p = String(s || '').replace(/\*\*/g, '').trim().replace(/^วัน(?=[ก-๙])/, '');
+  if (p === 'พฤหัส') p = 'พฤหัสบดี';
+  return SCHED_PERIODS.includes(p) ? p : null;
+}
+// แปลงคำตอบ AI แบบ "a | b | c" → แถวตาราง (ข้ามหัวตาราง/เส้นคั่น/บรรทัดอื่น)
+function parsePipeRows(text, nCols) {
+  const out = [];
+  for (let ln of String(text || '').replace(/\r/g, '').split('\n')) {
+    ln = ln.trim();
+    if (!ln.includes('|')) continue;
+    const cells = ln.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.replace(/\*\*/g, '').trim());
+    if (cells.length < nCols - 1) continue;
+    const period = normPeriod(cells[0]);
+    if (!period) continue;
+    while (cells.length < nCols) cells.push('');
+    out.push([period, ...cells.slice(1, nCols)].map(c => String(c).slice(0, 300)));
+    if (out.length >= 80) break;
+  }
+  return out;
+}
+function sortSchedRows(rows) {
+  return rows.map((r, i) => [r, i])
+    .sort((a, b) => (SCHED_PERIODS.indexOf(a[0][0]) - SCHED_PERIODS.indexOf(b[0][0])) || (a[1] - b[1]))
+    .map(x => x[0]);
+}
+function personScheduleContext(prof, iv, pt) {
+  const L = [`วันที่จัดทำ: ${todayLocal()}`,
+    `ตำแหน่ง: ${prof.position || '-'} — ${[prof.division, prof.section].filter(Boolean).join(' / ') || '-'}`];
+  if (iv) {
+    const role = ivAnswer(iv, 'warmup');
+    if (role) L.push('บทบาท (จากสัมภาษณ์): ' + rptTrunc(role, 400));
+    const wf = interviewWorkflow(iv);
+    if (wf.length) L.push('งานรายวันที่เล่าตอนสัมภาษณ์: ' + wf.map(w => `${w[0]} ${rptTrunc(w[1], 120)}`).join(' ; '));
+    const weekly = ivAnswer(iv, 'weekly_tasks');
+    if (weekly) L.push('งานรายสัปดาห์/รายเดือน (จากสัมภาษณ์): ' + rptTrunc(weekly, 500));
+  }
+  const main = (prof.profile[2] || [])[1];
+  if (main && main !== '-') L.push('หน้าที่หลัก: ' + rptTrunc(main, 800));
+  L.push('', patternsText(pt));
+  return L.join('\n');
+}
+// สร้าง/อัปเดตรายงานรายคน 1 คน (เรียกจาก job เบื้องหลัง — db ต้องเป็นตัวจริงที่จับไว้ก่อน)
+async function generatePersonReport(db, user, actor) {
+  const emp = activeEmpOf(db, user.id);
+  const iv = emp ? db.loadInterview(emp.id) : null;
+  const hasIv = !!(iv && iv.finishedAt);
+  const pt = worklogPatterns(db, user);
+  if (!hasIv && !pt.daysLogged) throw new Error('ยังไม่มีข้อมูลสัมภาษณ์หรือบันทึกงานให้วิเคราะห์');
+  const prof = gatherPersonProfile(db, user);
+  let schedule = null, model = null;
+  if (claudeOnForTenant(db)) {
+    try {
+      let used = null;
+      const text = await claude.inferSchedule(personScheduleContext(prof, hasIv ? iv : null, pt), {
+        label: user.name,
+        onUsage: (rec) => { used = rec.model || 'Claude'; recordClaudeUsage(db, { kind: 'person-schedule', label: `ตารางงาน ${user.name}`, ...rec }); },
+      });
+      const rows = parsePipeRows(text, 5);
+      if (rows.length) { schedule = sortSchedRows(rows); model = used; }
+    } catch (e) { console.error('[person-report] AI schedule fell back:', e.message); }
+  }
+  if (!schedule) schedule = sortSchedRows(mechanicalSchedule(pt, hasIv ? iv : null));
+  const rep = {
+    user_id: user.id, at: new Date().toISOString(), by: actor || null,
+    model, source: model ? 'ai' : 'template', version: APP_VERSION,
+    sig: rptUserSig(rptSigCtx(db), user), hasInterview: hasIv,
+    worklog: { from: pt.range.from, to: pt.range.to, days: pt.daysLogged, hours: pt.hours, tasks: pt.tasks },
+    snapshot: { position: prof.position, division: prof.division, section: prof.section, profile: prof.profile,
+      kpis: prof.kpis, opt: prof.opt, problems: prof.problems, voice: prof.voice, ai: prof.ai },
+    schedule,
+  };
+  const file = personReportPath(db, user.id);
+  rptArchive(file, rptDir(db, 'person', '_history', rptKey(user.id)));
+  writeJson(file, rep);
+  return rep;
+}
+
+// ---------- รายงานภาพรวม: ขอบเขต + ข้อมูลรายคน (cache ต่อ 1 งาน) ----------
+const OV_LEVELS = ['company', 'division', 'section', 'position'];
+const ovBase = (level, id) => level === 'company' ? 'company' : scopeFileBase(level, id);
+const ovPath = (db, level, id) => rptDir(db, 'overview', ovBase(level, id) + '.json');
+// ขอบเขตที่วิเคราะห์ได้ทั้งหมด (ไม่รวมกลุ่ม "ยังไม่ระบุ" — แต่คนกลุ่มนั้นยังนับรวมในทั้งบริษัท)
+function ovScopes(db) {
+  const users = db.users().filter(u => u.role !== 'admin');
+  const tree = rptOrgTree(db, users);
+  const out = [{ level: 'company', id: '', title: 'ทั้งบริษัท', name: 'ทั้งบริษัท', users }];
+  const seenPos = new Set();
+  for (const d of tree) {
+    if (d.none) continue;
+    out.push({ level: 'division', id: d.id, name: d.name, title: 'ฝ่าย: ' + d.name, users: d.sections.flatMap(s => s.positions.flatMap(p => p.people)) });
+    for (const s of d.sections) {
+      if (s.none) continue;
+      out.push({ level: 'section', id: s.id, name: s.name, title: 'แผนก: ' + s.name, users: s.positions.flatMap(p => p.people) });
+      for (const p of s.positions) {
+        if (p.none || seenPos.has(p.id)) continue;
+        seenPos.add(p.id);
+        out.push({ level: 'position', id: p.id, name: p.name, sectionName: s.name, title: `ตำแหน่ง: ${p.name} (${s.name})`, users: users.filter(u => u.position_id === p.id) });
+      }
+    }
+  }
+  return out;
+}
+function ovFindScope(db, level, id) {
+  if (!OV_LEVELS.includes(level)) return null;
+  return ovScopes(db).find(s => s.level === level && (level === 'company' || s.id === id)) || null;
+}
+function ovMember(db, u, cache) {
+  if (cache && cache.members.has(u.id)) return cache.members.get(u.id);
+  const range = rptRange();
+  const wr = computeWorklogReportFor(db, { fromRaw: range.from, toRaw: range.to, userFilter: x => x.id === u.id });
+  const sum = summarizeUserWorklog(db, u.id, range.to, RPT_DAYS);
+  const pr = readPersonReport(db, u.id);
+  const d = {
+    u, prof: gatherPersonProfile(db, u), m: (wr.members || [])[0] || {},
+    cats: wr.byCategory || [], recurringPct: (wr.totals || {}).recurringPct || 0,
+    tasks: sum ? sum.totalFilled : 0, wlText: sum ? sum.text : '',
+    schedule: (pr && Array.isArray(pr.schedule)) ? pr.schedule : null,
+  };
+  if (cache) cache.members.set(u.id, d);
+  return d;
+}
+function wlLine(d) {
+  const m = d.m;
+  if (!m.daysLogged) return `ภาระงานจริง (${RPT_DAYS} วัน): ยังไม่มีบันทึกงาน`;
+  const tph = m.filledHours ? d.tasks / m.filledHours : 0;
+  return `ภาระงานจริง (${RPT_DAYS} วัน): บันทึก ${m.loggedDays}/${m.expectedDays} วันทำงาน (ขาดบันทึก ${m.missingDays} วัน) · ${m.filledHours} ชม. · ความครบเฉลี่ย ${m.avgCompleteness}% · ${d.tasks} รายการงาน (~${tph.toFixed(1)} งาน/ชม.) · งานประจำ ${d.recurringPct}%`;
+}
+function scopeAggregate(members) {
+  let hours = 0, tasks = 0, logged = 0, sumComp = 0, expDays = 0, missDays = 0;
+  const cats = {};
+  for (const d of members) {
+    hours += d.m.filledHours || 0; tasks += d.tasks || 0;
+    expDays += d.m.expectedDays || 0; missDays += d.m.missingDays || 0;
+    if (d.m.daysLogged) { logged++; sumComp += d.m.avgCompleteness || 0; }
+    for (const c of d.cats) cats[c.category] = (cats[c.category] || 0) + c.count;
+  }
+  const totCat = Object.values(cats).reduce((a, b) => a + b, 0);
+  const topCats = Object.entries(cats).sort((a, b) => b[1] - a[1]).slice(0, 6)
+    .map(([c, n]) => `${c} ${totCat ? Math.round(n / totCat * 100) : 0}%`);
+  return { hours, tasks, logged, people: members.length, avgComp: logged ? Math.round(sumComp / logged) : 0, expDays, missDays, topCats };
+}
+// กำลังคนเบื้องต้นจากภาระงานจริง (AI ใช้เป็นฐาน + เป็น fallback เมื่อไม่ใช้ AI)
+function staffingBaseline(members) {
+  const cur = members.length;
+  const L = members.filter(d => d.m.daysLogged > 0);
+  if (!L.length) return { current: cur, recommended: Math.max(1, cur), level: 'unknown', reason: 'ยังไม่มีบันทึกงานพอจะประเมินภาระงาน — คงจำนวนคนตามปัจจุบันไว้ก่อน และให้บันทึกงานต่อเนื่องอย่างน้อย 1 เดือน' };
+  const hours = L.reduce((a, d) => a + (d.m.filledHours || 0), 0);
+  const tasks = L.reduce((a, d) => a + (d.tasks || 0), 0);
+  const comp = Math.round(L.reduce((a, d) => a + (d.m.avgCompleteness || 0), 0) / L.length);
+  const exp = members.reduce((a, d) => a + (d.m.expectedDays || 0), 0);
+  const miss = members.reduce((a, d) => a + (d.m.missingDays || 0), 0);
+  const tph = hours ? tasks / hours : 0, missRate = exp ? miss / exp : 0;
+  const facts = `ความครบเฉลี่ย ${comp}% · ~${tph.toFixed(1)} งาน/ชม. · ขาดบันทึก ${Math.round(missRate * 100)}% ของวันทำงาน`;
+  if (comp >= 90 && tph >= 2.5) return { current: cur, recommended: cur + 2, level: 'heavy', reason: `งานแน่นมาก (${facts}) — ชั่วโมงเต็มเกือบทุกวันและทำหลายงานซ้อนในชั่วโมงเดียว ควรเพิ่มคนหรือลดงานซ้ำด้วยระบบ` };
+  if (comp >= 85 && tph >= 1.6) return { current: cur, recommended: cur + 1, level: 'heavy', reason: `งานค่อนข้างเยอะ (${facts}) — แนะนำเพิ่ม 1 คน หรือย้ายงานซ้ำไปทำแบบอัตโนมัติ` };
+  if (missRate > 0.3) return { current: cur, recommended: Math.max(1, cur), level: 'unknown', reason: `ข้อมูลบันทึกงานยังไม่ครบ (${facts}) — ยังประเมินภาระงานได้ไม่แม่น คงจำนวนเดิมไว้ก่อน` };
+  if (cur >= 2 && comp < 55 && tph < 1.2) return { current: cur, recommended: cur - 1, level: 'light', reason: `ภาระงานต่อคนไม่มาก (${facts}) — อาจรวมงานให้ใช้ ${cur - 1} คน หรือมอบหมายงานอื่นเพิ่ม` };
+  return { current: cur, recommended: Math.max(1, cur), level: 'ok', reason: `ภาระงานเหมาะกับจำนวนคนปัจจุบัน (${facts})` };
+}
+const pf = (prof, i) => { const v = (prof.profile[i] || [])[1]; return v && v !== '-' ? v : ''; };
+function scopeContext(sc, members) {
+  const agg = scopeAggregate(members);
+  const tally = {};
+  for (const d of members) { const k = d.prof.position || 'ไม่ระบุตำแหน่ง'; tally[k] = (tally[k] || 0) + 1; }
+  const L = [`วันที่จัดทำ: ${todayLocal()}`, `ขอบเขต: ${sc.title} · พนักงาน ${members.length} คน`,
+    'ตำแหน่งในกลุ่ม: ' + Object.entries(tally).map(([k, n]) => `${k} ${n} คน`).join(', '),
+    `ภาระงานรวม ${RPT_DAYS} วัน: บันทึก ${agg.hours} ชม. · ${agg.tasks} รายการงาน · มีบันทึก ${agg.logged}/${agg.people} คน · ความครบเฉลี่ย ${agg.avgComp}% · ขาดบันทึก ${agg.missDays}/${agg.expDays} วันทำงาน`];
+  if (agg.topCats.length) L.push('สัดส่วนหมวดงาน: ' + agg.topCats.join(', '));
+  L.push('');
+  members.forEach((d, i) => {
+    const p = d.prof;
+    L.push(`=== [${i + 1}] ${p.name} — ${p.position || '-'} (${[p.division, p.section].filter(Boolean).join(' / ') || '-'}) ===`);
+    if (pf(p, 1)) L.push('บทบาท: ' + rptTrunc(pf(p, 1), 300));
+    if (pf(p, 2)) L.push('หน้าที่หลัก: ' + rptTrunc(pf(p, 2), 400));
+    if (pf(p, 4)) L.push('เครื่องมือ: ' + rptTrunc(pf(p, 4), 200));
+    if (pf(p, 5)) L.push('ประสานงาน: ' + rptTrunc(pf(p, 5), 200));
+    if (p.problems.length) L.push('ปัญหา/คอขวด: ' + p.problems.map(x => rptTrunc(x[1], 250)).join(' / '));
+    if (p.opt.length) L.push('ข้อเสนอเดิม: ' + p.opt.slice(0, 5).map(o => rptTrunc(o[2] || o[1], 160)).join(' / '));
+    if (p.ai.length) L.push('อยากให้ AI ช่วย: ' + p.ai.map(a => rptTrunc(a, 120)).join(' / '));
+    if (p.voice) L.push('ตัวชี้วัดที่พนักงานรู้สึก: ' + rptTrunc(p.voice, 200));
+    L.push(wlLine(d));
+    if (d.wlText) L.push(d.wlText);
+    L.push('');
+  });
+  return L.join('\n');
+}
+function positionContext(sc, members, base) {
+  const L = [`วันที่จัดทำ: ${todayLocal()}`, `ตำแหน่ง: ${sc.name} (แผนก ${sc.sectionName || '-'}) · ปัจจุบันมี ${members.length} คน`,
+    `ค่าแนะนำเบื้องต้นจากสูตร (อิงภาระงานจริง): ${base.recommended} คน — ${base.reason}`, ''];
+  members.forEach((d, i) => {
+    const p = d.prof;
+    L.push(`=== คนที่ ${i + 1} ===`);
+    if (pf(p, 2)) L.push('หน้าที่หลัก: ' + rptTrunc(pf(p, 2), 500));
+    if (pf(p, 3)) L.push('หน้าที่รอง: ' + rptTrunc(pf(p, 3), 300));
+    if (pf(p, 4)) L.push('เครื่องมือ: ' + rptTrunc(pf(p, 4), 250));
+    if (pf(p, 6)) L.push('คุณสมบัติที่สังเกตได้: ' + rptTrunc(pf(p, 6), 250));
+    if (p.kpis.length) L.push('KPI เดิม: ' + p.kpis.map(k => rptTrunc(k[0], 80)).join(' / '));
+    if (p.problems.length) L.push('ปัญหา/คอขวด: ' + p.problems.map(x => rptTrunc(x[1], 250)).join(' / '));
+    if (p.opt.length) L.push('ข้อเสนอเดิม: ' + p.opt.slice(0, 5).map(o => rptTrunc(o[2] || o[1], 160)).join(' / '));
+    if (p.ai.length) L.push('อยากให้ AI ช่วย: ' + p.ai.map(a => rptTrunc(a, 120)).join(' / '));
+    L.push(wlLine(d));
+    if (d.wlText) L.push(d.wlText.replace(/ของพนักงาน/, ''));
+    if (d.schedule && d.schedule.length) L.push('ตารางงานจริงของคนนี้: ' + d.schedule.slice(0, 30).map(r => `${r[0]} ${r[1]} ${r[2]}`).join(' ; '));
+    L.push('');
+  });
+  return L.join('\n');
+}
+
+// ---------- แปลงผล AI → โครงสร้างที่หน้าเว็บ/Excel ใช้ ----------
+const SCOPE_SECTIONS = [
+  ['🎯', 'ทิศทางที่ควรเป็น', /ทิศทาง/], ['💪', 'จุดแข็งที่ควรต่อยอด', /จุดแข็ง/],
+  ['⚠️', 'ปัญหา/คอขวดหลัก', /ปัญหา|คอขวด/], ['🚀', 'โอกาสพัฒนา & การนำ AI มาช่วย', /โอกาส/],
+  ['🗺️', 'Roadmap 3–6 เดือน', /roadmap/i], ['🛡️', 'ความเสี่ยง/ข้อควรระวัง', /เสี่ยง/],
+  ['📊', 'ภาระงาน & กำลังคน', /ภาระ|กำลังคน/], ['🎓', 'ทักษะที่ขาด & แผนอบรม', /ทักษะ|อบรม/],
+  ['✂️', 'งานที่ควรลด/รวม/โอน', /ลด|โอน/], ['✅', 'สิ่งที่ต้องทำใน 30 วันแรก', /30/],
+];
+const POS_SECTIONS = [
+  ['👥', 'กำลังคนที่แนะนำ', /กำลังคน|จำนวนคน/], ['📌', 'หน้าที่ของตำแหน่งนี้', /หน้าที่/],
+  ['🛠️', 'เครื่องมือ/ทักษะที่ต้องมี', /เครื่องมือ|ทักษะ/], ['✅', 'สิ่งที่ควรทำ / ปรับปรุง', /ควรทำ|ปรับปรุง/],
+  ['📏', 'KPI ที่ควรวัด', /kpi|ตัวชี้วัด/i], ['⚠️', 'ปัญหา/คอขวดที่ต้องจัดการ', /ปัญหา|คอขวด/],
+  ['📅', 'ตารางงานที่แนะนำ', /ตาราง/],
+];
+// จับคู่หัวข้อ ## ของ AI กับโครงที่กำหนด (ตรงชื่อก่อน → คำสำคัญ) · หัวข้อที่ขาด = "(ข้อมูลไม่เพียงพอ)"
+function mapMdSections(md, defs) {
+  const secs = mdSections(md);
+  const norm = (s) => String(s).replace(/^[\d.\s]+/, '').replace(/\s+/g, '').toLowerCase();
+  const got = defs.map(() => null);
+  for (const s of secs) {
+    let i = defs.findIndex((d, k) => !got[k] && norm(d[1]) === norm(s.heading));
+    if (i < 0) i = defs.findIndex((d, k) => !got[k] && d[2].test(s.heading));
+    if (i >= 0) got[i] = s.body;
+  }
+  return defs.map((d, i) => ({ icon: d[0], title: d[1], raw: got[i] || '', body: got[i] ? cleanBody(got[i]) : '(ข้อมูลไม่เพียงพอ)' }));
+}
+const uniqList = (arr) => [...new Set(arr.map(s => String(s || '').trim()).filter(Boolean))];
+const splitBullets = (s) => String(s || '').split('\n').map(x => x.replace(/^[•\-*\s]+/, '').trim()).filter(x => x && x !== '-');
+// บทวิเคราะห์ทิศทางแบบไม่ใช้ AI (fallback) — สังเคราะห์จากข้อมูลจริงเชิงกลไก
+function mechanicalScope(sc, members) {
+  const agg = scopeAggregate(members);
+  const probs = uniqList(members.flatMap(d => d.prof.problems.map(x => x[1])));
+  const wishes = uniqList(members.flatMap(d => d.prof.ai));
+  const opts = uniqList(members.flatMap(d => d.prof.opt.map(o => o[2] || o[1])));
+  const quals = uniqList(members.flatMap(d => splitBullets(pf(d.prof, 6))));
+  const tally = {};
+  for (const d of members) { const k = d.prof.position || 'ไม่ระบุตำแหน่ง'; tally[k] = (tally[k] || 0) + 1; }
+  const solo = Object.entries(tally).filter(([, n]) => n === 1).map(([k]) => k);
+  const b = (arr, f) => arr.length ? arr.map(f || (x => '• ' + x)).join('\n') : '• (ยังไม่มีข้อมูล)';
+  const bodies = [
+    `${sc.title} มี ${members.length} คน (${Object.entries(tally).map(([k, n]) => `${k} ${n} คน`).join(', ')}) · บันทึกงานจริง ${agg.hours} ชม. ใน ${RPT_DAYS} วัน${agg.topCats.length ? ' · หมวดงานหลัก: ' + agg.topCats.join(', ') : ''}\nทิศทางที่ควรเดิน: ลดงานซ้ำ/งานเอกสารด้วยระบบอัตโนมัติ แล้วย้ายเวลาไปทำงานที่สร้างคุณค่าสูงขึ้น พร้อมตั้งตัวชี้วัดที่วัด "ผลลัพธ์" ไม่ใช่แค่ปริมาณงาน`,
+    b(quals.slice(0, 8)),
+    b(probs),
+    b(wishes, (x, i) => `${i + 1}. ${x}`),
+    `Quick win (0–1 เดือน): ${opts[0] || 'ทำเทมเพลต/automation งานซ้ำที่พบบ่อย'}\nระยะกลาง (1–3 เดือน): ${opts[1] || 'ตั้ง SLA งานข้ามทีม + ติดตามงานให้เห็นภาพรวม'}\nระยะยาว (3–6 เดือน): ${opts[2] || 'ขยายผลระบบที่ได้ผล + ยกระดับทักษะทีม'}`,
+    `• พึ่งพาคนบางคนมากเกินไป (ถ้าคนนั้นลา งานสะดุด)${solo.length ? ' — ตำแหน่งที่มีคนเดียว: ' + solo.join(', ') : ''}\n• ผลจาก AI ต้องมีคนตรวจก่อนใช้จริง\n• การเปลี่ยนวิธีทำงานต้องสื่อสารให้ทีมเข้าใจว่า AI ช่วยลดงาน ไม่ใช่แทนคน`,
+    `มีบันทึกงาน ${agg.logged}/${agg.people} คน · ความครบเฉลี่ย ${agg.avgComp}% · ขาดบันทึก ${agg.missDays}/${agg.expDays} วันทำงาน\n` + members.map(d => `• ${d.prof.name}: ${wlLine(d).replace(/^ภาระงานจริง \(\d+ วัน\): /, '')}`).join('\n'),
+    `ควรเสริม: การใช้ AI/automation ในงานประจำ · การใช้ข้อมูลและรายงานอัตโนมัติ${wishes.length ? ` (อิงสิ่งที่ทีมอยากได้: ${wishes.slice(0, 3).join(', ')})` : ''}\nเสนอ: อบรมสั้นการใช้ AI ช่วยงาน + จับคู่พี่เลี้ยงข้ามตำแหน่งลดการพึ่งพาคนเดียว`,
+    (probs.filter(x => /ซ้ำ|คีย์|กระดาษ|มือ|รอ/.test(x)).map(x => `• ${x} → ลด/รวมด้วยระบบอัตโนมัติ`).join('\n') || '• งานเอกสาร/คีย์ข้อมูลซ้ำ → รวมเป็นระบบเดียว') + '\n• งานที่ข้ามไปทีมอื่น ควรกำหนดผู้รับผิดชอบ + SLA ให้ชัด',
+    `1) เลือก 1 งานซ้ำที่กินเวลาที่สุด มาทำ automation/เทมเพลตก่อน (${opts[0] || 'เริ่มจากงานเอกสาร'})\n2) ตั้งผู้รับผิดชอบ + วัด baseline เวลาที่ใช้ตอนนี้\n3) ทบทวนผลสิ้นเดือน แล้วขยายผลไปงานถัดไป`,
+  ];
+  return { sections: SCOPE_SECTIONS.map((d, i) => ({ icon: d[0], title: d[1], body: bodies[i] })) };
+}
+// ตารางงานแนะนำแบบไม่ใช้ AI: คนที่ i = ตารางจริงของคนที่ i (ไม่ใช้ชื่อ)
+function mechanicalPositionSchedule(db, members) {
+  const rows = [];
+  members.forEach((d, i) => {
+    let sch = d.schedule;
+    if (!sch || !sch.length) {
+      const emp = activeEmpOf(db, d.u.id);
+      const iv = emp ? db.loadInterview(emp.id) : null;
+      sch = mechanicalSchedule(worklogPatterns(db, d.u), iv && iv.finishedAt ? iv : null);
+    }
+    for (const r of sch) rows.push([r[0], String(i + 1), r[1], r[2], r[3]]);
+  });
+  return rows;
+}
+function mechanicalPosition(db, sc, members, base) {
+  const duties = uniqList(members.flatMap(d => splitBullets(pf(d.prof, 2))));
+  const tools = uniqList(members.flatMap(d => String(pf(d.prof, 4)).split(/\n|·|,/).map(s => s.replace(/^[•\-*\s]+/, '').trim())));
+  const quals = uniqList(members.flatMap(d => splitBullets(pf(d.prof, 6))));
+  const opts = uniqList(members.flatMap(d => d.prof.opt.map(o => o[2] || o[1])));
+  const kpis = uniqList(members.flatMap(d => d.prof.kpis.map(k => k[0])));
+  const probs = uniqList(members.flatMap(d => d.prof.problems.map(x => x[1])));
+  const b = (arr, empty) => arr.length ? arr.map(x => '• ' + x).join('\n') : '• ' + empty;
+  const bodies = [
+    base.reason,
+    b(duties, '(ยังไม่มีข้อมูลหน้าที่ — ควรสัมภาษณ์คนในตำแหน่งก่อน)'),
+    `เครื่องมือ: ${tools.join(' · ') || '-'}\nคุณสมบัติ: ${quals.join(' · ') || '-'}`,
+    b(opts, 'รักษามาตรฐานงานปัจจุบัน + หา automation ลดงานซ้ำ'),
+    b(kpis, '(กำหนดร่วมกับหัวหน้า)'),
+    b(probs, 'ไม่มีข้อมูลเด่นชัด'),
+    'ดูตารางด้านล่าง',
+  ];
+  return {
+    sections: POS_SECTIONS.map((d, i) => ({ icon: d[0], title: d[1], body: bodies[i] })),
+    schedule: mechanicalPositionSchedule(db, members),
+  };
+}
+function scheduleSlot(v, max) {
+  const n = parseInt(String(v).replace(/[^\d]/g, ''), 10);
+  if (Number.isFinite(n) && n >= 1) return String(Math.min(n, Math.max(1, max)));
+  return /ทุก|all/i.test(String(v)) ? '0' : '1';      // '0' = ทุกคน
+}
+function sectionsToMd(title, sections, schedule, headcount) {
+  const L = [`# ${title}`, ''];
+  for (const s of sections) {
+    L.push(`## ${s.title}`);
+    if (headcount && /กำลังคน/.test(s.title)) L.push(`**แนะนำ ${headcount.recommended} คน** (ปัจจุบัน ${headcount.current} คน)`, '');
+    if (s.body) L.push(s.body);
+    if (/ตาราง/.test(s.title) && schedule && schedule.length) {
+      L.push('| ช่วง | คนที่ | เวลา | งาน | เป้าหมาย |', '|---|---|---|---|---|');
+      for (const r of schedule) L.push(`| ${r.map((c, i) => (i === 1 && String(c) === '0') ? 'ทุกคน' : String(c || '').replace(/\|/g, '/')).join(' | ')} |`);
+    }
+    L.push('');
+  }
+  return L.join('\n');
+}
+// เวลาไทย DD/MM/YYYY HH:MM จาก ISO
+function fmtBkk(iso) {
+  try {
+    return new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Bangkok', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+      .format(new Date(iso)).replace(',', '');
+  } catch (_) { return ''; }
+}
+
+// วิเคราะห์ 1 ขอบเขต → บันทึกไฟล์ (เรียกจาก job เบื้องหลัง)
+async function runOverviewScope(db, sc, cache, actor, mode) {
+  const members = sc.users.map(u => ovMember(db, u, cache));
+  if (!members.length) throw new Error('ไม่มีพนักงานในขอบเขตนี้');
+  const isPos = sc.level === 'position';
+  const base = isPos ? staffingBaseline(members) : null;
+  let res = null, model = null;
+  if (claudeOnForTenant(db)) {
+    try {
+      let used = null;
+      const onUsage = (rec) => { used = rec.model || 'Claude'; recordClaudeUsage(db, { kind: isPos ? 'overview-position' : 'overview-scope', label: `ภาพรวม ${sc.title} (${members.length} คน)`, ...rec }); };
+      if (isPos) {
+        const text = await claude.analyzePosition(positionContext(sc, members, base), { label: sc.title, onUsage });
+        const sections = mapMdSections(text, POS_SECTIONS);
+        if (sections.filter(s => s.raw).length < 4) throw new Error('AI ตอบไม่ตรงรูปแบบ (หัวข้อไม่ครบ)');
+        const m = String(sections[0].raw).match(/จำนวน\s*[:：]?\s*(\d{1,3})/);
+        const rec = m ? Math.max(1, Math.min(99, Number(m[1]))) : base.recommended;
+        sections[0].body = cleanBody(String(sections[0].raw).replace(/^.*จำนวน\s*[:：]?\s*\d{1,3}.*$/m, '')) || base.reason;
+        let schedule = parsePipeRows(sections[6].raw, 5).map(r => [r[0], scheduleSlot(r[1], rec), r[2], r[3], r[4]]);
+        if (!schedule.length) schedule = mechanicalPositionSchedule(db, members);
+        sections[6].body = schedule.length ? '' : '(ข้อมูลไม่เพียงพอ)';
+        res = { sections: sections.map(({ icon, title, body }) => ({ icon, title, body })), schedule, headcount: { ...base, recommended: rec, reason: sections[0].body } };
+      } else {
+        const text = await claude.analyzeScope(scopeContext(sc, members), { label: sc.title, onUsage });
+        const sections = mapMdSections(text, SCOPE_SECTIONS);
+        if (sections.filter(s => s.raw).length < 6) throw new Error('AI ตอบไม่ตรงรูปแบบ (หัวข้อไม่ครบ)');
+        res = { sections: sections.map(({ icon, title, body }) => ({ icon, title, body })) };
+      }
+      model = used;
+    } catch (e) { console.error('[overview] AI fell back:', sc.title, '-', e.message); res = null; }
+  }
+  if (!res) {
+    res = isPos ? mechanicalPosition(db, sc, members, base) : mechanicalScope(sc, members);
+    if (isPos) res.headcount = base;
+    model = null;
+  }
+  if (isPos) res.schedule = sortSchedRows(res.schedule || []);
+  const sigs = Object.fromEntries(sc.users.map(u => [u.id, rptUserSig(cache.sigCtx, u)]));
+  const out = {
+    kind: isPos ? 'position' : 'scope', level: sc.level, id: sc.id, title: sc.title,
+    at: new Date().toISOString(), by: actor || null, mode: mode || 'one',
+    model, source: model ? 'ai' : 'template', version: APP_VERSION, count: members.length, sigs, ...res,
+  };
+  out.md = appendReportFooter(sectionsToMd('รายงานภาพรวม — ' + sc.title, out.sections, out.schedule, out.headcount), model);
+  const file = ovPath(db, sc.level, sc.id);
+  rptArchive(file, rptDir(db, 'overview', '_history', ovBase(sc.level, sc.id)));
+  writeJson(file, out);
+  return out;
+}
+function ovChanged(rep, users, sigCtx) {
+  if (!rep) return null;
+  const now = Object.fromEntries(users.map(u => [u.id, rptUserSig(sigCtx, u)]));
+  const old = rep.sigs || {};
+  let n = 0;
+  for (const [id, s] of Object.entries(now)) if (old[id] !== s) n++;
+  for (const id of Object.keys(old)) if (!(id in now)) n++;
+  return n;
+}
+
+// ---------- งานเบื้องหลัง (1 งานต่อบริษัท — กันกด AI ซ้อนกัน) ----------
+const reportJobs = {};   // tenantId -> { kind, mode, running, total, index, current, done, failed, errors[], startedAt, finishedAt }
+function reportJobBusy(tid) { const j = reportJobs[tid]; return (j && j.running) ? j : null; }
+function startReportJob(tid, kind, mode, items, runItem) {
+  const job = reportJobs[tid] = {
+    kind, mode, running: true, total: items.length, index: 0, current: items[0] ? items[0].title : '',
+    done: 0, failed: 0, errors: [], startedAt: new Date().toISOString(), finishedAt: null,
+  };
+  (async () => {
+    for (let i = 0; i < items.length; i++) {
+      job.index = i; job.current = items[i].title;
+      try { await runItem(items[i]); job.done++; }
+      catch (e) {
+        job.failed++;
+        if (job.errors.length < 20) job.errors.push(`${items[i].title}: ${e.message || e}`);
+        console.error('[report-job]', tid, kind, items[i].title, '-', e.message || e);
+      }
+    }
+    job.index = items.length; job.current = ''; job.running = false; job.finishedAt = new Date().toISOString();
+  })();
+  return job;
+}
+tenantRouter.get('/api/report-job', requireRoles('admin', 'executive'), (req, res) => {
+  res.json(reportJobs[req.tenant.id] || { running: false, total: 0, done: 0, failed: 0, errors: [] });
+});
+
+// ---------- API: รายงานรายคน ----------
+tenantRouter.get('/api/person-report/tree', requireRoles(...RPT_HEAD_ROLES), (req, res) => {
+  const db = ctxDb();
+  const s = req.session;
+  const users = db.users().filter(u => u.role !== 'admin' && (canViewUserWorklog(s, u) || u.id === s.user_id));
+  const sigCtx = rptSigCtx(db);
+  let total = 0, missing = 0, stale = 0;
+  const tree = rptOrgTree(db, users).map(d => ({
+    id: d.id, name: d.name, none: d.none,
+    sections: d.sections.map(sec => ({
+      id: sec.id, name: sec.name, none: sec.none,
+      positions: sec.positions.map(p => ({
+        id: p.id, name: p.name, none: p.none,
+        people: p.people.map(u => {
+          const r = readPersonReport(db, u.id);
+          const st = !!(r && r.sig !== rptUserSig(sigCtx, u));
+          total++; if (!r) missing++; if (st) stale++;
+          return { user_id: u.id, name: u.name, has: !!r, at: r ? r.at : null, stale: st };
+        }),
+      })),
+    })),
+  }));
+  res.json({ canGenerate: s.role === 'admin', tree, total, missing, stale, claudeOn: claudeOnForTenant(db) });
+});
+tenantRouter.get('/api/person-report/:userId', (req, res) => {
+  const { target, err } = resolveWorklogTarget(req);
+  if (err) return res.status(err).json({ error: err === 404 ? 'not found' : 'ไม่มีสิทธิ์ดูรายงานของผู้ใช้นี้' });
+  const db = ctxDb();
+  const posMap = Object.fromEntries(db.positions().map(p => [p.id, p.name]));
+  const divMap = Object.fromEntries(db.divisions().map(d => [d.id, d.name]));
+  const secMap = Object.fromEntries(db.sections().map(s => [s.id, s.name]));
+  const rep = readPersonReport(db, target.id);
+  const person = { user_id: target.id, name: target.name, position: posMap[target.position_id] || '', division: divMap[target.division_id] || '', section: secMap[target.section_id] || '' };
+  const stale = !!(rep && rep.sig !== rptUserSig(rptSigCtx(db), target));
+  if (rep) delete rep.sig;
+  res.json({ person, report: rep, stale, canGenerate: req.session.role === 'admin' });
+});
+tenantRouter.post('/api/person-report/:userId/generate', requireAdmin, (req, res) => {
+  const db = ctxDb();
+  const tid = req.tenant.id;
+  const target = db.users().find(u => u.id === req.params.userId && u.role !== 'admin');
+  if (!target) return res.status(404).json({ error: 'ไม่พบผู้ใช้นี้' });
+  const busy = reportJobBusy(tid);
+  if (busy) return res.status(409).json({ error: 'มีงานวิเคราะห์อื่นกำลังทำอยู่ — รอให้เสร็จก่อน', job: busy });
+  const actor = rptActor(req);
+  const job = startReportJob(tid, 'person', 'one', [{ title: target.name, u: target }], (it) => generatePersonReport(db, it.u, actor));
+  writeAudit(tid, { actor: tenantActor(req), action: 'report.person.generate', target: target.id, ip: req.ip, result: 'ok' });
+  res.json({ ok: true, job });
+});
+tenantRouter.post('/api/person-report/generate-missing', requireAdmin, (req, res) => {
+  const db = ctxDb();
+  const tid = req.tenant.id;
+  const busy = reportJobBusy(tid);
+  if (busy) return res.status(409).json({ error: 'มีงานวิเคราะห์อื่นกำลังทำอยู่ — รอให้เสร็จก่อน', job: busy });
+  const missing = db.users().filter(u => u.role !== 'admin' && !fs.existsSync(personReportPath(db, u.id)))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'th'));
+  if (!missing.length) return res.json({ ok: true, total: 0 });
+  const actor = rptActor(req);
+  const job = startReportJob(tid, 'person', 'missing', missing.map(u => ({ title: u.name, u })), (it) => generatePersonReport(db, it.u, actor));
+  writeAudit(tid, { actor: tenantActor(req), action: 'report.person.generate-missing', ip: req.ip, result: 'ok', meta: { count: missing.length } });
+  res.json({ ok: true, total: missing.length, job });
+});
+
+// ---------- API: รายงานภาพรวม (แอดมิน + ผู้บริหาร) ----------
+function ovNode(db, sc, sigCtx) {
+  const rep = readJson(ovPath(db, sc.level, sc.id), null);
+  return {
+    level: sc.level, id: sc.id, name: sc.name, title: sc.title, count: sc.users.length,
+    has: !!rep, at: rep ? rep.at : null, by: rep ? rep.by : null, changed: ovChanged(rep, sc.users, sigCtx),
+  };
+}
+tenantRouter.get('/api/overview/tree', requireRoles('admin', 'executive'), (req, res) => {
+  const db = ctxDb();
+  const sigCtx = rptSigCtx(db);
+  const scopes = ovScopes(db);
+  const key = (sc) => sc.level + ':' + sc.id;
+  const nodes = Object.fromEntries(scopes.map(sc => [key(sc), ovNode(db, sc, sigCtx)]));
+  const users = db.users().filter(u => u.role !== 'admin');
+  const divisions = [];
+  for (const d of rptOrgTree(db, users)) {
+    if (d.none) continue;
+    const dn = { ...nodes['division:' + d.id], sections: [] };
+    for (const s of d.sections) {
+      if (s.none) continue;
+      const sn = { ...nodes['section:' + s.id], positions: [] };
+      for (const p of s.positions) if (!p.none && nodes['position:' + p.id]) sn.positions.push(nodes['position:' + p.id]);
+      dn.sections.push(sn);
+    }
+    divisions.push(dn);
+  }
+  const all = Object.values(nodes);
+  res.json({
+    company: nodes['company:'], divisions,
+    totals: { scopes: all.length, changed: all.filter(n => !n.has || n.changed > 0).length },
+    claudeOn: claudeOnForTenant(db),
+  });
+});
+// เวอร์ชันเก่า: รูปแบบใหม่ (_history/<base>/<stamp>.json) + รายงานรูปแบบเดิมก่อน v1.17 (อ่านอย่างเดียว)
+function ovLegacyFiles(db, level, id) {
+  const out = [];
+  const add = (v, file, at) => { if (fs.existsSync(file)) out.push({ v, file, at }); };
+  const mtime = (f) => { try { return fs.statSync(f).mtime.toISOString(); } catch (_) { return null; } };
+  if (level === 'company') {
+    const cur = path.join(db.cmpOutDir, 'optimization-report.md');
+    add('legacy-current', cur, mtime(cur));
+    const hd = path.join(db.cmpOutDir, '_history');
+    try {
+      for (const f of fs.readdirSync(hd)) {
+        const m = f.match(/^optimization-report-(.+)\.md$/);
+        if (m && HIST_STAMP_RE.test(m[1])) add('legacy-' + m[1], path.join(hd, f), null);
+      }
+    } catch (_) {}
+  } else if (level === 'division' || level === 'section') {
+    const f = path.join(db.cmpOutDir, 'scope', scopeFileBase(level, id) + '.md');
+    add('legacy-current', f, mtime(f));
+  }
+  return out;
+}
+function ovHistoryList(db, level, id) {
+  const hd = rptDir(db, 'overview', '_history', ovBase(level, id));
+  let versions = [];
+  try {
+    versions = fs.readdirSync(hd).filter(f => HIST_STAMP_RE.test(f.replace(/\.json$/, ''))).map(f => {
+      const rep = readJson(path.join(hd, f), null) || {};
+      return { v: f.replace(/\.json$/, ''), at: rep.at || null, by: rep.by || null, mode: rep.mode || '', source: rep.source || '', legacy: false };
+    });
+  } catch (_) {}
+  for (const l of ovLegacyFiles(db, level, id)) {
+    const stamp = l.v.replace(/^legacy-/, '');
+    versions.push({ v: l.v, at: l.at, label: l.at ? null : stampLabel(stamp), by: null, mode: 'รูปแบบเดิม (ก่อน v1.17)', source: '', legacy: true });
+  }
+  const sortKey = (x) => x.at || (x.v.replace(/^legacy-/, '').replace(/_(\d{2})-(\d{2})-(\d{2}).*/, 'T$1:$2:$3'));
+  return versions.sort((a, b) => String(sortKey(b)).localeCompare(String(sortKey(a))));
+}
+// โหลดผลวิเคราะห์ (ปัจจุบัน หรือเวอร์ชันเก่า v) — คืน { rep } หรือ { legacyMd } หรือ null
+function ovLoad(db, level, id, v) {
+  if (!v) { const rep = readJson(ovPath(db, level, id), null); return rep ? { rep } : null; }
+  if (HIST_STAMP_RE.test(v)) {
+    const rep = readJson(rptDir(db, 'overview', '_history', ovBase(level, id), v + '.json'), null);
+    return rep ? { rep } : null;
+  }
+  const l = ovLegacyFiles(db, level, id).find(x => x.v === v);
+  if (!l) return null;
+  try { return { legacyMd: fs.readFileSync(l.file, 'utf8'), at: l.at }; } catch (_) { return null; }
+}
+function ovParams(req) {
+  const q = req.method === 'GET' ? req.query : (req.body || {});
+  const level = String(q.level || 'company');
+  const id = level === 'company' ? '' : String(q.id || '');
+  const v = q.v ? String(q.v) : '';
+  return { level, id, v };
+}
+tenantRouter.get('/api/overview/report', requireRoles('admin', 'executive'), (req, res) => {
+  const { level, id, v } = ovParams(req);
+  const db = ctxDb();
+  const sc = ovFindScope(db, level, id);
+  if (!sc) return res.status(404).json({ error: 'ไม่พบขอบเขตนี้' });
+  if (v && !(HIST_STAMP_RE.test(v) || /^legacy-/.test(v))) return res.status(400).json({ error: 'bad version' });
+  const got = ovLoad(db, level, id, v);
+  const cur = v ? readJson(ovPath(db, level, id), null) : (got && got.rep);
+  const scope = { level, id, title: sc.title, count: sc.users.length };
+  res.json({
+    scope, v: v || null,
+    report: got && got.rep ? (({ sigs, ...r }) => r)(got.rep) : null,
+    legacyMd: got && got.legacyMd ? got.legacyMd : null, legacyAt: got && got.at ? got.at : null,
+    current: cur ? { at: cur.at, by: cur.by } : null,
+    changed: ovChanged(cur, sc.users, rptSigCtx(db)),
+    historyCount: ovHistoryList(db, level, id).length,
+    claudeOn: claudeOnForTenant(db),
+  });
+});
+tenantRouter.get('/api/overview/history', requireRoles('admin', 'executive'), (req, res) => {
+  const { level, id } = ovParams(req);
+  const db = ctxDb();
+  if (!ovFindScope(db, level, id)) return res.status(404).json({ error: 'ไม่พบขอบเขตนี้' });
+  const cur = readJson(ovPath(db, level, id), null);
+  res.json({ current: cur ? { at: cur.at, by: cur.by, mode: cur.mode, source: cur.source } : null, versions: ovHistoryList(db, level, id) });
+});
+tenantRouter.get('/api/overview/md', requireRoles('admin', 'executive'), (req, res) => {
+  const { level, id, v } = ovParams(req);
+  const db = ctxDb();
+  const sc = ovFindScope(db, level, id);
+  if (!sc) return res.status(404).send('ไม่พบขอบเขตนี้');
+  if (v && !(HIST_STAMP_RE.test(v) || /^legacy-/.test(v))) return res.status(400).send('bad version');
+  const got = ovLoad(db, level, id, v);
+  if (!got) return res.status(404).send('ยังไม่มีรายงาน');
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', csv.contentDisposition(`ภาพรวม-${safeFileName(sc.title)}.md`, 'overview.md'));
+  res.send(got.rep ? (got.rep.md || '') : got.legacyMd);
+});
+tenantRouter.get('/api/overview/excel', requireRoles('admin', 'executive'), async (req, res) => {
+  const { level, id, v } = ovParams(req);
+  const db = ctxDb();
+  const sc = ovFindScope(db, level, id);
+  if (!sc) return res.status(404).send('ไม่พบขอบเขตนี้');
+  if (v && !HIST_STAMP_RE.test(v)) return res.status(400).send('ส่งออก Excel ได้เฉพาะรายงานรูปแบบใหม่');
+  const got = ovLoad(db, level, id, v);
+  if (!got || !got.rep) return res.status(404).send('ยังไม่มีรายงาน — กดวิเคราะห์ก่อน');
+  try {
+    const rep = got.rep;
+    const data = {
+      title: 'รายงานภาพรวม — ' + sc.title,
+      subs: [`${(db.company() || {}).name || ''} · วิเคราะห์เมื่อ ${fmtBkk(rep.at)} · จัดทำโดย ${reportMadeBy(rep.model)}`],
+      kind: rep.kind, sections: rep.sections || [], schedule: rep.schedule || [], headcount: rep.headcount || null,
+    };
+    const wb = xlsxReport.overviewWorkbook(data);
+    sendXlsx(res, `ภาพรวม-${safeFileName(sc.title)}.xlsx`, await xlsxReport.workbookBuffer(wb));
+  } catch (e) { console.error('[overview/excel]', e.message); res.status(500).send('สร้างไฟล์ไม่สำเร็จ'); }
+});
+tenantRouter.post('/api/overview/analyze', requireRoles('admin', 'executive'), (req, res) => {
+  const { level, id } = ovParams(req);
+  const db = ctxDb();
+  const tid = req.tenant.id;
+  const sc = ovFindScope(db, level, id);
+  if (!sc) return res.status(404).json({ error: 'ไม่พบขอบเขตนี้' });
+  if (!sc.users.length) return res.status(400).json({ error: 'ไม่มีพนักงานในขอบเขตนี้' });
+  const busy = reportJobBusy(tid);
+  if (busy) return res.status(409).json({ error: 'มีงานวิเคราะห์อื่นกำลังทำอยู่ — รอให้เสร็จก่อน', job: busy });
+  const actor = rptActor(req);
+  const cache = { members: new Map(), sigCtx: rptSigCtx(db) };
+  const job = startReportJob(tid, 'overview', 'one', [sc], (it) => runOverviewScope(db, it, cache, actor, 'one'));
+  writeAudit(tid, { actor: tenantActor(req), action: 'report.overview.analyze', target: level + ':' + id, ip: req.ip, result: 'ok' });
+  res.json({ ok: true, job });
+});
+tenantRouter.post('/api/overview/analyze-all', requireRoles('admin', 'executive'), (req, res) => {
+  const mode = String((req.body || {}).mode) === 'all' ? 'all' : 'changed';
+  const db = ctxDb();
+  const tid = req.tenant.id;
+  const busy = reportJobBusy(tid);
+  if (busy) return res.status(409).json({ error: 'มีงานวิเคราะห์อื่นกำลังทำอยู่ — รอให้เสร็จก่อน', job: busy });
+  const sigCtx = rptSigCtx(db);
+  let list = ovScopes(db).filter(sc => sc.users.length);
+  if (mode === 'changed') list = list.filter(sc => { const n = ovChanged(readJson(ovPath(db, sc.level, sc.id), null), sc.users, sigCtx); return n == null || n > 0; });
+  if (!list.length) return res.json({ ok: true, total: 0 });
+  const actor = rptActor(req);
+  const cache = { members: new Map(), sigCtx };
+  const job = startReportJob(tid, 'overview', mode, list, (it) => runOverviewScope(db, it, cache, actor, mode));
+  writeAudit(tid, { actor: tenantActor(req), action: 'report.overview.analyze-all', ip: req.ip, result: 'ok', meta: { mode, count: list.length } });
+  res.json({ ok: true, total: list.length, job });
 });
 
 // Interview JSON — read access via canViewEmployee so hierarchy can inspect subordinates'
@@ -3985,7 +4831,10 @@ tenantRouter.get('/admin/categories', requireAdmin, (req, res) => res.sendFile(p
 tenantRouter.get('/admin/shifts', requireAdmin, (req, res) => res.sendFile(path.join(ROOT, 'public', 'admin-shifts.html')));
 tenantRouter.get('/manage/categories', requireCategoryContributor, (req, res) => res.sendFile(path.join(ROOT, 'public', 'manage-categories.html')));
 tenantRouter.get('/my-daysoff', (req, res) => res.sendFile(path.join(ROOT, 'public', 'my-daysoff.html')));
-tenantRouter.get('/company-report', requireRoles('admin', 'executive'), (req, res) => res.sendFile(path.join(ROOT, 'public', 'company-report.html')));
+// v1.17: หน้ารายงานวิเคราะห์เดิม → แทนด้วย "รายงานภาพรวม" (ลิงก์/บุ๊กมาร์กเดิมพาไปหน้าใหม่)
+tenantRouter.get('/company-report', requireRoles('admin', 'executive'), (req, res) => res.redirect((req.tbase || '') + '/overview-report'));
+tenantRouter.get('/person-report', requireRoles(...RPT_HEAD_ROLES), (req, res) => res.sendFile(path.join(ROOT, 'public', 'person-report.html')));
+tenantRouter.get('/overview-report', requireRoles('admin', 'executive'), (req, res) => res.sendFile(path.join(ROOT, 'public', 'overview-report.html')));
 tenantRouter.get('/schedule', requireRoles('admin', 'executive', 'manager', 'division_head', 'section_head', 'supervisor', 'officer'), (req, res) => res.sendFile(path.join(ROOT, 'public', 'schedule.html')));
 tenantRouter.get('/profile',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'profile.html')));
 tenantRouter.get('/reports',  (req, res) => res.sendFile(path.join(ROOT, 'public', 'reports.html')));
@@ -4898,7 +5747,7 @@ app.get('/api/exec/tenant/:tid/summary', requireGroupExec, (req, res) => {
       interview_pct: iv.total ? Math.round(iv.completed / iv.total * 100) : 0,
       org: { divisions: db.divisions().length, sections: db.sections().length, positions: db.positions().length },
       worklog: worklogTodayStat(db, users, today),
-      hasOptimizationReport: fs.existsSync(path.join(db.cmpOutDir, 'optimization-report.md')),
+      hasOptimizationReport: fs.existsSync(ovPath(db, 'company', '')) || fs.existsSync(path.join(db.cmpOutDir, 'optimization-report.md')),
     });
   } catch (e) {
     res.status(500).json({ error: 'อ่านข้อมูลบริษัทไม่สำเร็จ' });
@@ -4937,13 +5786,17 @@ app.get('/api/exec/tenant/:tid/report', requireGroupExec, (req, res) => {
   res.json(rep);
 });
 
-// รายงานภาพรวม optimization-report.md (ถ้ามี) — คืน markdown ให้ portal render ด้วย md.js
+// รายงานภาพรวมบริษัทล่าสุด — v1.17 ใช้ "รายงานภาพรวม (ทั้งบริษัท)" ถ้าใหม่กว่า ไม่งั้นใช้ optimization-report.md เดิม
+// คืน markdown ให้ portal render ด้วย md.js
 app.get('/api/exec/tenant/:tid/optimization', requireGroupExec, (req, res) => {
   const t = execResolveTenant(req, res); if (!t) return;
   try {
     const db = tenantDb(t.id);
+    const rep = readJson(ovPath(db, 'company', ''), null);
     const p = path.join(db.cmpOutDir, 'optimization-report.md');
-    if (!fs.existsSync(p)) return res.json({ hasReport: false, markdown: '' });
+    let legacyM = 0; try { legacyM = fs.statSync(p).mtimeMs; } catch (_) {}
+    if (rep && rep.md && (!legacyM || Date.parse(rep.at) >= legacyM)) return res.json({ hasReport: true, markdown: rep.md });
+    if (!legacyM) return res.json({ hasReport: false, markdown: '' });
     return res.json({ hasReport: true, markdown: fs.readFileSync(p, 'utf8') });
   } catch (e) {
     res.status(500).json({ error: 'อ่านรายงานไม่สำเร็จ' });

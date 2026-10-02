@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>รายงานภาพรวม | HR-Interview</title>
+  <link rel="stylesheet" href="/styles.css?v=5"/>
+  <link rel="icon" type="image/png" href="/logo.png?v=2"/>
+<script>
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  function shouldPrefix(href){ return href && href.startsWith('/') && !href.startsWith('/t/') && !href.startsWith('/super') && !href.startsWith('/styles') && !href.startsWith('/logo') && !href.startsWith('/i18n') && !href.startsWith('/favicon') && !href.startsWith('/md') && !href.startsWith('/app-shell'); }
+  function rewriteLinks(root){ if(!window.TBASE||!root)return; if(root.nodeType===1&&root.tagName==='A'&&shouldPrefix(root.getAttribute('href')))root.setAttribute('href',window.TBASE+root.getAttribute('href')); if(typeof root.querySelectorAll==='function')root.querySelectorAll('a[href^="/"]').forEach(a=>{const h=a.getAttribute('href');if(shouldPrefix(h))a.setAttribute('href',window.TBASE+h);}); }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    new MutationObserver(m => { for (const x of m) { rewriteLinks(x.target); for (const n of x.addedNodes) rewriteLinks(n); } }).observe(document.body, { childList: true, subtree: true });
+  });
+</script>
+  <script src="/md.js"></script>
+  <script src="/app-shell.js?v=8"></script>
+  <style>
+    .ov-cols { display:grid; grid-template-columns:290px minmax(0,1fr); gap:14px; align-items:start; }
+    @media (max-width:760px) { .ov-cols { grid-template-columns:1fr; } }
+    .ov-card { background:#fff; border:1px solid var(--border); border-radius:12px; padding:12px 14px; }
+    .ov-lbl { font-size:11px; color:var(--muted); margin:0 0 8px; letter-spacing:.3px; }
+    .ov-top { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; background:#eff6ff; border:1px solid #bae6fd; border-radius:12px; padding:10px 14px; font-size:13px; color:#334155; }
+    .node { padding:6px 8px; border-radius:8px; font-size:14px; display:flex; align-items:center; gap:6px; user-select:none; }
+    .node:hover { background:#f8fafc; }
+    .node .r { margin-left:auto; font-size:12px; white-space:nowrap; }
+    .node .chev { display:inline-block; width:14px; text-align:center; color:#94a3b8; cursor:pointer; }
+    .node .lb { cursor:pointer; }
+    .node.div { font-weight:600; color:#0f3d6b; }
+    .node.sec { padding-left:22px; color:#334155; }
+    .node.pos { padding-left:42px; color:#475569; font-size:13px; }
+    .node.on { background:#e0f2fe; color:#0c4a6e; }
+    .muted { color:var(--muted); }
+    .ok { color:#16a34a; } .warn { color:#d97706; }
+    .tag-role { font-size:11px; background:#fef3c7; color:#92400e; border-radius:999px; padding:1px 8px; font-weight:500; }
+    .tag-rec { font-size:11px; background:#dcfce7; color:#166534; border-radius:999px; padding:1px 8px; font-weight:400; }
+    .obar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px; }
+    .ometa { font-size:13px; color:var(--muted); margin:2px 0 10px; }
+    .stale { border:1px solid #fca5a5; background:#fef2f2; color:#991b1b; border-radius:10px; padding:8px 12px; margin:0 0 10px; font-size:13px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .oldv { border:1px solid #fcd34d; background:#fffbeb; color:#78350f; border-radius:10px; padding:8px 12px; margin:0 0 10px; font-size:13px; }
+    .hd { font-weight:600; color:#0f3d6b; margin:4px 0 8px; font-size:15px; }
+    .sb { border:1px solid var(--border); border-left:3px solid var(--brand); border-radius:0 10px 10px 0; padding:11px 14px; margin:0 0 10px; }
+    .sb .st { font-weight:600; color:#0f3d6b; margin-bottom:5px; }
+    .sb .sc { font-size:13.5px; color:#334155; white-space:pre-wrap; line-height:1.6; }
+    .hc { border:1px solid #bae6fd; background:#eff6ff; border-radius:10px; padding:11px 14px; margin:0 0 10px; }
+    .tw { overflow-x:auto; }
+    .tw table { width:100%; border-collapse:collapse; font-size:13px; }
+    .tw th, .tw td { border:1px solid var(--border); padding:6px 8px; text-align:left; vertical-align:top; }
+    .tw th { background:#f1f5f9; color:#475569; font-weight:600; }
+    .tw td.per { background:#eef2f7; }
+    .ov-modal { display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:9999; align-items:center; justify-content:center; }
+    .ov-modal-box { background:#fff; border-radius:16px; padding:22px 22px 18px; max-width:500px; width:92%; max-height:84vh; overflow:auto; box-shadow:0 20px 50px rgba(0,0,0,.3); }
+    .opt { border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:10px; cursor:pointer; }
+    .opt:hover { border-color:var(--brand); background:#f8fbff; }
+    .spin { width:44px; height:44px; margin:0 auto; border:4px solid #e0f2fe; border-top-color:#0284c7; border-radius:50%; animation:ov-sp .9s linear infinite; }
+    @keyframes ov-sp { to { transform:rotate(360deg); } }
+    .prog { height:8px; background:#e2e8f0; border-radius:999px; overflow:hidden; margin:12px 0 6px; }
+    .prog > div { height:100%; background:var(--brand); transition:width .3s; }
+    .hrow { display:flex; gap:10px; align-items:center; padding:9px 4px; border-bottom:1px solid #f1f5f9; font-size:13px; }
+    @media print {
+      .app-sidebar, .app-topbar, .app-backdrop, .app-help, .ov-top, #ov-treecard, .no-print, h1, p.sub { display:none !important; }
+      .app-content, .container, .ov-cols, .ov-card { all:unset; display:block; }
+    }
+  </style>
+</head>
+<body>
+<div class="container wide">
+  <div class="topbar">
+    <div class="logo"><span>HR-Interview</span></div>
+    <nav><a href="/dashboard">📋 Dashboard</a></nav>
+  </div>
+
+  <h1 style="margin:0 0 2px;">🏢 รายงานภาพรวม</h1>
+  <p class="sub" style="margin:0 0 14px;">ให้ AI <b>วิเคราะห์ข้อมูลงานจริง</b> ว่าแต่ละขอบเขตควรเดินหน้าอย่างไร — ทั้งบริษัท / ฝ่าย / แผนก / <b>แยกตามตำแหน่ง</b> · เข้าถึง: แอดมิน/ผู้บริหาร</p>
+
+  <div class="ov-top">
+    <button id="btn-all">🔄 วิเคราะห์ทั้งหมด <span class="tag-role">👤 แอดมิน/ผู้บริหาร</span></button>
+    <span id="all-status">กำลังโหลด…</span>
+  </div>
+
+  <div class="ov-cols">
+    <div class="ov-card" id="ov-treecard">
+      <p class="ov-lbl">เลือกขอบเขต</p>
+      <div id="ov-tree"><p class="muted" style="font-size:13px;">กำลังโหลด…</p></div>
+    </div>
+    <div class="ov-card" id="ov-panel"><p class="muted">เลือกขอบเขตทางซ้าย</p></div>
+  </div>
+</div>
+
+<div class="ov-modal" id="ov-modal"><div class="ov-modal-box" id="ov-modal-box"></div></div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const fmtDT = iso => { if (!iso) return ''; const d = new Date(iso); if (isNaN(d)) return ''; const p = n => String(n).padStart(2, '0'); return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const $ = id => document.getElementById(id);
+const DAYS = ['ทุกวันทำงาน', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์', 'อาทิตย์'];
+const stripH1 = md => String(md || '').replace(/^﻿?\s*#\s+.*(?:\r?\n)+/, '');
+const qsScope = (sc, extra) => 'level=' + encodeURIComponent(sc.level) + '&id=' + encodeURIComponent(sc.id || '') + (extra || '');
+
+let TREE = null, CUR = { level: 'company', id: '' }, VIEW_V = '', CLAUDE_ON = false;
+const EXP_KEY = 'wwnOverviewTreeExp';
+let EXP = new Set();
+try { EXP = new Set(JSON.parse(localStorage.getItem(EXP_KEY) || '[]')); } catch (_) {}
+const saveExp = () => { try { localStorage.setItem(EXP_KEY, JSON.stringify([...EXP])); } catch (_) {} };
+const chev = (k, open) => `<span class="chev" data-tog="${esc(k)}">${open ? '▾' : '▸'}</span>`;
+const same = (a, b) => a.level === b.level && String(a.id || '') === String(b.id || '');
+
+async function loadTree() {
+  try {
+    const r = await fetch(TBASE + '/api/overview/tree');
+    if (!r.ok) throw new Error(r.status === 403 ? 'คุณไม่มีสิทธิ์ดูหน้านี้ (เฉพาะแอดมิน/ผู้บริหาร)' : 'โหลดไม่สำเร็จ');
+    TREE = await r.json();
+  } catch (e) { $('ov-tree').innerHTML = `<p class="muted">${esc(e.message)}</p>`; $('all-status').textContent = ''; return false; }
+  CLAUDE_ON = !!TREE.claudeOn;
+  const t = TREE.totals || {};
+  $('all-status').textContent = `กดครั้งเดียว AI ไล่วิเคราะห์ทุกขอบเขต: บริษัท + ทุกฝ่าย + ทุกแผนก + ทุกตำแหน่ง (${t.scopes || 0} กลุ่ม · ยังไม่วิเคราะห์/ข้อมูลเปลี่ยน ${t.changed || 0})` + (CLAUDE_ON ? '' : ' · โหมดเทมเพลต (ยังไม่เปิด AI)');
+  renderTree();
+  return true;
+}
+function mark(n) {
+  if (!n) return '';
+  if (!n.has) return '<span class="r muted" style="font-size:11px">ยังไม่วิเคราะห์</span>';
+  return n.changed > 0 ? `<span class="r warn" title="ข้อมูลเปลี่ยน ${n.changed} คน">✓ ⚠️</span>` : '<span class="r ok">✓</span>';
+}
+function renderTree() {
+  const T = TREE;
+  let h = `<div class="node div ${same(CUR, T.company) ? 'on' : ''}"><span class="chev"></span><span class="lb" data-sel="company|">🏢 ทั้งบริษัท</span>${mark(T.company)}</div>`;
+  for (const d of T.divisions) {
+    const dk = 'd' + d.id, dopen = EXP.has(dk);
+    h += `<div class="node div ${same(CUR, d) ? 'on' : ''}">${chev(dk, dopen)}<span class="lb" data-sel="division|${esc(d.id)}">📁 ${esc(d.name)}</span>${mark(d)}</div>`;
+    if (!dopen) continue;
+    for (const s of d.sections) {
+      const sk = 's' + s.id, sopen = EXP.has(sk);
+      h += `<div class="node sec ${same(CUR, s) ? 'on' : ''}">${chev(sk, sopen)}<span class="lb" data-sel="section|${esc(s.id)}">📂 ${esc(s.name)}</span>${mark(s)}</div>`;
+      if (!sopen) continue;
+      for (const p of s.positions) {
+        h += `<div class="node pos ${same(CUR, p) ? 'on' : ''}"><span class="lb" data-sel="position|${esc(p.id)}">👤 ${esc(p.name)} <span class="muted" style="font-size:11px">${p.count} คน</span></span>${mark(p)}</div>`;
+      }
+    }
+  }
+  $('ov-tree').innerHTML = h;
+}
+$('ov-tree').addEventListener('click', (ev) => {
+  const t = ev.target.closest('[data-tog]');
+  if (t) { const k = t.getAttribute('data-tog'); EXP.has(k) ? EXP.delete(k) : EXP.add(k); saveExp(); renderTree(); return; }
+  const s = ev.target.closest('[data-sel]');
+  if (s) {
+    const [level, id] = s.getAttribute('data-sel').split('|');
+    CUR = { level, id: id || '' }; VIEW_V = '';
+    renderTree(); loadReport();
+    if (window.innerWidth < 760) $('ov-panel').scrollIntoView({ behavior: 'smooth' });
+  }
+});
+function findNode(sc) {
+  if (!TREE) return null;
+  if (sc.level === 'company') return TREE.company;
+  for (const d of TREE.divisions) {
+    if (sc.level === 'division' && d.id === sc.id) return d;
+    for (const s of d.sections) {
+      if (sc.level === 'section' && s.id === sc.id) return s;
+      for (const p of s.positions) if (sc.level === 'position' && p.id === sc.id) return p;
+    }
+  }
+  return null;
+}
+
+async function loadReport() {
+  const sc = { ...CUR };
+  $('ov-panel').innerHTML = '<p class="muted">กำลังโหลด…</p>';
+  let j;
+  try {
+    const r = await fetch(TBASE + '/api/overview/report?' + qsScope(sc, VIEW_V ? '&v=' + encodeURIComponent(VIEW_V) : ''));
+    j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'โหลดไม่สำเร็จ');
+  } catch (e) { $('ov-panel').innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+  if (!same(sc, CUR)) return;
+  renderReport(j);
+}
+function secBlock(icon, title, body) {
+  return `<div class="sb"><div class="st">${esc(icon)} ${esc(title)}</div><div class="sc">${esc(body)}</div></div>`;
+}
+function scheduleTable(rows, n) {
+  if (!rows.length) return '<p class="muted" style="font-size:13px;">(ยังไม่มีข้อมูลตารางงาน)</p>';
+  let t = '<div class="tw"><table>';
+  if (n > 1) {
+    t += '<tr><th style="width:90px">ช่วง</th>' + Array.from({ length: n }, (_, k) => `<th>คนที่ ${k + 1}</th>`).join('') + '</tr>';
+    const periods = [...new Set(rows.map(r => r[0]))];
+    for (const p of periods) {
+      const cols = Array.from({ length: n }, () => []);
+      for (const r of rows.filter(x => x[0] === p)) {
+        const txt = `${esc(r[3] || '-')}${r[2] && r[2] !== '-' ? ' <span class="muted">(' + esc(r[2]) + ')</span>' : ''}`;
+        const slot = Number(r[1]) || 0;
+        if (slot >= 1 && slot <= n) cols[slot - 1].push(txt); else cols.forEach(c => c.push(txt));
+      }
+      t += `<tr><td class="${DAYS.includes(p) ? '' : 'per'}"><b>${esc(p)}</b></td>` + cols.map(c => `<td>${c.join('<br>') || '<span class="muted">-</span>'}</td>`).join('') + '</tr>';
+    }
+  } else {
+    t += '<tr><th style="width:90px">ช่วง</th><th style="width:110px">เวลา/ช่วงในวัน</th><th>งานที่ต้องทำ</th><th>เป้าหมาย</th></tr>';
+    for (const r of rows) t += `<tr><td class="${DAYS.includes(r[0]) ? '' : 'per'}"><b>${esc(r[0])}</b></td><td>${esc(r[2] || '-')}</td><td>${esc(r[3] || '-')}</td><td>${esc(r[4] || '-')}</td></tr>`;
+  }
+  return t + '</table></div>';
+}
+function renderReport(j) {
+  const sc = j.scope, rep = j.report, isGroup = sc.level !== 'company';
+  const hasNew = !!rep;
+  const bar = `<div class="obar no-print">
+      <button id="btn-analyze">▶ วิเคราะห์ทิศทาง (AI) <span class="tag-role">👤 แอดมิน/ผู้บริหาร</span></button>
+      ${hasNew ? `<a href="/api/overview/excel?${qsScope(sc, VIEW_V ? '&v=' + encodeURIComponent(VIEW_V) : '')}"><button class="ghost">📊 ส่งออก Excel</button></a>` : ''}
+      ${(hasNew || j.legacyMd) ? `<button class="ghost" onclick="window.print()">🖨 PDF</button>` : ''}
+      <button class="ghost" id="btn-hist">📚 เวอร์ชันเก่า${j.historyCount ? ` (${j.historyCount})` : ''}</button>
+      ${isGroup ? `<a href="/api/report/group/zip?${qsScope(sc)}"><button class="ghost" title="ไฟล์ Excel 7 ชีตแยกรายคน รวมเป็น ZIP">📦 Excel รายคน (ZIP)</button></a>` : ''}
+    </div>
+    <div class="ometa">ขอบเขต: <b>${esc(sc.title)}</b> · ${sc.count} คน · ${j.current ? `📅 วิเคราะห์ล่าสุด <b>${esc(fmtDT(j.current.at))}</b>${j.current.by && j.current.by.name ? ' โดย ' + esc(j.current.by.name) : ''}` : 'ยังไม่เคยวิเคราะห์'}${rep ? ` · จัดทำโดย ${rep.source === 'ai' ? 'AI (' + esc(rep.model || 'Claude') + ')' : 'เทมเพลต (ไม่ใช้ AI)'}` : ''}</div>`;
+  let h = bar;
+  if (VIEW_V) h += `<div class="oldv">🕒 กำลังดู <b>เวอร์ชันเก่า</b> ${esc(rep ? fmtDT(rep.at) : (j.legacyAt ? fmtDT(j.legacyAt) : ''))}${rep && rep.by && rep.by.name ? ' (โดย ' + esc(rep.by.name) + ')' : ''}${j.legacyMd ? ' · รูปแบบเดิม (ก่อน v1.17)' : ''} — <a href="#" id="back-latest">กลับไปผลล่าสุด</a></div>`;
+  else if (j.current && j.changed > 0) h += `<div class="stale">⚠️ หลังวิเคราะห์ครั้งล่าสุด มีข้อมูลใหม่ <b>${j.changed} คน</b> — ผลด้านล่างอาจไม่เป็นปัจจุบัน <button class="ghost no-print" id="btn-reanalyze" style="padding:4px 10px; font-size:13px;">วิเคราะห์ใหม่</button></div>`;
+
+  if (j.legacyMd) {
+    h += `<div class="md-body">${window.renderMarkdown ? window.renderMarkdown(stripH1(j.legacyMd)) : '<pre style="white-space:pre-wrap">' + esc(j.legacyMd) + '</pre>'}</div>`;
+  } else if (!rep) {
+    h += `<p class="muted" style="padding:20px 0; text-align:center;">กดปุ่ม “▶ วิเคราะห์ทิศทาง (AI)” — ระบบจะนำข้อมูลงานจริงของคนในขอบเขตนี้มา<b>วิเคราะห์</b>ว่าควรเดินหน้าอย่างไร (ไม่ใช่แค่โชว์ข้อมูล)</p>`;
+  } else if (rep.kind === 'position') {
+    const hc = rep.headcount || { current: sc.count, recommended: sc.count, reason: '' };
+    const n = Math.max(Number(hc.recommended) || 1, (rep.schedule || []).reduce((m, r) => Math.max(m, Number(r[1]) || 0), 0), 1);
+    h += `<div class="hd">AI วิเคราะห์ + แนะนำ — ${esc(sc.title)} <span class="muted" style="font-weight:400; font-size:13px;">(จากคน ${rep.count} คน)</span></div>
+      <p class="muted" style="font-size:12px; margin:-2px 0 8px;">วิเคราะห์จากงานจริงว่า “ตำแหน่งนี้ควรทำหน้าที่อะไร · ควรใช้กี่คน · ตารางงานควรเป็นอย่างไร” (ไม่อิงชื่อบุคคล)</p>
+      <div class="hc"><div style="font-weight:600; color:#0f3d6b;">👥 กำลังคนที่แนะนำ: ${esc(hc.recommended)} คน <span class="muted" style="font-weight:400;">(ปัจจุบัน ${esc(hc.current)} คน)</span></div><div style="font-size:13px; color:#334155; margin-top:3px; white-space:pre-wrap;">${esc(hc.reason || '')}</div></div>`;
+    for (const s of (rep.sections || []).slice(1)) {
+      if (/ตาราง/.test(s.title)) {
+        h += `<div class="sb"><div class="st">📅 ตารางงานที่แนะนำ (${n > 1 ? 'แบ่งงาน ' + n + ' คน' : 'ทำได้โดย 1 คน'})</div>${scheduleTable(rep.schedule || [], n)}</div>`;
+      } else h += secBlock(s.icon, s.title, s.body);
+    }
+  } else {
+    h += `<div class="hd">บทวิเคราะห์ทิศทาง “${esc(sc.title)}” <span class="muted" style="font-weight:400; font-size:13px;">(จากคน ${rep.count} คน)</span></div>`;
+    for (const s of (rep.sections || [])) h += secBlock(s.icon, s.title, s.body);
+  }
+  if (rep || j.legacyMd) h += `<p class="muted" style="font-size:12px;">หมายเหตุ: ด้านบนคือ “บทวิเคราะห์” ที่สังเคราะห์จากข้อมูลงานจริงของทุกคนในขอบเขต · ข้อมูลดิบรายคนดูได้ที่หน้า “รายงานรายคน”</p>`;
+  $('ov-panel').innerHTML = h;
+  $('btn-analyze').addEventListener('click', () => startJob(TBASE + '/api/overview/analyze', { level: sc.level, id: sc.id }, 'วิเคราะห์ ' + sc.title));
+  const re = $('btn-reanalyze'); if (re) re.addEventListener('click', () => startJob(TBASE + '/api/overview/analyze', { level: sc.level, id: sc.id }, 'วิเคราะห์ ' + sc.title));
+  $('btn-hist').addEventListener('click', () => openHist(sc));
+  const bl = $('back-latest'); if (bl) bl.addEventListener('click', (e) => { e.preventDefault(); VIEW_V = ''; loadReport(); });
+}
+
+// ---------- เวอร์ชันเก่า ----------
+async function openHist(sc) {
+  modal('<div class="spin"></div>');
+  let j;
+  try { const r = await fetch(TBASE + '/api/overview/history?' + qsScope(sc)); j = await r.json(); if (!r.ok) throw new Error(j.error || 'โหลดไม่สำเร็จ'); }
+  catch (e) { modal(`<p>${esc(e.message)}</p><button onclick="closeModal()">ปิด</button>`); return; }
+  const by = (b) => b && b.name ? ' · โดย ' + esc(b.name) : '';
+  const row = (v, label, extra, tag) => `<div class="hrow"><span>🕒 ${label}${extra} ${tag || ''}</span><span style="margin-left:auto; white-space:nowrap;">
+      <a href="#" data-v="${esc(v)}">ดู</a> · <a href="/api/overview/md?${qsScope(sc, v ? '&v=' + encodeURIComponent(v) : '')}">Text ↗</a></span></div>`;
+  let rows = '';
+  if (j.current) rows += row('', esc(fmtDT(j.current.at)), by(j.current.by) + ` · <span class="muted">${esc(j.current.source === 'ai' ? 'AI' : 'เทมเพลต')}</span>`, '<span class="tag-rec">ล่าสุด</span>');
+  for (const v of (j.versions || [])) rows += row(v.v, esc(v.at ? fmtDT(v.at) : (v.label || v.v)), by(v.by) + ` · <span class="muted">${esc(v.mode || '')}</span>`);
+  modal(`<div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;"><div style="font-weight:600; color:#0f3d6b; font-size:17px;">📚 เวอร์ชันเก่า</div><button class="ghost" style="margin-left:auto; padding:6px 12px;" onclick="closeModal()">✕ ปิด</button></div>
+    <div class="muted" style="font-size:13px; margin-bottom:8px;">ขอบเขต: <b>${esc(findNode(sc) ? findNode(sc).title : '')}</b> · ระบบเก็บผลไว้ทุกครั้งที่กดวิเคราะห์</div>
+    ${rows || '<p class="muted" style="font-size:13px;">ยังไม่มีเวอร์ชันเก่า — ระบบจะเริ่มเก็บเมื่อกดวิเคราะห์ครั้งถัดไป</p>'}`);
+  $('ov-modal-box').querySelectorAll('a[data-v]').forEach(a => a.addEventListener('click', (e) => {
+    e.preventDefault(); closeModal(); VIEW_V = a.getAttribute('data-v'); loadReport();
+  }));
+}
+
+// ---------- วิเคราะห์ทั้งหมด: เลือก 2 แบบ ----------
+$('btn-all').addEventListener('click', () => {
+  const t = (TREE && TREE.totals) || { scopes: 0, changed: 0 };
+  const cost = CLAUDE_ON ? 'ใช้ AI (Claude) ประมาณ' : 'โหมดเทมเพลต (ไม่ใช้ AI) ·';
+  modal(`<div style="font-weight:600; color:#0f3d6b; font-size:17px; margin-bottom:2px;">🔄 วิเคราะห์ทั้งหมด — เลือกแบบ</div>
+    <p class="muted" style="font-size:13px; margin:0 0 14px;">ทั้งองค์กรมี ${t.scopes} กลุ่ม (บริษัท · ฝ่าย · แผนก · ตำแหน่ง)</p>
+    <div class="opt" data-mode="changed"><div style="font-weight:600;">⚡ เฉพาะที่มีข้อมูลเปลี่ยน <span class="tag-rec">แนะนำ</span></div>
+      <div class="muted" style="font-size:13px; margin-top:3px;">${t.changed} กลุ่ม · ${cost} ${CLAUDE_ON ? t.changed + ' ครั้ง' : ''} · ข้ามกลุ่มที่วิเคราะห์ไว้แล้วและไม่มีข้อมูลใหม่</div></div>
+    <div class="opt" data-mode="all"><div style="font-weight:600;">🔁 วิเคราะห์ใหม่ทั้งหมด</div>
+      <div class="muted" style="font-size:13px; margin-top:3px;">${t.scopes} กลุ่ม · ${cost} ${CLAUDE_ON ? t.scopes + ' ครั้ง' : ''} · สดที่สุด แต่ใช้เวลาและค่า API มากกว่า</div></div>
+    <div style="text-align:right; margin-top:6px;"><button class="ghost" onclick="closeModal()">ยกเลิก</button></div>`);
+  $('ov-modal-box').querySelectorAll('.opt').forEach(o => o.addEventListener('click', () => {
+    const mode = o.getAttribute('data-mode');
+    startJob(TBASE + '/api/overview/analyze-all', { mode }, mode === 'all' ? 'วิเคราะห์ใหม่ทั้งหมด' : 'วิเคราะห์เฉพาะที่มีข้อมูลเปลี่ยน');
+  }));
+});
+
+// ---------- ป๊อปอัป "กำลังวิเคราะห์" ----------
+function modal(html) { $('ov-modal-box').innerHTML = html; $('ov-modal').style.display = 'flex'; }
+function closeModal() { $('ov-modal').style.display = 'none'; }
+let polling = false;
+async function startJob(url, body, title) {
+  if (polling) return;
+  modal(`<div style="text-align:center"><div class="spin"></div><div style="margin-top:12px; font-weight:600;">กำลังเริ่ม…</div></div>`);
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 409) { pollJob(title); return; }
+    if (!r.ok) throw new Error(j.error || 'สั่งวิเคราะห์ไม่สำเร็จ');
+    if (j.total === 0) {
+      modal(`<div style="text-align:center"><div style="font-size:38px;">👍</div><div style="font-weight:600; color:#0f3d6b; margin:6px 0;">ทุกกลุ่มเป็นปัจจุบันแล้ว</div><div class="muted" style="font-size:13px; margin-bottom:14px;">ไม่มีข้อมูลเปลี่ยน — ถ้าต้องการวิเคราะห์ซ้ำ ให้เลือก “วิเคราะห์ใหม่ทั้งหมด”</div><button onclick="closeModal()">ปิด</button></div>`);
+      return;
+    }
+    pollJob(title);
+  } catch (e) { modal(`<div style="text-align:center"><div style="font-size:38px;">⚠️</div><div style="font-weight:600; margin:6px 0;">${esc(e.message)}</div><button onclick="closeModal()">ปิด</button></div>`); }
+}
+function drawProgress(title, s) {
+  const pct = s.total ? Math.round((s.index / s.total) * 100) : 0;
+  modal(`<div style="text-align:center"><div class="spin"></div>
+    <div style="font-weight:600; color:#0f3d6b; font-size:16px; margin:12px 0 4px;">${esc(title)}</div>
+    <div class="muted" style="font-size:13px;">กำลังวิเคราะห์ <b>${Math.min(s.index + 1, s.total)}/${s.total}</b> · ${esc(s.current || '')}</div>
+    <div class="prog"><div style="width:${pct}%"></div></div>
+    <div class="muted" style="font-size:12px;">🧠 AI กำลังทำงานอยู่ — ปิดหน้านี้ได้ งานจะทำต่อเบื้องหลัง</div></div>`);
+}
+async function pollJob(title) {
+  polling = true;
+  let fails = 0;
+  const tick = async () => {
+    let s;
+    try { const r = await fetch(TBASE + '/api/report-job'); if (!r.ok) throw 0; s = await r.json(); fails = 0; }
+    catch (_) { if (++fails > 20) { polling = false; modal(`<div style="text-align:center"><div style="font-size:38px;">⚠️</div><div style="margin:6px 0;">เชื่อมต่อไม่สำเร็จ — งานอาจยังทำอยู่เบื้องหลัง ลองรีเฟรชภายหลัง</div><button onclick="closeModal()">ปิด</button></div>`); return; } setTimeout(tick, 3000); return; }
+    if (s.running) { drawProgress(title || 'กำลังวิเคราะห์', s); setTimeout(tick, 1500); return; }
+    polling = false;
+    const errs = (s.errors || []).length ? `<div style="text-align:left; font-size:12px; color:#b91c1c; margin:8px 0; max-height:140px; overflow:auto;">${s.errors.map(e => '• ' + esc(e)).join('<br>')}</div>` : '';
+    modal(`<div style="text-align:center"><div style="font-size:42px;">${s.failed ? '⚠️' : '✅'}</div><div style="font-weight:600; color:#0f3d6b; font-size:16px; margin:6px 0;">${s.failed ? 'เสร็จแล้ว (มีบางกลุ่มไม่สำเร็จ)' : 'วิเคราะห์เสร็จแล้ว'}</div>
+      <div class="muted" style="font-size:13px;">สำเร็จ ${s.done} · ไม่สำเร็จ ${s.failed} · ทั้งหมด ${s.total}</div>${errs}
+      <button style="margin-top:12px;" onclick="closeModal()">ปิด</button></div>`);
+    VIEW_V = '';
+    await loadTree();
+    loadReport();
+  };
+  tick();
+}
+async function resumeIfRunning() {
+  try { const r = await fetch(TBASE + '/api/report-job'); if (!r.ok) return; const s = await r.json(); if (s.running) pollJob(s.kind === 'person' ? 'กำลังสร้างรายงานรายคน' : 'กำลังวิเคราะห์ภาพรวม'); } catch (_) {}
+}
+
+(async () => {
+  const qs = new URLSearchParams(location.search);
+  if (qs.get('level')) CUR = { level: qs.get('level'), id: qs.get('id') || '' };
+  if (await loadTree()) {
+    if (!findNode(CUR)) CUR = { level: 'company', id: '' };
+    loadReport();
+    resumeIfRunning();
+  }
+})();
+</script>
+</body>
+</html>

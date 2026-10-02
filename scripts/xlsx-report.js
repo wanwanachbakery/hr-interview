@@ -4,6 +4,7 @@
  * แยกเป็น 2 แบบ:
  *   companyAnalysisWorkbook(data)  → รายงานบริษัท/ฝ่าย/แผนก (5 ชีต: บทสรุป/ธีมปัญหา/โอกาส AI/ข้อเสนอ+Roadmap/ความเสี่ยง)
  *   personProfileWorkbook(data)    → โปรไฟล์รายตำแหน่ง/บุคคล (7 ชีต ครอบคลุม 13 หัวข้อ)
+ *   overviewWorkbook(data)         → รายงานภาพรวม v1.17 (1 ชีต/หัวข้อ + ตารางงานแนะนำของตำแหน่ง)
  *
  * รับ "ข้อมูลที่จัดโครงแล้ว" (plain object) จาก server.js — ไฟล์นี้ทำแค่จัดรูปแบบ/สไตล์
  * คืนค่าเป็น ExcelJS.Workbook — ผู้เรียกใช้ workbookBuffer(wb) เพื่อได้ Buffer
@@ -153,17 +154,25 @@ function personProfileWorkbook(data, opts = {}) {
   dataRows(ws, r, (data.opt && data.opt.length) ? data.opt : [['', '(ยังไม่มีข้อเสนอ)', '', '', '']], { centerCols: [0, 3], minHeight: 26 });
   setWidths(ws, [5, 40, 44, 11, 22]); freezeAt(ws, r);
 
-  // ชีต 4: Workflow (ข้อ 10)
-  ws = wb.addWorksheet((pre + 'Workflow').slice(0, 31), { views: [{ showGridLines: false }] });
-  r = titleBlock(ws, `Workflow — ${data.name || ''}`, ['10. ขั้นตอนงานประจำวัน/สัปดาห์']);
-  headerRow(ws, r, ['ช่วงเวลา', 'งานที่ทำ']); r++;
-  let endR = dataRows(ws, r, (data.workflow && data.workflow.length) ? data.workflow : [['', '(ยังไม่มีข้อมูล)']], { centerCols: [0], minHeight: 22 });
-  if (data.weekly) {
-    const wr = ws.getRow(endR + 1);
-    wr.getCell(1).value = 'รายสัปดาห์'; wr.getCell(1).font = { name: FONT, size: 10, bold: true, color: { argb: DARK } }; wr.getCell(1).border = allBorder; wr.getCell(1).alignment = wrapTop;
-    wr.getCell(2).value = data.weekly; wr.getCell(2).font = { name: FONT, size: 10 }; wr.getCell(2).border = allBorder; wr.getCell(2).alignment = wrapTop;
+  // ชีต 4: ข้อ 10 — v1.17 ตารางงาน (วัน/สัปดาห์/เดือน/ไตรมาส/ปี) ถ้ามีรายงานรายคนแล้ว · ไม่งั้นใช้ Workflow จากสัมภาษณ์
+  if (data.schedule && data.schedule.length) {
+    ws = wb.addWorksheet((pre + 'ตารางงาน').slice(0, 31), { views: [{ showGridLines: false }] });
+    r = titleBlock(ws, `ตารางงาน — ${data.name || ''}`, ['10. ตารางงาน (วัน/สัปดาห์/เดือน/ไตรมาส/ปี) — อนุมานจากบันทึกงานจริง']);
+    headerRow(ws, r, ['ช่วง', 'เวลา/ช่วงในวัน', 'งาน', 'เป้าหมาย/ผลที่คาดหวัง', 'หมายเหตุ']); r++;
+    dataRows(ws, r, data.schedule.map(x => [x[0], x[1] || '-', x[2] || '-', x[3] || '-', x[4] || '']), { boldCol0: true, centerCols: [1], minHeight: 22 });
+    setWidths(ws, [14, 16, 44, 34, 22]); freezeAt(ws, r);
+  } else {
+    ws = wb.addWorksheet((pre + 'Workflow').slice(0, 31), { views: [{ showGridLines: false }] });
+    r = titleBlock(ws, `Workflow — ${data.name || ''}`, ['10. ขั้นตอนงานประจำวัน/สัปดาห์']);
+    headerRow(ws, r, ['ช่วงเวลา', 'งานที่ทำ']); r++;
+    const endR = dataRows(ws, r, (data.workflow && data.workflow.length) ? data.workflow : [['', '(ยังไม่มีข้อมูล)']], { centerCols: [0], minHeight: 22 });
+    if (data.weekly) {
+      const wr = ws.getRow(endR + 1);
+      wr.getCell(1).value = 'รายสัปดาห์'; wr.getCell(1).font = { name: FONT, size: 10, bold: true, color: { argb: DARK } }; wr.getCell(1).border = allBorder; wr.getCell(1).alignment = wrapTop;
+      wr.getCell(2).value = data.weekly; wr.getCell(2).font = { name: FONT, size: 10 }; wr.getCell(2).border = allBorder; wr.getCell(2).alignment = wrapTop;
+    }
+    setWidths(ws, [16, 80]); freezeAt(ws, r);
   }
-  setWidths(ws, [16, 80]); freezeAt(ws, r);
 
   // ชีต 5: ปัญหา/คอขวด (ข้อ 11)
   ws = wb.addWorksheet((pre + 'ปัญหา-คอขวด').slice(0, 31), { views: [{ showGridLines: false }] });
@@ -190,8 +199,71 @@ function personProfileWorkbook(data, opts = {}) {
   return wb;
 }
 
+// ============================================================
+// C) รายงานภาพรวม v1.17 — 1 ชีตต่อ 1 หัวข้อ (+ ชีตตารางงานของตำแหน่ง)
+// data = { title, subs:[...], kind:'scope'|'position', sections:[{icon,title,body}],
+//          schedule:[[ช่วง, คนที่('0'=ทุกคน), เวลา, งาน, เป้าหมาย]], headcount:{current,recommended,reason} }
+// ============================================================
+const sheetName = (s) => String(s).replace(/[\[\]:*?\/\\]/g, '-').slice(0, 31);
+function linesSheet(wb, name, title, subs, lines) {
+  const ws = wb.addWorksheet(sheetName(name), { views: [{ showGridLines: false }] });
+  let r = titleBlock(ws, title, subs);
+  headerRow(ws, r, ['รายละเอียด']); r++;
+  const ls = (lines && lines.length) ? lines : [{ text: '(ยังไม่มีข้อมูล)' }];
+  dataRows(ws, r, ls.map(l => [l.text]));
+  ls.forEach((l, i) => { if (l.bold) ws.getCell(r + i, 1).font = { name: FONT, size: 11, bold: true, color: { argb: DARK } }; });
+  setWidths(ws, [110]); freezeAt(ws, r);
+  return ws;
+}
+function overviewWorkbook(data) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'HR-Interview';
+  const subs = data.subs || [];
+  const toLines = (body) => String(body || '').split('\n').filter(t => t.trim()).map(t => ({ text: t }));
+  (data.sections || []).forEach((s, i) => {
+    const short = s.title.replace(/\s*[&/]\s*/g, '-').replace(/\s+/g, ' ');
+    const isSched = data.kind === 'position' && /ตาราง/.test(s.title);
+    if (isSched) {
+      const rows = data.schedule || [];
+      const hc = data.headcount || {};
+      const maxSlot = rows.reduce((m, x) => Math.max(m, Number(x[1]) || 0), 0);
+      const n = Math.max(Number(hc.recommended) || 1, maxSlot, 1);
+      const ws = wb.addWorksheet(sheetName(`${i + 1}.${short}`), { views: [{ showGridLines: false }] });
+      let r = titleBlock(ws, `${data.title} — ${s.title}`, subs.concat([n > 1 ? `แบ่งงาน ${n} คน (คอลัมน์ คนที่ 1..${n})` : 'ทำได้โดย 1 คน']));
+      if (n > 1) {
+        headerRow(ws, r, ['ช่วง'].concat(Array.from({ length: n }, (_, k) => `คนที่ ${k + 1}`))); r++;
+        const periods = [...new Set(rows.map(x => x[0]))];
+        const out = periods.map(p => {
+          const cols = Array.from({ length: n }, () => []);
+          for (const x of rows.filter(y => y[0] === p)) {
+            const txt = `${x[3] || '-'}${x[2] && x[2] !== '-' ? ' (' + x[2] + ')' : ''}`;
+            const slot = Number(x[1]) || 0;
+            if (slot >= 1 && slot <= n) cols[slot - 1].push(txt); else cols.forEach(c => c.push(txt));
+          }
+          return [p].concat(cols.map(c => c.join('\n') || '-'));
+        });
+        dataRows(ws, r, out.length ? out : [['(ยังไม่มีข้อมูล)'].concat(Array(n).fill(''))], { boldCol0: true, minHeight: 22 });
+        setWidths(ws, [14].concat(Array(n).fill(Math.max(26, Math.floor(96 / n)))));
+      } else {
+        headerRow(ws, r, ['ช่วง', 'เวลา/ช่วงในวัน', 'งานที่ต้องทำ', 'เป้าหมาย']); r++;
+        dataRows(ws, r, rows.length ? rows.map(x => [x[0], x[2] || '-', x[3] || '-', x[4] || '-']) : [['(ยังไม่มีข้อมูล)', '', '', '']], { boldCol0: true, centerCols: [1], minHeight: 22 });
+        setWidths(ws, [14, 18, 50, 36]);
+      }
+      freezeAt(ws, r);
+      return;
+    }
+    let lines = toLines(s.body);
+    if (data.kind === 'position' && i === 0 && data.headcount) {
+      lines = [{ text: `แนะนำ ${data.headcount.recommended} คน (ปัจจุบัน ${data.headcount.current} คน)`, bold: true }].concat(lines);
+    }
+    linesSheet(wb, `${i + 1}.${short}`, `${data.title} — ${s.title}`, subs, lines);
+  });
+  if (!wb.worksheets.length) linesSheet(wb, 'รายงาน', data.title, subs, []);
+  return wb;
+}
+
 async function workbookBuffer(wb) {
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-module.exports = { companyAnalysisWorkbook, personProfileWorkbook, workbookBuffer };
+module.exports = { companyAnalysisWorkbook, personProfileWorkbook, overviewWorkbook, workbookBuffer };

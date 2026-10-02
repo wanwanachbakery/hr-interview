@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>รายงานรายคน | HR-Interview</title>
+  <link rel="stylesheet" href="/styles.css?v=5"/>
+  <link rel="icon" type="image/png" href="/logo.png?v=2"/>
+<script>
+  window.TENANT_ID = (location.pathname.match(/^\/t\/([^/]+)/) || [])[1] || '';
+  window.TBASE = window.TENANT_ID ? '/t/' + window.TENANT_ID : '';
+  function shouldPrefix(href){ return href && href.startsWith('/') && !href.startsWith('/t/') && !href.startsWith('/super') && !href.startsWith('/styles') && !href.startsWith('/logo') && !href.startsWith('/i18n') && !href.startsWith('/favicon') && !href.startsWith('/md') && !href.startsWith('/app-shell'); }
+  function rewriteLinks(root){ if(!window.TBASE||!root)return; if(root.nodeType===1&&root.tagName==='A'&&shouldPrefix(root.getAttribute('href')))root.setAttribute('href',window.TBASE+root.getAttribute('href')); if(typeof root.querySelectorAll==='function')root.querySelectorAll('a[href^="/"]').forEach(a=>{const h=a.getAttribute('href');if(shouldPrefix(h))a.setAttribute('href',window.TBASE+h);}); }
+  window.rewriteLinks = rewriteLinks;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!window.TBASE) return;
+    rewriteLinks(document);
+    new MutationObserver(m => { for (const x of m) { rewriteLinks(x.target); for (const n of x.addedNodes) rewriteLinks(n); } }).observe(document.body, { childList: true, subtree: true });
+  });
+</script>
+  <script src="/app-shell.js?v=8"></script>
+  <style>
+    .rp-cols { display:grid; grid-template-columns:280px minmax(0,1fr); gap:14px; align-items:start; }
+    @media (max-width:760px) { .rp-cols { grid-template-columns:1fr; } }
+    .rp-card { background:#fff; border:1px solid var(--border); border-radius:12px; padding:12px 14px; }
+    .rp-lbl { font-size:11px; color:var(--muted); margin:0 0 8px; letter-spacing:.3px; }
+    .rp-bar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; background:#eff6ff; border:1px solid #bae6fd; border-radius:12px; padding:10px 14px; font-size:13px; color:#334155; }
+    .node { padding:6px 8px; border-radius:8px; cursor:pointer; font-size:14px; display:flex; align-items:center; gap:6px; user-select:none; }
+    .node:hover { background:#f8fafc; }
+    .node .r { margin-left:auto; font-size:12px; white-space:nowrap; }
+    .node.div { font-weight:600; color:#0f3d6b; }
+    .node.sec { padding-left:22px; color:#334155; }
+    .node.pos { padding-left:34px; color:#475569; font-size:13px; }
+    .node.per { padding-left:56px; }
+    .node.on { background:#e0f2fe; color:#0c4a6e; }
+    .node .chev { display:inline-block; width:14px; text-align:center; color:#94a3b8; }
+    .muted { color:var(--muted); }
+    .ok { color:#16a34a; } .warn { color:#d97706; }
+    .tag-admin { font-size:11px; background:#fef3c7; color:#92400e; border-radius:999px; padding:1px 8px; font-weight:500; }
+    .pbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px; }
+    .pbar strong { font-size:16px; color:#0f3d6b; margin-right:4px; }
+    .pmeta { font-size:12px; color:var(--muted); margin:0 0 10px; }
+    .stale { border:1px solid #fca5a5; background:#fef2f2; color:#991b1b; border-radius:10px; padding:8px 12px; margin:0 0 10px; font-size:13px; }
+    .topic { border-bottom:1px solid #f1f5f9; padding:10px 0; }
+    .topic:last-child { border-bottom:0; }
+    .topic .tt { font-weight:600; color:#0f3d6b; font-size:14px; display:flex; gap:7px; }
+    .topic .tn { color:#94a3b8; min-width:20px; }
+    .topic .tc { margin:4px 0 0 27px; font-size:13.5px; color:#334155; white-space:pre-wrap; line-height:1.6; }
+    .tw { overflow-x:auto; margin:6px 0 0 27px; }
+    .tw table { width:100%; border-collapse:collapse; font-size:13px; }
+    .tw th, .tw td { border:1px solid var(--border); padding:6px 8px; text-align:left; vertical-align:top; }
+    .tw th { background:#f1f5f9; color:#475569; font-weight:600; }
+    .tw td.per { background:#eef2f7; }
+    .rp-modal { display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:9999; align-items:center; justify-content:center; }
+    .rp-modal-box { background:#fff; border-radius:16px; padding:24px 22px 18px; max-width:440px; width:92%; box-shadow:0 20px 50px rgba(0,0,0,.3); text-align:center; }
+    .spin { width:44px; height:44px; margin:0 auto; border:4px solid #e0f2fe; border-top-color:#0284c7; border-radius:50%; animation:rp-sp .9s linear infinite; }
+    @keyframes rp-sp { to { transform:rotate(360deg); } }
+    .prog { height:8px; background:#e2e8f0; border-radius:999px; overflow:hidden; margin:12px 0 6px; }
+    .prog > div { height:100%; background:var(--brand); transition:width .3s; }
+    @media print {
+      .app-sidebar, .app-topbar, .app-backdrop, .app-help, .rp-bar, #rp-treecard, .no-print, h1, p.sub { display:none !important; }
+      .app-content, .container, .rp-cols, .rp-card { all:unset; display:block; }
+    }
+  </style>
+</head>
+<body>
+<div class="container wide">
+  <div class="topbar">
+    <div class="logo"><span>HR-Interview</span></div>
+    <nav><a href="/dashboard">📋 Dashboard</a></nav>
+  </div>
+
+  <h1 style="margin:0 0 2px;">👤 รายงานรายคน</h1>
+  <p class="sub" id="rp-sub" style="margin:0 0 14px;">ไล่ดูตาม ฝ่าย → แผนก → ตำแหน่ง → คน แล้วดูรายงาน 13 หัวข้อของคนนั้น</p>
+
+  <div class="rp-bar" id="rp-bar">กำลังโหลด…</div>
+
+  <div class="rp-cols">
+    <div class="rp-card" id="rp-treecard">
+      <p class="rp-lbl">ไล่ดู (คลิกเลือกคน)</p>
+      <div id="rp-tree"><p class="muted" style="font-size:13px;">กำลังโหลด…</p></div>
+    </div>
+    <div class="rp-card" id="rp-panel"><p class="muted">เลือกคนจากรายชื่อทางซ้าย</p></div>
+  </div>
+</div>
+
+<div class="rp-modal" id="rp-modal"><div class="rp-modal-box" id="rp-modal-box"></div></div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const fmtDT = iso => { if (!iso) return ''; const d = new Date(iso); if (isNaN(d)) return ''; const p = n => String(n).padStart(2, '0'); return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const fmtD = ymd => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : String(ymd || ''); };
+const $ = id => document.getElementById(id);
+const TOPICS = ['ตำแหน่ง', 'สรุปบทบาท', 'หน้าที่หลัก', 'หน้าที่รอง', 'เครื่องมือ/ระบบที่ต้องใช้เป็น', 'การประสานงาน', 'คุณสมบัติที่สังเกตได้จากงานจริง',
+  'KPI — ตัวชี้วัด + วิธีวัด', 'Optimization — ข้อเสนอปรับปรุง', 'ตารางงาน (วัน/สัปดาห์/เดือน/ไตรมาส/ปี)', 'ปัญหา / คอขวดที่เจอ', 'ตัวชี้วัดที่พนักงานรู้สึก (ดิบ)', 'งานที่อยากให้ AI ช่วย'];
+const DAYS = ['ทุกวันทำงาน', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์', 'อาทิตย์'];
+
+let TREE = null, CUR = null, CAN_GEN = false;
+const EXP_KEY = 'wwnPersonTreeExp';
+let EXP = new Set();
+try { EXP = new Set(JSON.parse(localStorage.getItem(EXP_KEY) || '[]')); } catch (_) {}
+const saveExp = () => { try { localStorage.setItem(EXP_KEY, JSON.stringify([...EXP])); } catch (_) {} };
+const chev = open => `<span class="chev">${open ? '▾' : '▸'}</span>`;
+
+async function loadTree(keepSel) {
+  let j;
+  try {
+    const r = await fetch(TBASE + '/api/person-report/tree');
+    if (!r.ok) throw new Error(r.status === 403 ? 'คุณไม่มีสิทธิ์ดูหน้านี้' : 'โหลดไม่สำเร็จ');
+    j = await r.json();
+  } catch (e) { $('rp-tree').innerHTML = `<p class="muted">${esc(e.message)}</p>`; $('rp-bar').textContent = ''; return; }
+  TREE = j.tree || []; CAN_GEN = !!j.canGenerate;
+  renderBar(j);
+  if (!keepSel || !CUR) {
+    const qs = new URLSearchParams(location.search);
+    const all = allPeople();
+    const want = qs.get('user');
+    CUR = (want && all.find(p => p.user_id === want)) ? want : ((all.find(p => p.has) || all[0] || {}).user_id || null);
+    if (CUR) expandTo(CUR);
+  }
+  renderTree();
+  if (CUR) loadPerson(CUR); else $('rp-panel').innerHTML = '<p class="muted">ยังไม่มีพนักงานในขอบเขตที่คุณดูได้</p>';
+}
+function allPeople() { return (TREE || []).flatMap(d => d.sections.flatMap(s => s.positions.flatMap(p => p.people))); }
+function expandTo(uid) {
+  (TREE || []).forEach((d, di) => d.sections.forEach((s, si) => s.positions.forEach((p, pi) => {
+    if (p.people.some(x => x.user_id === uid)) { EXP.add('d' + d.id); EXP.add('s' + s.id); EXP.add('p' + s.id + ':' + p.id); }
+  })));
+  saveExp();
+}
+function renderBar(j) {
+  const sub = CAN_GEN ? 'เข้าถึง: แอดมิน/ผู้บริหาร/หัวหน้า (หัวหน้าเห็นเฉพาะลูกทีม)' : 'คุณเห็นเฉพาะคนที่อยู่ในขอบเขตของคุณ';
+  $('rp-sub').textContent = 'ไล่ดูตาม ฝ่าย → แผนก → ตำแหน่ง → คน แล้วดูรายงาน 13 หัวข้อของคนนั้น · ' + sub;
+  const info = `ทั้งหมด ${j.total} คน · มีรายงานแล้ว ${j.total - j.missing} · ยังไม่มี ${j.missing}${j.stale ? ` · ⚠️ ข้อมูลใหม่หลังสร้างรายงาน ${j.stale} คน` : ''}`;
+  $('rp-bar').innerHTML = CAN_GEN
+    ? `<button id="btn-missing" ${j.missing ? '' : 'disabled'}>🔄 สร้างรายงานทุกคนที่ยังไม่มี${j.missing ? ` (${j.missing})` : ''} <span class="tag-admin">🔒 แอดมิน</span></button>
+       <span>${esc(info)}${j.claudeOn ? '' : ' · โหมดเทมเพลต (ยังไม่เปิด AI)'}</span>`
+    : `<span>ℹ️ ${esc(info)} — คนที่ยังไม่มีรายงาน <b>รอแอดมินสร้างรายงาน</b></span>`;
+  const b = $('btn-missing');
+  if (b) b.addEventListener('click', () => {
+    if (!confirm(`สร้างรายงานให้ ${j.missing} คนที่ยังไม่มี?\n\n${j.claudeOn ? 'ใช้ AI จริง (Claude) — มีค่าใช้จ่ายตามจำนวนคน' : 'โหมดเทมเพลต (ไม่ใช้ AI)'}`)) return;
+    startJob(TBASE + '/api/person-report/generate-missing', 'สร้างรายงานทุกคนที่ยังไม่มี');
+  });
+}
+function renderTree() {
+  let h = '';
+  for (const d of TREE) {
+    const dk = 'd' + d.id, dopen = EXP.has(dk);
+    h += `<div class="node div" data-tog="${esc(dk)}">${chev(dopen)}📁 ${esc(d.name)}</div>`;
+    if (!dopen) continue;
+    for (const s of d.sections) {
+      const sk = 's' + s.id, sopen = EXP.has(sk);
+      h += `<div class="node sec" data-tog="${esc(sk)}">${chev(sopen)}📂 ${esc(s.name)}</div>`;
+      if (!sopen) continue;
+      for (const p of s.positions) {
+        const pk = 'p' + s.id + ':' + p.id, popen = EXP.has(pk);
+        h += `<div class="node pos" data-tog="${esc(pk)}">${chev(popen)}👤 ${esc(p.name)} <span class="r muted">${p.people.length} คน</span></div>`;
+        if (!popen) continue;
+        for (const x of p.people) {
+          const st = !x.has ? '<span class="r warn" style="font-size:11px">ยังไม่มี</span>'
+            : (x.stale ? '<span class="r warn" title="มีข้อมูลใหม่หลังสร้างรายงาน">✓ ⚠️</span>' : '<span class="r ok">✓</span>');
+          h += `<div class="node per ${x.user_id === CUR ? 'on' : ''}" data-uid="${esc(x.user_id)}"><span>${esc(x.name)}</span>${st}</div>`;
+        }
+      }
+    }
+  }
+  $('rp-tree').innerHTML = h || '<p class="muted" style="font-size:13px;">ยังไม่มีพนักงาน</p>';
+}
+$('rp-tree').addEventListener('click', (ev) => {
+  const t = ev.target.closest('[data-tog]');
+  if (t) { const k = t.getAttribute('data-tog'); EXP.has(k) ? EXP.delete(k) : EXP.add(k); saveExp(); renderTree(); return; }
+  const p = ev.target.closest('[data-uid]');
+  if (p) { CUR = p.getAttribute('data-uid'); renderTree(); loadPerson(CUR); if (window.innerWidth < 760) $('rp-panel').scrollIntoView({ behavior: 'smooth' }); }
+});
+
+async function loadPerson(uid) {
+  $('rp-panel').innerHTML = '<p class="muted">กำลังโหลด…</p>';
+  let j;
+  try {
+    const r = await fetch(TBASE + '/api/person-report/' + encodeURIComponent(uid));
+    j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'โหลดไม่สำเร็จ');
+  } catch (e) { $('rp-panel').innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+  if (uid !== CUR) return;
+  renderPerson(j);
+}
+function topic(n, content) { return `<div class="topic"><div class="tt"><span class="tn">${n}</span>${esc(TOPICS[n - 1])}</div><div class="tc">${esc(content || '-')}</div></div>`; }
+function tableTopic(n, cols, rows, firstShade) {
+  const body = rows.length ? rows.map(r => '<tr>' + r.map((c, i) => `<td${firstShade && i === 0 && !DAYS.includes(r[0]) ? ' class="per"' : ''}>${i === 0 && firstShade ? '<b>' + esc(c || '-') + '</b>' : esc(c || '-')}</td>`).join('') + '</tr>').join('')
+    : `<tr><td colspan="${cols.length}" class="muted">(ยังไม่มีข้อมูล)</td></tr>`;
+  return `<div class="topic"><div class="tt"><span class="tn">${n}</span>${esc(TOPICS[n - 1])}</div><div class="tw"><table><tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr>${body}</table></div></div>`;
+}
+function renderPerson(j) {
+  const p = j.person, rep = j.report;
+  const head = `<div class="pbar"><strong>${esc(p.name)}</strong><span class="muted" style="font-size:13px;">${esc([p.position, [p.division, p.section].filter(Boolean).join(' / ')].filter(Boolean).join(' · '))}</span></div>`;
+  if (!rep) {
+    $('rp-panel').innerHTML = head + `<div style="text-align:center; padding:26px 10px; color:#64748b;">⚠️ ยังไม่มีรายงานของคนนี้ (ยังไม่ได้วิเคราะห์)<br><br>` +
+      (CAN_GEN ? `<button class="no-print" id="btn-gen">🔍 วิเคราะห์/สร้างรายงานคนนี้</button><div style="font-size:12px; margin-top:8px;">🔒 ปุ่มนี้เฉพาะแอดมิน</div>`
+               : `<div style="font-size:13px;">⏳ รอแอดมินสร้างรายงาน</div>`) + `</div>`;
+    wireGen(p);
+    return;
+  }
+  const s = rep.snapshot || {};
+  const prof = s.profile || [];
+  let h = head + `<div class="pbar no-print">
+      ${CAN_GEN ? `<button class="ghost" id="btn-gen">🔄 สร้าง/อัปเดตรายงาน <span class="tag-admin">🔒 แอดมิน</span></button>` : ''}
+      <a href="/api/report/person/${encodeURIComponent(p.user_id)}/excel"><button class="ghost">📊 Excel</button></a>
+      <button class="ghost" onclick="window.print()">🖨 PDF</button>
+    </div>
+    <p class="pmeta">สร้างเมื่อ ${esc(fmtDT(rep.at))}${rep.by && rep.by.name ? ' โดย ' + esc(rep.by.name) : ''} · ตารางงาน: ${rep.source === 'ai' ? 'AI (' + esc(rep.model || 'Claude') + ')' : 'เทมเพลต (ไม่ใช้ AI)'} · บันทึกงานช่วง ${rep.worklog ? esc(fmtD(rep.worklog.from)) + '–' + esc(fmtD(rep.worklog.to)) + ' (มีบันทึก ' + esc(rep.worklog.days) + ' วัน)' : '-'}${rep.hasInterview ? '' : ' · ยังไม่มีข้อมูลสัมภาษณ์'}</p>`;
+  if (j.stale) h += `<div class="stale">⚠️ มีข้อมูลใหม่หลังสร้างรายงานนี้ (บันทึกงาน/สัมภาษณ์/ตำแหน่ง) — ${CAN_GEN ? 'กด “สร้าง/อัปเดตรายงาน” เพื่อให้เป็นปัจจุบัน' : 'แจ้งแอดมินให้อัปเดต'}</div>`;
+  for (let i = 0; i < 7; i++) h += topic(i + 1, (prof[i] || [])[1]);
+  h += tableTopic(8, ['KPI', 'สิ่งที่วัด', 'สูตร/วิธีวัด', 'เป้าหมาย', 'ความถี่'], (s.kpis || []));
+  h += tableTopic(9, ['#', 'ปัญหา', 'ข้อเสนอ', 'ผลกระทบ', 'ความเสี่ยง'], (s.opt || []));
+  h += tableTopic(10, ['ช่วง', 'เวลา/ช่วงในวัน', 'งาน', 'เป้าหมาย/ผลที่คาดหวัง', 'หมายเหตุ'], (rep.schedule || []), true);
+  h += topic(11, (s.problems || []).length ? s.problems.map(x => `• ${x[0]}: ${x[1]}`).join('\n') : '-');
+  h += topic(12, s.voice || '-');
+  h += topic(13, (s.ai || []).length ? s.ai.map(a => '• ' + a).join('\n') : '-');
+  $('rp-panel').innerHTML = h;
+  wireGen(p);
+}
+function wireGen(p) {
+  const b = $('btn-gen');
+  if (b) b.addEventListener('click', () => startJob(TBASE + '/api/person-report/' + encodeURIComponent(p.user_id) + '/generate', 'สร้าง/อัปเดตรายงาน: ' + p.name));
+}
+
+// ---------- ป๊อปอัป "กำลังวิเคราะห์" (งานเบื้องหลัง + poll สถานะ) ----------
+function modal(html) { $('rp-modal-box').innerHTML = html; $('rp-modal').style.display = 'flex'; }
+function closeModal() { $('rp-modal').style.display = 'none'; }
+let polling = false;
+async function startJob(url, title) {
+  if (polling) return;
+  modal(`<div class="spin"></div><div style="margin-top:12px; font-weight:600;">กำลังเริ่ม…</div>`);
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 409) { pollJob(title); return; }
+    if (!r.ok) throw new Error(j.error || 'สั่งงานไม่สำเร็จ');
+    if (j.total === 0) { modal(`<div style="font-size:38px;">👍</div><div style="font-weight:600; margin:6px 0;">ทุกคนมีรายงานแล้ว</div><button onclick="closeModal()">ปิด</button>`); return; }
+    pollJob(title);
+  } catch (e) { modal(`<div style="font-size:38px;">⚠️</div><div style="font-weight:600; margin:6px 0;">${esc(e.message)}</div><button onclick="closeModal()">ปิด</button>`); }
+}
+function drawProgress(title, s) {
+  const pct = s.total ? Math.round((s.index / s.total) * 100) : 0;
+  modal(`<div class="spin"></div>
+    <div style="font-weight:600; color:#0f3d6b; font-size:16px; margin:12px 0 4px;">${esc(title)}</div>
+    <div class="muted" style="font-size:13px;">กำลังวิเคราะห์ <b>${Math.min(s.index + 1, s.total)}/${s.total}</b> · ${esc(s.current || '')}</div>
+    <div class="prog"><div style="width:${pct}%"></div></div>
+    <div class="muted" style="font-size:12px;">🧠 AI กำลังทำงานอยู่ — ปิดหน้านี้ได้ งานจะทำต่อเบื้องหลัง</div>`);
+}
+async function pollJob(title) {
+  polling = true;
+  let fails = 0;
+  const tick = async () => {
+    let s;
+    try { const r = await fetch(TBASE + '/api/report-job'); if (!r.ok) throw 0; s = await r.json(); fails = 0; }
+    catch (_) { if (++fails > 20) { polling = false; modal(`<div style="font-size:38px;">⚠️</div><div style="margin:6px 0;">เชื่อมต่อไม่สำเร็จ — งานอาจยังทำอยู่เบื้องหลัง ลองรีเฟรชภายหลัง</div><button onclick="closeModal()">ปิด</button>`); return; } setTimeout(tick, 3000); return; }
+    if (s.running) { drawProgress(title || 'กำลังวิเคราะห์', s); setTimeout(tick, 1500); return; }
+    polling = false;
+    const errs = (s.errors || []).length ? `<div style="text-align:left; font-size:12px; color:#b91c1c; margin:8px 0; max-height:140px; overflow:auto;">${s.errors.map(e => '• ' + esc(e)).join('<br>')}</div>` : '';
+    modal(`<div style="font-size:42px;">${s.failed ? '⚠️' : '✅'}</div><div style="font-weight:600; color:#0f3d6b; font-size:16px; margin:6px 0;">${s.failed ? 'เสร็จแล้ว (มีบางรายการไม่สำเร็จ)' : 'วิเคราะห์เสร็จแล้ว'}</div>
+      <div class="muted" style="font-size:13px;">สำเร็จ ${s.done} · ไม่สำเร็จ ${s.failed} · ทั้งหมด ${s.total}</div>${errs}
+      <button style="margin-top:12px;" onclick="closeModal()">ปิด</button>`);
+    loadTree(true);
+  };
+  tick();
+}
+// รีเฟรชระหว่างงานยังรันอยู่ → แสดงป๊อปอัปความคืบหน้าต่อ (แอดมินเท่านั้นที่สั่งงานได้)
+async function resumeIfRunning() {
+  if (!CAN_GEN) return;
+  try { const r = await fetch(TBASE + '/api/report-job'); if (!r.ok) return; const s = await r.json(); if (s.running && s.kind === 'person') pollJob('กำลังสร้างรายงานรายคน'); } catch (_) {}
+}
+
+loadTree(false).then(resumeIfRunning);
+</script>
+</body>
+</html>

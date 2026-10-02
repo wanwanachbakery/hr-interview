@@ -59,25 +59,38 @@
 
     const TITLES = {
       '/': 'หน้าแรก', '/worklog': 'บันทึกงานประจำวัน', '/worklog-team': 'บันทึกงานของทีม',
-      '/worklog-report': 'สรุปบันทึกงาน', '/dashboard': 'Dashboard Job', '/reports': 'รายงาน',
+      '/worklog-report': 'สรุปบันทึกงาน', '/dashboard': 'Dashboard Job', '/reports': 'สรุปผู้ใช้',
+      '/person-report': 'รายงานรายคน', '/overview-report': 'รายงานภาพรวม',
       '/profile': 'โปรไฟล์', '/interview': 'อินเทอร์วิว', '/review': 'เอกสาร', '/examples': 'ตัวอย่าง',
       '/manual': 'คู่มือการใช้งาน', '/schedule': 'จัดกะ / ตารางเวร', '/manage/categories': 'หมวดหมู่งาน',
       '/admin': 'จัดการระบบ', '/admin/users': 'จัดการผู้ใช้', '/admin/org': 'จัดการองค์กร',
     };
     const title = TITLES[path] || (path.indexOf('/admin') === 0 ? 'จัดการระบบ' : '');
 
+    // เมนูแยกหมวดตามประเภทการใช้งาน · {group} = หัวหมวด (ซ่อนเองถ้าบทบาทนั้นไม่มีเมนูในหมวด)
     // {href, label, ic, supervisor?: hide from officers, hideAdmin?: hide from admin,
-    //  roles?: show ONLY to these roles}
+    //  roles?: show ONLY to these roles, prefix?: active ทุกหน้าที่ขึ้นต้นด้วย href}
+    const SCHED_MANAGERS = ['admin', 'executive', 'manager', 'division_head', 'section_head'];
     const NAV = [
       { href: '/', label: 'หน้าแรก', ic: '🏠' },
+      { group: 'งานของฉัน' },
       { href: '/worklog', label: 'บันทึกงาน', ic: '📝', hideAdmin: true },
       { href: '/my-daysoff', label: 'วันหยุดของฉัน', ic: '🌴', hideAdmin: true, needsSelfOff: true },
+      // หน้า /schedule ของคนที่จัดกะให้คนอื่นไม่ได้ = "กะของฉัน" (ตั้งกะของตัวเอง)
+      { href: '/schedule', label: 'กะของฉัน', ic: '🗓️', roles: ['supervisor', 'officer'] },
+      { group: 'ทีม & ตารางเวร' },
       { href: '/worklog-team', label: 'บันทึกงานทีม', ic: '👥', supervisor: true },
       { href: '/worklog-report', label: 'สรุปบันทึกงาน', ic: '📈', supervisor: true },
-      { href: '/schedule', label: 'จัดกะ / ตารางเวร', ic: '🗓️', roles: ['admin', 'executive', 'manager', 'division_head', 'section_head', 'supervisor', 'officer'] },
-      { href: '/manage/categories', label: 'หมวดหมู่งาน', ic: '🏷️', roles: ['executive', 'manager', 'division_head', 'section_head', 'supervisor', 'officer'] },
+      { href: '/schedule', label: 'จัดกะ / ตารางเวร', ic: '🗓️', roles: SCHED_MANAGERS },
+      { group: 'รายงานวิเคราะห์' },
       { href: '/dashboard', label: 'Dashboard Job', ic: '📋' },
-      { href: '/reports', label: 'รายงาน', ic: '📊' },
+      { href: '/person-report', label: 'รายงานรายคน', ic: '👤', supervisor: true },
+      { href: '/overview-report', label: 'รายงานภาพรวม', ic: '🏢', roles: ['admin', 'executive'] },
+      { group: 'ข้อมูล & ตั้งค่า' },
+      { href: '/manage/categories', label: 'หมวดหมู่งาน', ic: '🏷️', roles: ['executive', 'manager', 'division_head', 'section_head', 'supervisor', 'officer'] },
+      { href: '/reports', label: 'สรุปผู้ใช้', ic: '📊' },
+      { href: '/admin', label: 'Admin', ic: '🔐', roles: ['admin'], prefix: true, cls: 'admin' },
+      { group: 'ช่วยเหลือ' },
       { href: '/manual', label: 'คู่มือ', ic: '📖' },
     ];
 
@@ -89,8 +102,10 @@
       '/worklog-report': 'สรุปบันทึกงานของทีม: เลือกช่วงเวลา แล้วดูสัดส่วนเวลาที่ใช้แยกตามหมวดหมู่งาน และดูว่าใครบันทึกครบ/ไม่ครบ',
       '/schedule': 'จัดกะให้พนักงานรายวัน: เลือกพนักงาน → เลือก “กะที่จะลง” (จากแม่แบบที่แอดมินสร้างไว้) → คลิกวันในปฏิทิน หรือใช้ปุ่มลงทั้งเดือน/จันทร์–ศุกร์ · หมายเหตุ: การเพิ่ม/แก้ “แม่แบบกะ (ช่วงเวลา)” ทำได้เฉพาะแอดมิน',
       '/manage/categories': 'เพิ่ม/แก้/ลบ หมวดหมู่งานของฝ่ายคุณ — พนักงานในฝ่ายจะเลือกหมวดเหล่านี้ในหน้าบันทึกงานได้ทันที (หมวดกลางที่ใช้ทุกฝ่าย แก้ได้เฉพาะแอดมิน)',
-      '/dashboard': 'ดูสถานะการสัมภาษณ์ของแต่ละตำแหน่ง · ผู้ครองที่ “เสร็จ” แล้วกด “ดูเอกสาร” ได้ · กด “วิเคราะห์ภาพรวมบริษัท” เพื่อสร้างรายงานรวม · ปุ่ม “รีเซ็ต” (เฉพาะแอดมิน) ล้างคำตอบกลับเป็น “ยังไม่ตอบ” โดยไม่ลบพนักงาน',
+      '/dashboard': 'ดูสถานะการสัมภาษณ์ของแต่ละตำแหน่ง · ผู้ครองที่ “เสร็จ” แล้วกด “ดูเอกสาร” ได้ · การวิเคราะห์ภาพรวมย้ายไปอยู่หน้า “รายงานภาพรวม” (ปุ่มมุมขวาบน) · ปุ่ม “รีเซ็ต” (เฉพาะแอดมิน) ล้างคำตอบกลับเป็น “ยังไม่ตอบ” โดยไม่ลบพนักงาน',
       '/reports': 'สรุปจำนวนผู้ใช้และฝ่าย พร้อมรายชื่อทั้งหมด — ค้นหาด้วยชื่อ/username และคัดกรองตามบทบาท/ฝ่าย/แผนกได้',
+      '/person-report': 'ไล่ดูตาม ฝ่าย → แผนก → ตำแหน่ง → คน (กดลูกศรเพื่อยุบ/กาง) แล้วกดชื่อคนเพื่อดูรายงาน 13 หัวข้อ รวม “ตารางงาน” ที่ AI สรุปจากบันทึกงานจริง · ✓ = มีรายงานแล้ว · หัวหน้าเห็นเฉพาะลูกทีม · ปุ่มสร้าง/อัปเดตรายงานเฉพาะแอดมิน',
+      '/overview-report': 'เลือกขอบเขตทางซ้าย (ทั้งบริษัท / ฝ่าย / แผนก / ตำแหน่ง) แล้วกด “▶ วิเคราะห์ทิศทาง (AI)” — AI วิเคราะห์จากข้อมูลงานจริงว่ากลุ่มนี้ควรเดินอย่างไร · ระดับตำแหน่งจะแนะนำหน้าที่ จำนวนคน และตารางงาน · “วิเคราะห์ทั้งหมด” เลือกได้ว่าทำเฉพาะที่ข้อมูลเปลี่ยนหรือทำใหม่ทั้งหมด',
       '/manual': 'คู่มือการใช้งานทั้งหมด — สลับแท็บ “ฉบับเต็ม / ตามบทบาท” ใช้สารบัญด้านข้างกระโดดไปแต่ละหัวข้อ หรือกด “ดาวน์โหลด PDF” เพื่อบันทึก/ส่งต่อ',
       '/profile': 'ดูข้อมูลส่วนตัวของคุณ และเปลี่ยนรหัสผ่านได้ที่หน้านี้',
       '/interview': 'ตอบคำถามการทำงานประจำวันตามช่วงเวลา · เมื่อตอบครบกด “เสร็จสิ้น” ระบบจะสร้างเอกสารให้ (เลือกดึงบันทึกงานย้อนหลัง 1/2/3 เดือนมาช่วยวิเคราะห์ได้)',
@@ -111,7 +126,6 @@
       '<aside class="app-sidebar" id="appSidebar">' +
         '<div class="app-brand">HR-Interview<span class="app-co" id="appCo">&nbsp;</span></div>' +
         '<nav class="app-nav" id="appNav"></nav>' +
-        '<div class="app-nav-foot" id="appFoot"></div>' +
       '</aside>' +
       '<div class="app-backdrop" id="appBackdrop"></div>' +
       '<div class="app-main">' +
@@ -169,24 +183,35 @@
       if (window.I18N && typeof window.I18N.mountSwitcher === 'function') { try { window.I18N.mountSwitcher(); } catch (_) {} }
     }
 
+    if (!document.getElementById('appNavGroupStyle')) {
+      const st = document.createElement('style');
+      st.id = 'appNavGroupStyle';
+      st.textContent =
+        '.app-nav-group{font-size:11px;font-weight:600;letter-spacing:.3px;color:#8193a8;padding:14px 12px 4px;margin-top:4px;border-top:1px solid #334155}' +
+        '.app-nav-item.admin{color:#fcd34d}.app-nav-item.admin:hover{color:#fde68a}.app-nav-item.admin.active{color:#fff}';
+      document.head.appendChild(st);
+    }
     let navRole = null, selfOffEnabled = false;
     function renderNav(role) {
       navRole = role;
       const isSup = role && role !== 'officer';
-      const items = NAV.filter(it =>
+      const vis = NAV.filter(it => it.group || (
         !(it.hideAdmin && role === 'admin') &&
         !(it.supervisor && !isSup) &&
         !(it.roles && !it.roles.includes(role)) &&
-        !(it.needsSelfOff && !selfOffEnabled));
+        !(it.needsSelfOff && !selfOffEnabled)));
+      const items = vis.filter((it, i) => !it.group || (vis[i + 1] && !vis[i + 1].group));   // ตัดหัวหมวดที่ว่าง
       document.getElementById('appNav').innerHTML = items.map(it => {
-        const active = (it.href === '/' ? path === '/' : path === it.href) ? ' active' : '';
-        return '<a class="app-nav-item' + active + '" href="' + TB + it.href + '"><span class="ic">' + it.ic + '</span>' + esc(it.label) + '</a>';
+        if (it.group) return '<div class="app-nav-group">' + esc(it.group) + '</div>';
+        const on = it.href === '/' ? path === '/' : (it.prefix ? path.indexOf(it.href) === 0 : path === it.href);
+        return '<a class="app-nav-item' + (it.cls ? ' ' + it.cls : '') + (on ? ' active' : '') + '" href="' + TB + it.href + '"><span class="ic">' + it.ic + '</span>' + esc(it.label) + '</a>';
       }).join('');
-      document.getElementById('appFoot').innerHTML = (role === 'admin')
-        ? '<a class="app-nav-item' + (path.indexOf('/admin') === 0 ? ' active' : '') + '" href="' + TB + '/admin"><span class="ic">🔐</span>Admin</a>'
-        : '';
       const prof = document.getElementById('appProfile');
       if (prof) prof.style.display = (role === 'admin') ? 'none' : '';
+      // หน้า /schedule ของพนักงาน/หัวหน้างาน = "กะของฉัน"
+      if (path === '/schedule' && (role === 'supervisor' || role === 'officer')) {
+        const t = document.querySelector('.app-title'); if (t) t.textContent = 'กะของฉัน';
+      }
     }
     // Perf: เมนู/ชื่อบริษัท/สวิตช์ เปลี่ยนน้อยมากในหนึ่ง session — cache ใน sessionStorage
     // เพื่อให้หน้าถัด ๆ ไป "วาดเมนูทันที" ไม่ต้องรอ ~1 วิ ต่อการเปิดหน้า (ยิงรีเฟรชเบื้องหลัง)
