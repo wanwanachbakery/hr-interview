@@ -205,6 +205,32 @@ function personProfileWorkbook(data, opts = {}) {
 //          schedule:[[ช่วง, คนที่('0'=ทุกคน), เวลา, งาน, เป้าหมาย]], headcount:{current,recommended,reason} }
 // ============================================================
 const sheetName = (s) => String(s).replace(/[\[\]:*?\/\\]/g, '-').slice(0, 31);
+// ไทม์ไลน์หลายคน: rows=[ช่วง, คนที่, "HH:MM–HH:MM", งาน, เป้าหมาย] → [[เวลา, งานคนที่1..n]] ช่วงเวลาตรงกันทุกคอลัมน์
+function alignTimeline(rows, n) {
+  const hours = {}, extra = [];
+  for (const x of rows) {
+    const m = /^(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})$/.exec(String(x[2] || '').trim());
+    const slot = Number(x[1]) || 0;
+    if (!m) { extra.push(x); continue; }
+    let a = +m[1], b = +m[3];
+    if (b <= a) b += 24;
+    for (let h = a; h < b; h++) {
+      const H = hours[h] || (hours[h] = Array(n).fill(''));
+      if (slot >= 1 && slot <= n) H[slot - 1] = x[3] || ''; else H.fill(x[3] || '');
+    }
+  }
+  const p = (h) => String(h % 24).padStart(2, '0') + ':00';
+  const hs = Object.keys(hours).map(Number).sort((a, b) => a - b), out = [];
+  for (let i = 0; i < hs.length;) {
+    let j = i;
+    const sig = hours[hs[i]].join('|');
+    while (j + 1 < hs.length && hs[j + 1] === hs[j] + 1 && hours[hs[j + 1]].join('|') === sig) j++;
+    out.push([p(hs[i]) + '–' + p(hs[j] + 1)].concat(hours[hs[i]]));
+    i = j + 1;
+  }
+  for (const x of extra) { const c = Array(n).fill(''), s = Number(x[1]) || 0; if (s >= 1 && s <= n) c[s - 1] = x[3]; else c.fill(x[3]); out.push([x[2] || '-'].concat(c)); }
+  return out;
+}
 function linesSheet(wb, name, title, subs, lines) {
   const ws = wb.addWorksheet(sheetName(name), { views: [{ showGridLines: false }] });
   let r = titleBlock(ws, title, subs);
@@ -230,26 +256,25 @@ function overviewWorkbook(data) {
       const n = Math.max(Number(hc.recommended) || 1, maxSlot, 1);
       const ws = wb.addWorksheet(sheetName(`${i + 1}.${short}`), { views: [{ showGridLines: false }] });
       let r = titleBlock(ws, `${data.title} — ${s.title}`, subs.concat([n > 1 ? `แบ่งงาน ${n} คน (คอลัมน์ คนที่ 1..${n})` : 'ทำได้โดย 1 คน']));
-      if (n > 1) {
-        headerRow(ws, r, ['ช่วง'].concat(Array.from({ length: n }, (_, k) => `คนที่ ${k + 1}`))); r++;
-        const periods = [...new Set(rows.map(x => x[0]))];
-        const out = periods.map(p => {
-          const cols = Array.from({ length: n }, () => []);
-          for (const x of rows.filter(y => y[0] === p)) {
-            const txt = `${x[3] || '-'}${x[2] && x[2] !== '-' ? ' (' + x[2] + ')' : ''}`;
-            const slot = Number(x[1]) || 0;
-            if (slot >= 1 && slot <= n) cols[slot - 1].push(txt); else cols.forEach(c => c.push(txt));
-          }
-          return [p].concat(cols.map(c => c.join('\n') || '-'));
-        });
-        dataRows(ws, r, out.length ? out : [['(ยังไม่มีข้อมูล)'].concat(Array(n).fill(''))], { boldCol0: true, minHeight: 22 });
-        setWidths(ws, [14].concat(Array(n).fill(Math.max(26, Math.floor(96 / n)))));
-      } else {
-        headerRow(ws, r, ['ช่วง', 'เวลา/ช่วงในวัน', 'งานที่ต้องทำ', 'เป้าหมาย']); r++;
-        dataRows(ws, r, rows.length ? rows.map(x => [x[0], x[2] || '-', x[3] || '-', x[4] || '-']) : [['(ยังไม่มีข้อมูล)', '', '', '']], { boldCol0: true, centerCols: [1], minHeight: 22 });
-        setWidths(ws, [14, 18, 50, 36]);
+      const day = rows.filter(x => x[0] === 'ทุกวันทำงาน');
+      const other = rows.filter(x => x[0] !== 'ทุกวันทำงาน');
+      const label = (txt) => { const row = ws.getRow(r); row.getCell(1).value = txt; row.getCell(1).font = { name: FONT, size: 11, bold: true, color: { argb: DARK } }; r++; };
+      // (1) 1 วันทำงานปกติ — หลายคนจัดช่วงเวลาให้ตรงกันทุกคอลัมน์
+      label('1 วันทำงานปกติ ต้องทำอะไรบ้าง');
+      const head1 = n > 1 ? ['เวลา'].concat(Array.from({ length: n }, (_, k) => `คนที่ ${k + 1}`)) : ['เวลา', 'งานที่ต้องทำ', 'เป้าหมาย'];
+      headerRow(ws, r, head1); const firstData = ++r;
+      const dayRows = n > 1 ? alignTimeline(day, n).map(x => x.map(c => c || '-')) : day.map(x => [x[2] || '-', x[3] || '-', x[4] || '-']);
+      r = dataRows(ws, r, dayRows.length ? dayRows : [['(ยังไม่มีข้อมูล)'].concat(Array(head1.length - 1).fill(''))], { boldCol0: true, minHeight: 20 });
+      // (2)+(3) งานเฉพาะบางวัน + รายสัปดาห์–รายปี
+      if (other.length) {
+        r++; label('งานเฉพาะบางวัน / รายสัปดาห์ / เดือน / ไตรมาส / ปี');
+        const head2 = ['ช่วง'].concat(n > 1 ? ['คนที่'] : []).concat(['เวลา', 'งาน', 'เป้าหมาย']);
+        while (head2.length < head1.length) head2.push('');
+        headerRow(ws, r, head2); r++;
+        dataRows(ws, r, other.map(x => [x[0]].concat(n > 1 ? [Number(x[1]) >= 1 ? 'คนที่ ' + Number(x[1]) : 'ทุกคน'] : []).concat([x[2] || '-', x[3] || '-', x[4] || '-'])), { boldCol0: true, minHeight: 20 });
       }
-      freezeAt(ws, r);
+      setWidths(ws, n > 1 ? [16].concat(Array(Math.max(n, 4)).fill(Math.max(24, Math.floor(100 / Math.max(n, 4))))) : [16, 50, 36, 30, 30]);
+      freezeAt(ws, firstData);
       return;
     }
     let lines = toLines(s.body);

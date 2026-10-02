@@ -53,6 +53,9 @@
     .tw th, .tw td { border:1px solid var(--border); padding:6px 8px; text-align:left; vertical-align:top; }
     .tw th { background:#f1f5f9; color:#475569; font-weight:600; }
     .tw td.per { background:#eef2f7; }
+    .tw td.b { font-weight:600; color:#0f3d6b; white-space:nowrap; }
+    .tw tr.brk td, .tw td.brkc { background:#f1f5f9; color:#64748b; }
+    .subh { font-weight:600; color:#334155; font-size:13.5px; margin:10px 0 6px; }
     .ov-modal { display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:9999; align-items:center; justify-content:center; }
     .ov-modal-box { background:#fff; border-radius:16px; padding:22px 22px 18px; max-width:500px; width:92%; max-height:84vh; overflow:auto; box-shadow:0 20px 50px rgba(0,0,0,.3); }
     .opt { border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:10px; cursor:pointer; }
@@ -185,26 +188,72 @@ const noHr = s => String(s ?? '').split('\n').filter(l => !/^\s*([-*_])(\s*\1){2
 function secBlock(icon, title, body) {
   return `<div class="sb"><div class="st">${esc(icon)} ${esc(title)}</div><div class="sc">${esc(noHr(body))}</div></div>`;
 }
+// ตารางงานแนะนำของตำแหน่ง: rows = [ช่วง, คนที่('0'=ทุกคน), เวลา, งาน, เป้าหมาย]
+// (1) 1 วันทำงานปกติ — หลายคน: จัดช่วงเวลาให้ตรงกันทุกคอลัมน์ "คนที่ 1/2…" · คนเดียว: บอกแค่งาน
+// (2) งานเฉพาะบางวัน (3) งานรายสัปดาห์–รายปี
+const PERIODIC = ['รายสัปดาห์', 'รายเดือน', 'รายไตรมาส', 'รายปี'];
+const isBreak = (t) => (/^พัก/.test(String(t || '')) && String(t).length <= 20) || /^ไม่ได้บันทึกงานช่วงนี้/.test(String(t || ''));
+function parseSpan(t) {
+  const m = /^(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})$/.exec(String(t || '').trim());
+  if (!m) return null;
+  let a = +m[1], b = +m[3];
+  if (b <= a) b += 24;
+  return [a, b];
+}
+// ขยายแต่ละช่วงเป็นรายชั่วโมง → รวมชั่วโมงติดกันที่ "งานของทุกคน" เหมือนกัน → ช่วงเวลาที่ตรงกันทุกคอลัมน์
+function alignTimeline(rows, n) {
+  const hours = {}, extra = [];
+  for (const r of rows) {
+    const sp = parseSpan(r[2]), slot = Number(r[1]) || 0;
+    if (!sp) { extra.push(r); continue; }
+    for (let h = sp[0]; h < sp[1]; h++) {
+      const H = hours[h] || (hours[h] = Array(n).fill(''));
+      if (slot >= 1 && slot <= n) H[slot - 1] = r[3] || ''; else H.fill(r[3] || '');
+    }
+  }
+  const p = (x) => String(x % 24).padStart(2, '0') + ':00';
+  const hs = Object.keys(hours).map(Number).sort((a, b) => a - b), out = [];
+  for (let i = 0; i < hs.length;) {
+    let j = i;
+    const sig = hours[hs[i]].join('|');
+    while (j + 1 < hs.length && hs[j + 1] === hs[j] + 1 && hours[hs[j + 1]].join('|') === sig) j++;
+    out.push([p(hs[i]) + '–' + p(hs[j] + 1)].concat(hours[hs[i]]));
+    i = j + 1;
+  }
+  for (const r of extra) { const c = Array(n).fill(''), s = Number(r[1]) || 0; if (s >= 1 && s <= n) c[s - 1] = r[3]; else c.fill(r[3]); out.push([r[2] || '-'].concat(c)); }
+  return out;
+}
 function scheduleTable(rows, n) {
   if (!rows.length) return '<p class="muted" style="font-size:13px;">(ยังไม่มีข้อมูลตารางงาน)</p>';
-  let t = '<div class="tw"><table>';
-  if (n > 1) {
-    t += '<tr><th style="width:90px">ช่วง</th>' + Array.from({ length: n }, (_, k) => `<th>คนที่ ${k + 1}</th>`).join('') + '</tr>';
-    const periods = [...new Set(rows.map(r => r[0]))];
-    for (const p of periods) {
-      const cols = Array.from({ length: n }, () => []);
-      for (const r of rows.filter(x => x[0] === p)) {
-        const txt = `${esc(r[3] || '-')}${r[2] && r[2] !== '-' ? ' <span class="muted">(' + esc(r[2]) + ')</span>' : ''}`;
-        const slot = Number(r[1]) || 0;
-        if (slot >= 1 && slot <= n) cols[slot - 1].push(txt); else cols.forEach(c => c.push(txt));
-      }
-      t += `<tr><td class="${DAYS.includes(p) ? '' : 'per'}"><b>${esc(p)}</b></td>` + cols.map(c => `<td>${c.join('<br>') || '<span class="muted">-</span>'}</td>`).join('') + '</tr>';
+  const day = rows.filter(r => r[0] === 'ทุกวันทำงาน');
+  const per = rows.filter(r => PERIODIC.includes(r[0]));
+  const wk = rows.filter(r => r[0] !== 'ทุกวันทำงาน' && !PERIODIC.includes(r[0]));
+  const slotTxt = (s) => (Number(s) >= 1 ? 'คนที่ ' + Number(s) : 'ทุกคน');
+  let t = '<div class="subh">🕐 1 วันทำงานปกติ ต้องทำอะไรบ้าง</div>';
+  if (!day.length) t += '<p class="muted" style="font-size:13px; margin:4px 0;">(ยังไม่มีข้อมูลพอจะสรุปเป็นไทม์ไลน์)</p>';
+  else if (n > 1) {
+    t += '<div class="tw"><table><tr><th style="width:104px">เวลา</th>' + Array.from({ length: n }, (_, k) => `<th>คนที่ ${k + 1}</th>`).join('') + '</tr>';
+    for (const r of alignTimeline(day, n)) {
+      const allBreak = r.slice(1).every(isBreak);
+      t += allBreak ? `<tr class="brk"><td>${esc(r[0])}</td><td colspan="${n}">${esc(r[1])}</td></tr>`
+        : `<tr><td class="b">${esc(r[0])}</td>` + r.slice(1).map(c => `<td${isBreak(c) ? ' class="brkc"' : ''}>${esc(c || '-')}</td>`).join('') + '</tr>';
     }
+    t += '</table></div>';
   } else {
-    t += '<tr><th style="width:90px">ช่วง</th><th style="width:110px">เวลา/ช่วงในวัน</th><th>งานที่ต้องทำ</th><th>เป้าหมาย</th></tr>';
-    for (const r of rows) t += `<tr><td class="${DAYS.includes(r[0]) ? '' : 'per'}"><b>${esc(r[0])}</b></td><td>${esc(r[2] || '-')}</td><td>${esc(r[3] || '-')}</td><td>${esc(r[4] || '-')}</td></tr>`;
+    t += '<div class="tw"><table><tr><th style="width:104px">เวลา</th><th>งานที่ต้องทำ</th><th style="width:180px">เป้าหมาย</th></tr>';
+    for (const r of day) t += isBreak(r[3]) ? `<tr class="brk"><td>${esc(r[2])}</td><td colspan="2">${esc(r[3])}</td></tr>`
+      : `<tr><td class="b">${esc(r[2] || '-')}</td><td>${esc(r[3] || '-')}</td><td>${esc(r[4] || '-')}</td></tr>`;
+    t += '</table></div>';
   }
-  return t + '</table></div>';
+  const list = (title, rs, c0) => {
+    if (!rs.length) return '';
+    let s = `<div class="subh">${title}</div><div class="tw"><table><tr><th style="width:90px">${c0}</th>${n > 1 ? '<th style="width:70px">คนที่</th>' : ''}<th style="width:104px">เวลา</th><th>งาน</th><th style="width:170px">เป้าหมาย</th></tr>`;
+    for (const r of rs) s += `<tr><td class="b">${esc(r[0])}</td>${n > 1 ? `<td>${esc(slotTxt(r[1]))}</td>` : ''}<td>${esc(r[2] || '-')}</td><td>${esc(r[3] || '-')}</td><td>${esc(r[4] || '-')}</td></tr>`;
+    return s + '</table></div>';
+  };
+  t += list('📌 งานเฉพาะบางวัน', wk, 'วัน');
+  t += list('🔁 งานรายสัปดาห์ / เดือน / ไตรมาส / ปี', per, 'ช่วง');
+  return t;
 }
 function renderReport(j) {
   const sc = j.scope, rep = j.report, isGroup = sc.level !== 'company';

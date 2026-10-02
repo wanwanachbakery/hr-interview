@@ -3748,97 +3748,218 @@ function rptOrgTree(db, users) {
 // ---------- รายงานรายคน ----------
 const personReportPath = (db, uid) => rptDir(db, 'person', rptKey(uid) + '.json');
 const readPersonReport = (db, uid) => readJson(personReportPath(db, uid), null);
+const personReportOutdated = (r) => (Number(r.schedVersion) || 1) < SCHED_VERSION;   // ตารางงานรูปแบบเก่า → ควรสร้างใหม่
 function activeEmpOf(db, uid) {
   const emps = db.employees();
   return emps.find(e => e.user_id === uid && !e.archived) || emps.find(e => e.user_id === uid) || null;
 }
 
-// อ่านบันทึกงานจริง 90 วัน → รูปแบบงานแยกตามวันในสัปดาห์ + งานต้น/ปลายเดือน + กะที่ลง
+// ---------- ตารางงาน v1.18: "1 วันทำงานปกติ ต้องทำอะไรบ้าง" (ไทม์ไลน์) + งานเฉพาะบางวัน + งานตามรอบ ----------
+// โครงแถว [ช่วง, เวลา, งาน, เป้าหมาย, หมายเหตุ] · ช่วง 'ทุกวันทำงาน' = ไทม์ไลน์วันปกติ · หมายเหตุ 'พัก' = แถวพัก
+const SCHED_VERSION = 2;
+const SCHED_BREAK = 'พัก';
+const p2 = (n) => String(n).padStart(2, '0');
+const hourSpan = (a, b) => `${p2(a)}:00–${p2((b + 1) % 24)}:00`;
+// งานชื่อคล้ายกันนับเป็นงานเดียว: ใช้คำต้น ๆ (อย่างน้อย 6 ตัวอักษร) ตัดที่ 10 ตัวอักษร
+// เช่น "ประชุมซัพพอร์ต" / "ประชุมซัพพอร์ต อัพเดทเรื่องฉลาก…" → กลุ่มเดียวกัน
+function taskGroupKey(label) {
+  const toks = String(label).toLowerCase().replace(/[()\[\]"'“”.,:;!?]/g, ' ').split(/\s+/).filter(Boolean);
+  let s = '';
+  for (const t of toks) { s = s ? s + ' ' + t : t; if (s.length >= 6) break; }
+  return s.slice(0, 10) || String(label).slice(0, 10);
+}
+// ชื่อที่แสดงของกลุ่มงาน: ชื่อที่ใช้บ่อยสุด (ถ้า ≥ ครึ่ง) · ไม่งั้นใช้ส่วนต้นที่เหมือนกัน + ตัวอย่าง
+function groupDisplay(G) {
+  const ent = Object.entries(G.labels).sort((a, b) => b[1] - a[1]);
+  const total = ent.reduce((s, e) => s + e[1], 0);
+  if (ent.length === 1 || ent[0][1] / total >= 0.5) return ent[0][0];
+  const pre = ent.map(e => e[0]).reduce((a, b) => { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return a.slice(0, i); })
+    .replace(/[\s\-–—:,/(]+$/, '').trim();
+  if (pre.length < 6) return ent[0][0];
+  if (ent.some(e => e[0] === pre)) return pre;                            // มีชื่อกลาง ๆ อยู่แล้ว เช่น "ประชุมซัพพอร์ต"
+  const rest = ent.slice(0, 2).map(e => rptTrunc(e[0].slice(pre.length).trim(), 22)).filter(Boolean);
+  return pre + (rest.length ? ` (${rest.join(', ')}${ent.length > 2 ? ' ฯลฯ' : ''})` : '');
+}
+// อ่านบันทึกงานจริง 90 วัน → ข้อมูลรายวัน/รายชั่วโมง + กลุ่มงาน + งานต้น/ปลายเดือน + กะที่ลง
 function worklogPatterns(db, user) {
   const range = rptRange();
   const shiftMap = Object.fromEntries((db.shifts() || []).map(s => [s.id, s]));
   const sched = db.loadSchedule(user.id) || {};
-  const byDow = {}, edge = { start: {}, end: {} }, shiftUse = {}, taskDays = {};
-  let daysLogged = 0, tasks = 0, hours = 0;
+  const dayList = [], groups = {}, edge = { start: {}, end: {} }, shiftUse = {};
+  let tasks = 0, hours = 0;
   for (const ds of worklogDateRange(range.from, range.to)) {
     const wl = db.loadWorklog(user.id, ds);
     if (!wl || !Array.isArray(wl.entries)) continue;
-    const f = wl.entries.filter(e => e && e.task && String(e.task).trim());
+    const f = wl.entries.filter(e => e && e.task && String(e.task).trim() && Number.isFinite(Number(e.hour)));
     if (!f.length) continue;
-    daysLogged++;
-    const D = byDow[dowOf(ds)] || (byDow[dowOf(ds)] = { days: 0, tasks: {} });
-    D.days++;
+    const dow = dowOf(ds);
     const y = Number(ds.slice(0, 4)), m = Number(ds.slice(5, 7)), dom = Number(ds.slice(8, 10));
     const dim = new Date(y, m, 0).getDate();
-    const hrs = new Set();
+    const day = { ds, dow, hours: {} };
     for (const e of f) {
       tasks++;
       const h = Number(e.hour);
-      if (Number.isFinite(h)) hrs.add(h);
       const label = String(e.task).trim().replace(/\s+/g, ' ').slice(0, 80);
-      const key = label.toLowerCase();
-      const T = D.tasks[key] || (D.tasks[key] = { label, days: new Set(), minH: 99, maxH: -1, recurring: false, cat: '' });
-      T.days.add(ds);
-      if (Number.isFinite(h)) { T.minH = Math.min(T.minH, h); T.maxH = Math.max(T.maxH, h); }
-      if (e.recurring) T.recurring = true;
-      if (!T.cat && e.category) T.cat = String(e.category);
-      (taskDays[key] || (taskDays[key] = new Set())).add(ds);
+      const key = taskGroupKey(label);
+      (day.hours[h] || (day.hours[h] = [])).push(key);
+      const G = groups[key] || (groups[key] = { key, labels: {}, days: new Set(), dowDays: {}, dowHours: {}, recurring: false, cat: '' });
+      G.labels[label] = (G.labels[label] || 0) + 1;
+      G.days.add(ds);
+      (G.dowDays[dow] || (G.dowDays[dow] = new Set())).add(ds);
+      const DH = G.dowHours[dow] || (G.dowHours[dow] = {});
+      DH[h] = (DH[h] || 0) + 1;
+      if (e.recurring) G.recurring = true;
+      if (!G.cat && e.category) G.cat = String(e.category);
       const bucket = dom <= 5 ? edge.start : (dom > dim - 5 ? edge.end : null);
-      if (bucket) (bucket[key] || (bucket[key] = { key, label, months: new Set() })).months.add(ds.slice(0, 7));
+      if (bucket) (bucket[key] || (bucket[key] = { key, months: new Set() })).months.add(ds.slice(0, 7));
     }
-    hours += hrs.size;
+    hours += Object.keys(day.hours).length;
+    dayList.push(day);
     const sh = shiftMap[sched[ds]];
     if (sh) shiftUse[sh.name] = (shiftUse[sh.name] || 0) + 1;
   }
-  return { range, daysLogged, tasks, hours, byDow, edge, shiftUse, taskDays };
+  return { range, daysLogged: dayList.length, tasks, hours, dayList, groups, edge, shiftUse };
 }
-function patternTime(T) {
-  const p = (n) => String(n).padStart(2, '0');
-  return T.maxH >= 0 ? `${p(T.minH)}:00–${p((T.maxH + 1) % 24)}:00` : '-';
+// เรียงชั่วโมงตามลำดับวันทำงาน (รองรับกะข้ามเที่ยงคืน: เริ่มหลังช่องว่างที่ยาวที่สุด)
+function dayOrder(hours) {
+  const hs = [...new Set(hours)].sort((a, b) => a - b);
+  if (hs.length <= 1) return hs;
+  let best = -1, si = 0;
+  for (let i = 0; i < hs.length; i++) {
+    const gap = ((hs[(i + 1) % hs.length] - hs[i] + 24) % 24) || 24;
+    if (gap > best) { best = gap; si = (i + 1) % hs.length; }
+  }
+  const start = hs[si], end = hs[(si - 1 + hs.length) % hs.length], seq = [];
+  for (let h = start; ; h = (h + 1) % 24) { seq.push(h); if (h === end) break; }
+  return seq;
 }
-// งานที่ซ้ำช่วงต้น/ปลายเดือน ≥ 2 เดือน และไม่ได้ทำทุกวัน = งานรายเดือน
-function monthlyCandidates(pt, bucket) {
-  return Object.values(bucket)
-    .filter(x => x.months.size >= 2 && (pt.taskDays[x.key] ? pt.taskDays[x.key].size : 0) <= x.months.size * 3)
-    .sort((a, b) => b.months.size - a.months.size).slice(0, 4);
+// ไทม์ไลน์ 1 วัน: ชั่วโมงที่มีบันทึก ≥ 30% ของวัน = ชั่วโมงทำงาน · แต่ละชั่วโมงใช้งานที่ทำบ่อยสุด
+// (ถ้ามี 2 งานทำสลับกันพอ ๆ กัน = "A / B") · ชั่วโมงติดกันที่งานเหมือนกันรวมเป็นช่วงเดียว · ช่องว่างกลางวัน = พัก
+function timelineRows(pt, period, days) {
+  const n = days.length;
+  if (!n) return { rows: [], keys: new Set() };
+  const hourDays = {}, hourGroups = {};
+  for (const d of days) for (const [hs, keys] of Object.entries(d.hours)) {
+    const h = Number(hs);
+    hourDays[h] = (hourDays[h] || 0) + 1;
+    const HG = hourGroups[h] || (hourGroups[h] = {});
+    for (const k of new Set(keys)) (HG[k] || (HG[k] = new Set())).add(d.ds);
+  }
+  const work = Object.keys(hourDays).map(Number).filter(h => hourDays[h] / n >= 0.3);
+  const slot = {}, used = new Set();
+  for (const h of work) {
+    const ranked = Object.entries(hourGroups[h]).map(([k, s]) => [k, s.size]).sort((a, b) => b[1] - a[1]);
+    const base = hourDays[h];
+    let keys = [ranked[0][0]];
+    if (ranked[0][1] / base < 0.6 && ranked[1] && ranked[1][1] / base >= 0.3) keys = [ranked[0][0], ranked[1][0]];
+    let label = keys.map(k => groupDisplay(pt.groups[k])).join(' / ');
+    if (ranked[0][1] / base < 0.2) {                                         // ไม่มีงานไหนเด่น → บอกเป็นหมวดงาน
+      const cats = {};
+      for (const [k, s] of Object.entries(hourGroups[h])) { const c = pt.groups[k].cat || 'อื่นๆ'; cats[c] = (cats[c] || 0) + s.size; }
+      const top = Object.entries(cats).sort((a, b) => b[1] - a[1])[0];
+      label = 'งานหลากหลาย' + (top ? ` (หมวด ${top[0]})` : ''); keys = [];
+    }
+    slot[h] = { keys, label };
+    keys.forEach(k => used.add(k));
+  }
+  const rows = [], seq = dayOrder(work);
+  for (let i = 0; i < seq.length;) {
+    const h = seq[i];
+    let j = i;
+    if (!slot[h]) {
+      while (j + 1 < seq.length && !slot[seq[j + 1]]) j++;
+      // ช่องว่าง ≤ 2 ชม. = พัก (มี 12:00 = พักกลางวัน) · ยาวกว่านั้น = ไม่ได้บันทึกงาน (ไม่เดาว่าพัก)
+      const gap = seq.slice(i, j + 1), lunch = gap.includes(12);
+      const txt = gap.length <= 2 ? (lunch ? 'พักกลางวัน' : 'พัก') : ('ไม่ได้บันทึกงานช่วงนี้' + (lunch ? ' (รวมพักกลางวัน)' : ''));
+      rows.push([period, hourSpan(h, seq[j]), txt, '', SCHED_BREAK]);
+    } else {
+      while (j + 1 < seq.length && slot[seq[j + 1]] && slot[seq[j + 1]].label === slot[h].label) j++;
+      const ds = new Set();
+      for (let x = i; x <= j; x++) for (const k of slot[h].keys) for (const d of ((hourGroups[seq[x]] || {})[k] || [])) ds.add(d);
+      const rec = slot[h].keys.some(k => pt.groups[k].recurring);
+      rows.push([period, hourSpan(h, seq[j]), slot[h].label, '-', (slot[h].keys.length ? `ทำ ${ds.size}/${n} วัน` : 'หลายงานสลับกัน') + (rec ? ' · งานประจำ' : '')]);
+    }
+    i = j + 1;
+  }
+  return { rows, keys: used };
 }
+const isWeekend = (dow) => dow === 0 || dow === 6;
+// ตารางงาน (ไม่ใช้ AI) — วันปกติ + งานเฉพาะบางวัน + เสาร์/อาทิตย์ (ถ้าทำงาน) + รายเดือน + จากสัมภาษณ์
+function mechanicalSchedule(pt, iv) {
+  const rows = [];
+  const weekdays = pt.dayList.filter(d => !isWeekend(d.dow));
+  const typicalDays = weekdays.length >= 3 ? weekdays : pt.dayList;
+  const tl = timelineRows(pt, 'ทุกวันทำงาน', typicalDays);
+  rows.push(...tl.rows);
+  const typicalKeys = tl.keys;
+  // เสาร์/อาทิตย์ที่ทำงาน ≥ 2 วัน (และวันปกติคิดจาก จ–ศ) → ไทม์ไลน์ของวันนั้นแยก
+  const ownTimeline = new Set();
+  if (typicalDays === weekdays) for (const dow of [6, 0]) {
+    const dd = pt.dayList.filter(d => d.dow === dow);
+    if (dd.length >= 2) { ownTimeline.add(dow); rows.push(...timelineRows(pt, TH_DOW[dow], dd).rows); }
+  }
+  // งานเฉพาะบางวัน: ทำ ≥ ครึ่งหนึ่งของวันนั้น และแทบไม่ทำวันอื่น
+  const loggedByDow = {};
+  for (const d of pt.dayList) loggedByDow[d.dow] = (loggedByDow[d.dow] || 0) + 1;
+  const specific = [];
+  for (const G of Object.values(pt.groups)) {
+    if (typicalKeys.has(G.key)) continue;
+    for (const dow of [1, 2, 3, 4, 5, 6, 0]) {
+      const nd = loggedByDow[dow] || 0;
+      if (nd < 2 || ownTimeline.has(dow)) continue;
+      const dd = G.dowDays[dow] ? G.dowDays[dow].size : 0;
+      const otherDays = G.days.size - dd, otherLogged = pt.daysLogged - nd;
+      if (dd / nd < 0.5 || (otherLogged && otherDays / otherLogged > 0.15)) continue;
+      const DH = G.dowHours[dow] || {}, mx = Math.max(...Object.values(DH));
+      const hs = dayOrder(Object.keys(DH).map(Number).filter(h => DH[h] >= mx / 2));
+      specific.push([dow, [TH_DOW[dow], hs.length ? hourSpan(hs[0], hs[hs.length - 1]) : '-', groupDisplay(G), '-', `ทุก${TH_DOW[dow]} (${dd}/${nd} วัน)${G.recurring ? ' · งานประจำ' : ''}`]]);
+    }
+  }
+  specific.sort((a, b) => ((a[0] + 6) % 7) - ((b[0] + 6) % 7)).forEach(x => rows.push(x[1]));
+  // รายเดือน: ซ้ำช่วงต้น/ปลายเดือน ≥ 2 เดือน และไม่ได้ทำทุกวัน
+  for (const [bucket, when] of [[pt.edge.start, 'ต้นเดือน'], [pt.edge.end, 'สิ้นเดือน']]) {
+    Object.values(bucket).filter(x => x.months.size >= 2 && !typicalKeys.has(x.key) && pt.groups[x.key].days.size <= x.months.size * 3)
+      .sort((a, b) => b.months.size - a.months.size).slice(0, 4)
+      .forEach(x => rows.push(['รายเดือน', when, groupDisplay(pt.groups[x.key]), '-', `จากบันทึกจริง (${x.months.size} เดือน)`]));
+  }
+  // ยังไม่มีบันทึกงาน → ใช้งานรายวันที่เล่าตอนสัมภาษณ์เป็นไทม์ไลน์
+  if (!pt.daysLogged && iv) {
+    let last = null;
+    for (const [t, task] of interviewWorkflow(iv)) {
+      const lbl = rptTrunc(task, 200);
+      const m = /^(\d{2}):00–(\d{2}):00$/.exec(t);
+      if (last && m && last.task === lbl && last.end === m[1]) { last.row[1] = last.row[1].slice(0, 6) + m[2] + ':00'; last.end = m[2]; continue; }
+      const row = ['ทุกวันทำงาน', t, lbl, '-', 'จากการสัมภาษณ์'];
+      rows.push(row);
+      last = m ? { task: lbl, end: m[2], row } : null;
+    }
+  }
+  const weekly = iv ? ivAnswer(iv, 'weekly_tasks') : '';
+  if (weekly) rows.push(['รายสัปดาห์', '-', rptTrunc(weekly, 200), '-', 'จากการสัมภาษณ์ (งานรายสัปดาห์/รายเดือน)']);
+  return rows;
+}
+// สรุปให้ AI: ร่างไทม์ไลน์จากสถิติ + งานบ่อยรายวัน + งานต้น/ปลายเดือน
 function patternsText(pt) {
   if (!pt.daysLogged) return `บันทึกงานจริง (${pt.range.from} ถึง ${pt.range.to}): ยังไม่มีบันทึก`;
   const L = [`บันทึกงานจริง ${pt.range.from} ถึง ${pt.range.to}: มีบันทึก ${pt.daysLogged} วัน · ${pt.hours} ชั่วโมง · ${pt.tasks} รายการงาน`];
   const sh = Object.entries(pt.shiftUse);
   if (sh.length) L.push('กะที่ลงในช่วงนี้: ' + sh.map(([n, c]) => `${n} ${c} วัน`).join(', '));
-  for (const dow of [1, 2, 3, 4, 5, 6, 0]) {
-    const D = pt.byDow[dow];
-    if (!D) continue;
-    const top = Object.values(D.tasks).sort((a, b) => b.days.size - a.days.size || a.minH - b.minH).slice(0, 10);
-    L.push(`วัน${TH_DOW[dow]} (มีบันทึก ${D.days} วัน): ` + top.map(t =>
-      `${t.label} [${t.days.size} วัน, ~${patternTime(t)}${t.recurring ? ', งานประจำ' : ''}${t.cat ? ', หมวด ' + t.cat : ''}]`).join(' ; '));
+  const draft = mechanicalSchedule(pt, null);
+  if (draft.length) {
+    L.push('', 'ร่างตารางจากสถิติบันทึกงาน (ช่วง | เวลา | งาน | หมายเหตุ) — ใช้เป็นฐาน ปรับชื่องานให้กระชับ/รวมงานที่เป็นเรื่องเดียวกัน:');
+    for (const r of draft) L.push(`${r[0]} | ${r[1]} | ${r[2]} | ${r[4]}`);
   }
-  const ms = monthlyCandidates(pt, pt.edge.start), me = monthlyCandidates(pt, pt.edge.end);
-  if (ms.length) L.push('งานที่พบซ้ำช่วงต้นเดือน (วันที่ 1–5): ' + ms.map(x => `${x.label} (${x.months.size} เดือน)`).join(', '));
-  if (me.length) L.push('งานที่พบซ้ำช่วงปลายเดือน (5 วันสุดท้าย): ' + me.map(x => `${x.label} (${x.months.size} เดือน)`).join(', '));
+  L.push('', 'งานที่ทำบ่อยแยกตามวัน (จำนวนวันที่ทำ / ช่วงชั่วโมง):');
+  for (const dow of [1, 2, 3, 4, 5, 6, 0]) {
+    const nd = pt.dayList.filter(d => d.dow === dow).length;
+    if (!nd) continue;
+    const top = Object.values(pt.groups).filter(G => G.dowDays[dow]).sort((a, b) => b.dowDays[dow].size - a.dowDays[dow].size).slice(0, 8);
+    L.push(`วัน${TH_DOW[dow]} (มีบันทึก ${nd} วัน): ` + top.map(G => {
+      const hs = Object.keys(G.dowHours[dow] || {}).map(Number).sort((a, b) => a - b);
+      return `${groupDisplay(G)} [${G.dowDays[dow].size} วัน, ${hs.length ? hourSpan(hs[0], hs[hs.length - 1]) : '-'}${G.recurring ? ', งานประจำ' : ''}${G.cat ? ', หมวด ' + G.cat : ''}]`;
+    }).join(' ; '));
+  }
   return L.join('\n');
-}
-// ตารางงานแบบไม่ใช้ AI (fallback) — จากบันทึกจริง + คำสัมภาษณ์
-function mechanicalSchedule(pt, iv) {
-  const rows = [];
-  for (const dow of [1, 2, 3, 4, 5, 6, 0]) {
-    const D = pt.byDow[dow];
-    if (!D) continue;
-    // งานที่ "เฉพาะวันนี้" (เช่น ประชุมทุกศุกร์) มาก่อน แล้วตามด้วยงานที่ทำบ่อย · ได้ไม่เกิน 5 งาน เรียงตามเวลา
-    const spec = (t) => t.days.size / Math.max(1, (pt.taskDays[t.label.toLowerCase()] || t.days).size);
-    const all = Object.values(D.tasks);
-    let list = all.filter(t => t.days.size >= Math.max(2, Math.ceil(D.days * 0.3)));
-    if (!list.length) list = all.slice().sort((a, b) => b.days.size - a.days.size).slice(0, 3);
-    list = list.sort((a, b) => (spec(b) - spec(a)) || (b.days.size - a.days.size)).slice(0, 5).sort((a, b) => a.minH - b.minH);
-    for (const t of list) rows.push([TH_DOW[dow], patternTime(t), t.label, '-', `จากบันทึกจริง (${t.days.size}/${D.days} วัน)${t.recurring ? ' · งานประจำ' : ''}`]);
-  }
-  for (const x of monthlyCandidates(pt, pt.edge.start)) rows.push(['รายเดือน', 'ต้นเดือน', x.label, '-', `จากบันทึกจริง (${x.months.size} เดือน)`]);
-  for (const x of monthlyCandidates(pt, pt.edge.end)) rows.push(['รายเดือน', 'สิ้นเดือน', x.label, '-', `จากบันทึกจริง (${x.months.size} เดือน)`]);
-  if (!pt.daysLogged && iv) for (const [t, task] of interviewWorkflow(iv)) rows.push(['ทุกวันทำงาน', t, rptTrunc(task, 200), '-', 'จากการสัมภาษณ์']);
-  const weekly = iv ? ivAnswer(iv, 'weekly_tasks') : '';
-  if (weekly) rows.push(['รายสัปดาห์', '-', rptTrunc(weekly, 200), '-', 'จากการสัมภาษณ์ (งานรายสัปดาห์/รายเดือน)']);
-  return rows;
 }
 function normPeriod(s) {
   let p = String(s || '').replace(/\*\*/g, '').trim().replace(/^วัน(?=[ก-๙])/, '');
@@ -3860,6 +3981,10 @@ function parsePipeRows(text, nCols) {
     if (out.length >= 80) break;
   }
   return out;
+}
+// แถว "พัก/พักกลางวัน" จาก AI → ทำเครื่องหมายหมายเหตุ = 'พัก' (หน้าเว็บแสดงเป็นแถวพัก) · noteIdx = ตำแหน่งช่องหมายเหตุ
+function normBreaks(rows, noteIdx) {
+  return rows.map(r => (/^พัก/.test(String(r[noteIdx - 2] || '')) && String(r[noteIdx - 2]).length <= 20) ? Object.assign(r.slice(), { [noteIdx]: SCHED_BREAK }) : r);
 }
 function sortSchedRows(rows) {
   return rows.map((r, i) => [r, i])
@@ -3898,14 +4023,20 @@ async function generatePersonReport(db, user, actor) {
         label: user.name,
         onUsage: (rec) => { used = rec.model || 'Claude'; recordClaudeUsage(db, { kind: 'person-schedule', label: `ตารางงาน ${user.name}`, ...rec }); },
       });
-      const rows = parsePipeRows(text, 5);
-      if (rows.length) { schedule = sortSchedRows(rows); model = used; }
+      const rows = normBreaks(parsePipeRows(text, 5), 4);
+      // ต้องมีไทม์ไลน์ "ทุกวันทำงาน" (ถ้ามีข้อมูลรายวัน) ไม่งั้นถือว่าตอบไม่ตรงรูปแบบ → ใช้เทมเพลต
+      const needDay = pt.daysLogged > 0 || (hasIv && interviewWorkflow(iv).length > 0);
+      if (rows.length && (!needDay || rows.some(r => r[0] === 'ทุกวันทำงาน'))) { schedule = sortSchedRows(rows); model = used; }
+      else console.error('[person-report] AI schedule missing daily timeline — using template');
     } catch (e) { console.error('[person-report] AI schedule fell back:', e.message); }
   }
   if (!schedule) schedule = sortSchedRows(mechanicalSchedule(pt, hasIv ? iv : null));
+  const wd = pt.dayList.filter(d => !isWeekend(d.dow));
   const rep = {
     user_id: user.id, at: new Date().toISOString(), by: actor || null,
     model, source: model ? 'ai' : 'template', version: APP_VERSION,
+    schedVersion: SCHED_VERSION,
+    typicalLabel: !pt.daysLogged ? 'จากการสัมภาษณ์' : (wd.length >= 3 ? 'จันทร์–ศุกร์' : 'ทุกวันที่ทำงาน'),
     sig: rptUserSig(rptSigCtx(db), user), hasInterview: hasIv,
     worklog: { from: pt.range.from, to: pt.range.to, days: pt.daysLogged, hours: pt.hours, tasks: pt.tasks },
     snapshot: { position: prof.position, division: prof.division, section: prof.section, profile: prof.profile,
@@ -3957,7 +4088,7 @@ function ovMember(db, u, cache) {
     u, prof: gatherPersonProfile(db, u), m: (wr.members || [])[0] || {},
     cats: wr.byCategory || [], recurringPct: (wr.totals || {}).recurringPct || 0,
     tasks: sum ? sum.totalFilled : 0, wlText: sum ? sum.text : '',
-    schedule: (pr && Array.isArray(pr.schedule)) ? pr.schedule : null,
+    schedule: (pr && Array.isArray(pr.schedule) && !personReportOutdated(pr)) ? pr.schedule : null,
   };
   if (cache) cache.members.set(u.id, d);
   return d;
@@ -4256,7 +4387,7 @@ tenantRouter.get('/api/person-report/tree', requireRoles(...RPT_HEAD_ROLES), (re
   const s = req.session;
   const users = db.users().filter(u => u.role !== 'admin' && (canViewUserWorklog(s, u) || u.id === s.user_id));
   const sigCtx = rptSigCtx(db);
-  let total = 0, missing = 0, stale = 0;
+  let total = 0, missing = 0, stale = 0, outdated = 0;
   const tree = rptOrgTree(db, users).map(d => ({
     id: d.id, name: d.name, none: d.none,
     sections: d.sections.map(sec => ({
@@ -4265,14 +4396,15 @@ tenantRouter.get('/api/person-report/tree', requireRoles(...RPT_HEAD_ROLES), (re
         id: p.id, name: p.name, none: p.none,
         people: p.people.map(u => {
           const r = readPersonReport(db, u.id);
-          const st = !!(r && r.sig !== rptUserSig(sigCtx, u));
-          total++; if (!r) missing++; if (st) stale++;
-          return { user_id: u.id, name: u.name, has: !!r, at: r ? r.at : null, stale: st };
+          const old = !!(r && personReportOutdated(r));
+          const st = !!(r && (old || r.sig !== rptUserSig(sigCtx, u)));
+          total++; if (!r) missing++; if (st) stale++; if (old) outdated++;
+          return { user_id: u.id, name: u.name, has: !!r, at: r ? r.at : null, stale: st, outdated: old };
         }),
       })),
     })),
   }));
-  res.json({ canGenerate: s.role === 'admin', tree, total, missing, stale, claudeOn: claudeOnForTenant(db) });
+  res.json({ canGenerate: s.role === 'admin', tree, total, missing, stale, outdated, claudeOn: claudeOnForTenant(db) });
 });
 tenantRouter.get('/api/person-report/:userId', (req, res) => {
   const { target, err } = resolveWorklogTarget(req);
@@ -4283,8 +4415,10 @@ tenantRouter.get('/api/person-report/:userId', (req, res) => {
   const secMap = Object.fromEntries(db.sections().map(s => [s.id, s.name]));
   const rep = readPersonReport(db, target.id);
   const person = { user_id: target.id, name: target.name, position: posMap[target.position_id] || '', division: divMap[target.division_id] || '', section: secMap[target.section_id] || '' };
+  const outdated = !!(rep && personReportOutdated(rep));
   const stale = !!(rep && rep.sig !== rptUserSig(rptSigCtx(db), target));
   if (rep) {
+    rep.outdated = outdated;
     delete rep.sig;
     // ข้อ 1–9, 11–13 อ่านสดจากเอกสาร/คำสัมภาษณ์ปัจจุบันเสมอ (ไม่ต้องสร้างรายงานใหม่เมื่อเอกสารถูกแก้/ตัวอ่านดีขึ้น)
     // ส่วนที่ "สร้าง" จริงคือข้อ 10 ตารางงาน (rep.schedule) — snapshot เดิมเก็บไว้ในไฟล์เป็นหลักฐาน
@@ -4311,7 +4445,8 @@ tenantRouter.post('/api/person-report/generate-missing', requireAdmin, (req, res
   const tid = req.tenant.id;
   const busy = reportJobBusy(tid);
   if (busy) return res.status(409).json({ error: 'มีงานวิเคราะห์อื่นกำลังทำอยู่ — รอให้เสร็จก่อน', job: busy });
-  const missing = db.users().filter(u => u.role !== 'admin' && !fs.existsSync(personReportPath(db, u.id)))
+  // คนที่ยังไม่มีรายงาน + คนที่รายงานยังเป็นตารางงานรูปแบบเก่า (ก่อน v1.18)
+  const missing = db.users().filter(u => { if (u.role === 'admin') return false; const r = readPersonReport(db, u.id); return !r || personReportOutdated(r); })
     .sort((a, b) => String(a.name).localeCompare(String(b.name), 'th'));
   if (!missing.length) return res.json({ ok: true, total: 0 });
   const actor = rptActor(req);
