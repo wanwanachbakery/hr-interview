@@ -3361,29 +3361,6 @@ function mdSections(md) {
   }
   return out.map(s => ({ heading: s.heading, body: s.body.join('\n').trim() }));
 }
-// แยกบล็อก ### heading → [{heading, lines[]}]
-function mdBlocks(md) {
-  const lines = String(md || '').replace(/\r/g, '').split('\n');
-  const out = []; let cur = null;
-  for (const ln of lines) {
-    const m = ln.match(/^###\s+(.*)/);
-    if (m) { cur = { heading: m[1].trim(), lines: [] }; out.push(cur); }
-    else if (cur) cur.lines.push(ln);
-  }
-  return out;
-}
-// ดึงค่าจากบุลเล็ตแบบ "- **label:** value"
-function labelVal(lines, label) {
-  for (const ln of lines) {
-    const s = ln.replace(/\*\*/g, '').replace(/^[-*•]\s*/, '').trim();
-    const i = s.indexOf(label);
-    if (i === 0) {
-      const rest = s.slice(label.length).replace(/^[^:：]*[:：]\s*/, '');
-      if (rest !== s) return rest.trim();
-    }
-  }
-  return '';
-}
 // ล้าง markdown ของเนื้อหา body → ข้อความอ่านง่าย (บุลเล็ต → •)
 function cleanBody(body) {
   return String(body || '').replace(/\r/g, '').split('\n')
@@ -3405,19 +3382,92 @@ function parseJdMd(md) {
   }
   return r;
 }
-function parseKpiMd(md) {
-  return mdBlocks(md).map(bk => {
-    const title = bk.heading.replace(/^KPI\s*\d+\s*[:：]\s*/i, '').trim();
-    return [title,
-      labelVal(bk.lines, 'สิ่งที่วัด'), labelVal(bk.lines, 'สูตร'),
-      labelVal(bk.lines, 'เป้าหมาย'), labelVal(bk.lines, 'ความถี่')];
-  }).filter(r => r[0] || r[1]);
+// ---------- อ่านเอกสาร KPI / Optimization ได้หลายรูปแบบ ----------
+// เอกสารเก่าที่ AI เขียน มีทั้ง "### KPI 1: ชื่อ" + บุลเล็ต "- **สิ่งที่วัด:** …",
+// "## KPI 1 — ชื่อ" + ตาราง 2 คอลัมน์ "| รายการ | รายละเอียด |", และตารางกว้าง 1 แถว = 1 รายการ
+function mdAnyBlocks(md) {                          // แยกบล็อกตามหัวข้อ ## / ### / ####
+  const out = [];
+  let cur = { heading: '', lines: [] };
+  for (const ln of String(md || '').replace(/\r/g, '').split('\n')) {
+    const m = ln.match(/^#{2,4}\s+(.*)/);
+    if (m) { out.push(cur); cur = { heading: m[1].replace(/\*\*/g, '').trim(), lines: [] }; }
+    else cur.lines.push(ln);
+  }
+  out.push(cur);
+  return out;
 }
+const mdCell = (s) => String(s || '').replace(/\*\*/g, '').replace(/`/g, '').replace(/<br\s*\/?>/gi, ' ').trim();
+function mdTables(lines) {                          // [{ header:[...], rows:[[...]] }]
+  const tables = [];
+  let cur = null;
+  for (const ln of lines) {
+    const t = ln.trim();
+    if (/^\|.*\|$/.test(t)) {
+      const cells = t.slice(1, -1).split('|').map(mdCell);
+      if (cells.every(c => /^:?-{2,}:?$/.test(c) || c === '')) continue;      // เส้นคั่นหัวตาราง
+      if (!cur) { cur = { header: cells, rows: [] }; tables.push(cur); } else cur.rows.push(cells);
+    } else if (t) cur = null;
+  }
+  return tables;
+}
+function mdFields(lines) {                          // [[label, value]] จากบุลเล็ต "label: value" + ตาราง 2 คอลัมน์
+  const f = [];
+  for (const ln of lines) {
+    if (/^\s*\|/.test(ln)) continue;
+    const s = ln.replace(/\*\*/g, '').replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim();
+    const m = s.match(/^([^:：|]{1,40})[:：]\s*(.+)$/);
+    if (m) f.push([m[1].trim(), m[2].trim()]);
+  }
+  for (const tb of mdTables(lines)) {
+    if (tb.header.length !== 2) continue;
+    const rows = /รายการ|หัวข้อ|ประเด็น|field|item/i.test(tb.header[0]) ? tb.rows : [tb.header].concat(tb.rows);
+    for (const r of rows) if (r[0]) f.push([r[0], r[1] || '']);
+  }
+  return f;
+}
+const mdPick = (fields, re) => { const x = fields.find(([k]) => re.test(k)); return x ? x[1] : ''; };
+function mdWideRows(lines, needRes) {               // ตารางกว้าง (≥3 คอลัมน์ ที่มีคอลัมน์ตาม needRes) → 1 ตัวดึงค่าต่อแถว
+  const out = [];
+  for (const tb of mdTables(lines)) {
+    if (tb.header.length < 3) continue;
+    const H = tb.header;
+    if (!needRes.some(re => H.some(h => re.test(h)))) continue;
+    for (const r of tb.rows) out.push((re) => { const i = H.findIndex(h => re.test(h)); return i >= 0 ? (r[i] || '') : ''; });
+  }
+  return out;
+}
+const KPI_RE = { name: /kpi|ตัวชี้วัด|ชื่อ/i, what: /สิ่งที่วัด|วัดอะไร|นิยาม|คำอธิบาย/, formula: /สูตร|วิธีวัด|วิธีคำนวณ|การคำนวณ/, target: /เป้า/, freq: /ความถี่|รอบการวัด/, weight: /น้ำหนัก|weight/i };
+const kpiTitle = (h) => String(h || '').replace(/^(?:kpi|ตัวชี้วัด(?:ที่)?)\s*#?\s*\d*\s*[:：.)\-–—]*\s*/i, '').replace(/^\d+\s*[.):\-–—]\s*/, '').trim();
+function kpiRow(title, get) {
+  const target = get(KPI_RE.target), w = get(KPI_RE.weight);
+  return [title, get(KPI_RE.what), get(KPI_RE.formula), [target, w ? 'น้ำหนัก ' + w : ''].filter(Boolean).join(' · '), get(KPI_RE.freq)];
+}
+function parseKpiMd(md) {
+  const out = [];
+  for (const b of mdAnyBlocks(md)) {
+    for (const get of mdWideRows(b.lines, [KPI_RE.target, KPI_RE.formula])) {
+      const name = get(KPI_RE.name);
+      if (name) out.push(kpiRow(kpiTitle(name) || name, get));
+    }
+    const f = mdFields(b.lines), get = (re) => mdPick(f, re);
+    if (b.heading && (get(KPI_RE.what) || get(KPI_RE.formula) || get(KPI_RE.target))) out.push(kpiRow(kpiTitle(b.heading) || b.heading, get));
+  }
+  return out.filter(r => r[0] || r[1]);
+}
+const OPT_RE = { problem: /ปัญหา|คอขวด|สถานการณ์|pain/i, proposal: /ข้อเสนอ|แนวทาง|วิธีแก้|solution/i, impact: /ผลกระทบ|impact/i, risk: /ความเสี่ยง|risk/i };
+const optTitle = (h) => String(h || '').replace(/^ข้อเสนอ(?:ที่)?\s*\d*\s*[:：.)\-–—]*\s*/, '').replace(/^\d+\s*[.):\-–—]\s*/, '').trim();
 function parseOptMd(md) {
-  return mdBlocks(md).map((bk, i) => [String(i + 1),
-    labelVal(bk.lines, 'ปัญหา'), labelVal(bk.lines, 'ข้อเสนอ'),
-    labelVal(bk.lines, 'ผลกระทบ'), labelVal(bk.lines, 'ความเสี่ยง')])
-    .filter(r => r[1] || r[2]);
+  const out = [];
+  for (const b of mdAnyBlocks(md)) {
+    for (const get of mdWideRows(b.lines, [OPT_RE.problem, OPT_RE.proposal])) {
+      if (get(OPT_RE.problem) || get(OPT_RE.proposal)) out.push(['', get(OPT_RE.problem), get(OPT_RE.proposal), get(OPT_RE.impact), get(OPT_RE.risk)]);
+    }
+    const f = mdFields(b.lines), get = (re) => mdPick(f, re);
+    const prob = get(OPT_RE.problem), prop = get(OPT_RE.proposal);
+    const headProp = /ปัญหา|คอขวด|สรุป|ประมาณการ|quick|ระยะ/i.test(b.heading) ? '' : optTitle(b.heading);   // หัวข้อ "ข้อเสนอที่ 1: …" ใช้แทนข้อเสนอได้
+    if (prop || (prob && headProp)) out.push(['', prob, prop || headProp, get(OPT_RE.impact), get(OPT_RE.risk)]);
+  }
+  return out.filter(r => r[1] || r[2]).map((r, i) => [String(i + 1)].concat(r.slice(1)));
 }
 // Workflow จากคำสัมภาษณ์ (hour_* หรือ legacy)
 function interviewWorkflow(iv) {
@@ -4234,7 +4284,14 @@ tenantRouter.get('/api/person-report/:userId', (req, res) => {
   const rep = readPersonReport(db, target.id);
   const person = { user_id: target.id, name: target.name, position: posMap[target.position_id] || '', division: divMap[target.division_id] || '', section: secMap[target.section_id] || '' };
   const stale = !!(rep && rep.sig !== rptUserSig(rptSigCtx(db), target));
-  if (rep) delete rep.sig;
+  if (rep) {
+    delete rep.sig;
+    // ข้อ 1–9, 11–13 อ่านสดจากเอกสาร/คำสัมภาษณ์ปัจจุบันเสมอ (ไม่ต้องสร้างรายงานใหม่เมื่อเอกสารถูกแก้/ตัวอ่านดีขึ้น)
+    // ส่วนที่ "สร้าง" จริงคือข้อ 10 ตารางงาน (rep.schedule) — snapshot เดิมเก็บไว้ในไฟล์เป็นหลักฐาน
+    const prof = gatherPersonProfile(db, target);
+    rep.snapshot = { position: prof.position, division: prof.division, section: prof.section, profile: prof.profile,
+      kpis: prof.kpis, opt: prof.opt, problems: prof.problems, voice: prof.voice, ai: prof.ai };
+  }
   res.json({ person, report: rep, stale, canGenerate: req.session.role === 'admin' });
 });
 tenantRouter.post('/api/person-report/:userId/generate', requireAdmin, (req, res) => {
